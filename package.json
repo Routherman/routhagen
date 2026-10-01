@@ -1,0 +1,35 @@
+{
+  "name": "backend",
+  "version": "1.0.0",
+  "description": "",
+  "homepage": "https://github.com/Routherman/agente-backend#readme",
+  "bugs": {
+    "url": "https://github.com/Routherman/agente-backend/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Routherman/agente-backend.git"
+  },
+  "license": "ISC",
+  "author": "Ignacio Nicolas Fernandez",
+  "type": "commonjs",
+  "main": "index.js",
+  "scripts": {
+    "dev": "nodemon index.js",
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "axios": "^1.20.0",
+    "body-parser": "^2.3.0",
+    "cors": "^2.8.6",
+    "dotenv": "^18.0.3",
+    "express": "^5.2.1",
+    "groq-sdk": "^1.6.0",
+    "mammoth": "^1.12.3",
+    "multer": "^2.4.0",
+    "mysql2": "^3.24.4",
+    "nodemon": "^3.1.14",
+    "pdf-parse": "^1.1.1",
+    "xlsx": "^0.18.5"
+  }
+}
