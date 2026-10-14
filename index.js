@@ -222,7 +222,7 @@ app.post('/api/messages/whatsapp/receive', async (req, res) => {
                 });
                 console.log(`\n📥 Mensaje de ${cleanMessage.remitente} encolado para procesamiento (Empresa: ${codigoEmpresa}).`);
             }
-            // CASO 2: Recibimos una confirmación de estado (Status: sent, delivered, read)
+            // CASO 2: Recibimos una confirmación de estado (Status: sent, delivered, read, failed)
             else if (value && value.statuses && value.statuses[0]) {
                 const statusData = value.statuses[0];
                 const cleanStatus = parseStatus(statusData);
@@ -230,6 +230,9 @@ app.post('/api/messages/whatsapp/receive', async (req, res) => {
                 // Actualizar estado en BD
                 await db.actualizarEstadoMensaje(cleanStatus.id_mensaje_meta, cleanStatus.estado);
                 console.log(`\n📊 Estado del mensaje ${cleanStatus.id_mensaje_meta} actualizado en BD a: ${cleanStatus.estado}`);
+                if (cleanStatus.estado === 'failed') {
+                    console.error('❌ Detalle del fallo en WhatsApp Meta:', JSON.stringify(statusData.errors || statusData, null, 2));
+                }
             }
         }
 
