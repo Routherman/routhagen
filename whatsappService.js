@@ -48,7 +48,7 @@ async function sendWhatsAppMessage(recipientId, text, phoneId, accessToken) {
  * @param {string} phoneId - El ID del teléfono de envío.
  * @param {string} accessToken - El token de acceso de Graph API.
  */
-async function sendWhatsAppTemplate(recipientId, templateName, languageCode, phoneId, accessToken) {
+async function sendWhatsAppTemplate(recipientId, templateName, languageCode, phoneId, accessToken, parameters = []) {
     try {
         if (!phoneId || !accessToken) throw new Error("Faltan credenciales de WhatsApp");
         const url = `https://graph.facebook.com/v20.0/${phoneId}/messages`;
@@ -58,23 +58,47 @@ async function sendWhatsAppTemplate(recipientId, templateName, languageCode, pho
             'Content-Type': 'application/json'
         };
 
+        const templatePayload = {
+            name: templateName,
+            language: {
+                code: languageCode || 'es_AR'
+            }
+        };
+
+        // Si se enviaron parámetros dinámicos (ej: {{1}} nombre del cliente)
+        if (Array.isArray(parameters) && parameters.length > 0) {
+            templatePayload.components = [
+                {
+                    type: 'body',
+                    parameters: parameters.map(param => ({
+                        type: 'text',
+                        text: String(param || '')
+                    }))
+                }
+            ];
+        }
+
         const data = {
             messaging_product: 'whatsapp',
             recipient_type: 'individual',
             to: recipientId,
             type: 'template',
-            template: {
-                name: templateName,
-                language: {
-                    code: languageCode || 'en_US'
-                }
-            }
+            template: templatePayload
         };
 
         const response = await axios.post(url, data, { headers });
         const messageId = response.data.messages?.[0]?.id;
         return messageId;
     } catch (error) {
+        const errorData = error.response?.data?.error;
+        const details = errorData?.error_data?.details || '';
+        
+        // Auto-recuperación: si la plantilla en Meta no admite parámetros (espera 0) pero enviamos variables
+        if (errorData?.code === 132000 && Array.isArray(parameters) && parameters.length > 0 && details.includes('expected number of params (0)')) {
+            console.warn(`⚠️ [WhatsApp API] La plantilla '${templateName}' no acepta variables dinámicas (${details}). Reenviando automáticamente sin parámetros...`);
+            return await sendWhatsAppTemplate(recipientId, templateName, languageCode, phoneId, accessToken, []);
+        }
+
         console.error('❌ Error enviando plantilla de WhatsApp:', error.response?.data || error.message);
         throw error;
     }

@@ -155,6 +155,9 @@ async function initDB() {
         try {
             await pool.query("ALTER TABLE contactos ADD COLUMN nodo_actual_id VARCHAR(100) DEFAULT NULL");
         } catch(e) {}
+        try {
+            await pool.query("ALTER TABLE contactos ADD COLUMN email VARCHAR(150) DEFAULT NULL");
+        } catch(e) {}
 
         console.log('✅ Base de datos MySQL y tablas inicializadas correctamente.');
     } catch (error) {
@@ -166,16 +169,18 @@ async function initDB() {
  * Guarda un contacto o actualiza su nombre si ya existe.
  * Retorna el objeto del contacto (id y estado_bot).
  */
-async function upsertContacto(telefono, nombre, codigo_empresa) {
+async function upsertContacto(telefono, nombre, codigo_empresa, email = null) {
     if (!pool) return null;
     
     await pool.query(`
-        INSERT INTO contactos (telefono, nombre, codigo_empresa) 
-        VALUES (?, ?, ?) 
-        ON DUPLICATE KEY UPDATE nombre = VALUES(nombre)
-    `, [telefono, nombre, codigo_empresa]);
+        INSERT INTO contactos (telefono, nombre, codigo_empresa, email) 
+        VALUES (?, ?, ?, ?) 
+        ON DUPLICATE KEY UPDATE 
+            nombre = IF(VALUES(nombre) IS NOT NULL AND VALUES(nombre) != '', VALUES(nombre), nombre),
+            email = IF(VALUES(email) IS NOT NULL AND VALUES(email) != '', VALUES(email), email)
+    `, [telefono, nombre, codigo_empresa, email]);
     
-    const [rows] = await pool.query('SELECT id, estado_bot FROM contactos WHERE telefono = ? AND codigo_empresa = ?', [telefono, codigo_empresa]);
+    const [rows] = await pool.query('SELECT id, estado_bot, nombre, telefono, email FROM contactos WHERE telefono = ? AND codigo_empresa = ?', [telefono, codigo_empresa]);
     return rows[0];
 }
 
@@ -204,6 +209,7 @@ async function guardarMensaje(contactoId, metaId, direccion, tipo, contenido, ca
     await pool.query(`
         INSERT INTO mensajes (contacto_id, mensaje_meta_id, direccion, tipo, contenido, campana_id)
         VALUES (?, ?, ?, ?, ?, ?)
+        ON DUPLICATE KEY UPDATE contenido = VALUES(contenido)
     `, [contactoId, metaId, direccion, tipo, contenido, campanaId]);
 }
 
@@ -231,6 +237,7 @@ async function obtenerCampanas(codigoEmpresa) {
             c.*,
             (SELECT COUNT(*) FROM mensajes m WHERE m.campana_id = c.id) as enviados,
             (SELECT COUNT(*) FROM mensajes m WHERE m.campana_id = c.id AND m.estado_entrega IN ('delivered', 'read')) as entregados,
+            (SELECT COUNT(*) FROM mensajes m WHERE m.campana_id = c.id AND m.estado_entrega = 'read') as leidos,
             (
                 SELECT COUNT(DISTINCT m1.contacto_id) 
                 FROM mensajes m1 

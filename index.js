@@ -12,11 +12,44 @@ const { extractTextFromFile } = require('./fileProcessor');
 const fs = require('fs');
 const { incomingMessageQueue } = require('./queue/messageQueue');
 const { campaignQueue } = require('./queue/campaignQueue');
+const { processExcelContactsWithAI, normalizePhoneNumber } = require('./excelService');
 
 const upload = multer({ dest: 'public/uploads/' });
 
 const app = express();
-app.use(cors());
+
+// Configuración robusta de CORS para Vercel y Ngrok
+const corsOptions = {
+    origin: true, // Permite cualquier origen (routhagent.vercel.app, localhost, etc.)
+    credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
+    allowedHeaders: [
+        'Origin',
+        'X-Requested-With',
+        'Content-Type',
+        'Accept',
+        'Authorization',
+        'ngrok-skip-browser-warning',
+        'Access-Control-Allow-Origin'
+    ]
+};
+
+app.use(cors(corsOptions));
+
+// Middleware de respaldo para garantizar encabezados en todas las peticiones
+app.use((req, res, next) => {
+    const origin = req.headers.origin || '*';
+    res.setHeader('Access-Control-Allow-Origin', origin);
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS, PATCH');
+    res.setHeader('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization, ngrok-skip-browser-warning');
+    res.setHeader('Access-Control-Allow-Credentials', 'true');
+
+    if (req.method === 'OPTIONS') {
+        return res.status(200).end();
+    }
+    next();
+});
+
 app.use('/media', express.static('public/media'));
 app.use(bodyParser.json());
 
@@ -153,7 +186,10 @@ app.post('/api/messages/whatsapp/receive', async (req, res) => {
 
             let cv = empresa.cuentas_vinculadas;
             if (typeof cv === 'string') { try { cv = JSON.parse(cv); } catch(e){} }
-            const accessToken = cv?.whatsapp?.access_token;
+            let accessToken = cv?.whatsapp?.access_token || process.env.WAPP_ACCESS_TOKEN;
+            if (accessToken === process.env.WAPP_VERIFY_TOKEN) {
+                accessToken = process.env.WAPP_ACCESS_TOKEN;
+            }
             const codigoEmpresa = empresa.codigo;
 
             // CASO 1: Recibimos un mensaje (Incoming o Contacts)
@@ -334,27 +370,93 @@ app.post('/api/contacts/:id/template', async (req, res) => {
     }
 });
 
-// Importar contactos manualmente o desde Excel
+// Importar contactos manualmente o desde lista simple
 app.post('/api/empresas/:codigo/import-contacts', async (req, res) => {
     try {
-        const { numbers } = req.body;
-        if (!Array.isArray(numbers)) return res.status(400).json({ error: 'Formato inválido. Se esperaba un arreglo de números.' });
-
+        const { numbers, contacts } = req.body;
         const importedIds = [];
-        for (const num of numbers) {
-            if (!num || typeof num !== 'string' || num.trim() === '') continue;
-            const cleanedNum = num.trim().replace(/\D/g, ''); 
-            if (cleanedNum) {
-                const contacto = await db.upsertContacto(cleanedNum, 'Usuario ' + cleanedNum, req.params.codigo);
-                if (contacto && contacto.id) {
-                    importedIds.push(contacto.id);
+
+        // Si se envió lista de contactos con nombre y email
+        if (Array.isArray(contacts)) {
+            for (const c of contacts) {
+                const phone = normalizePhoneNumber(c.telefono || c.number);
+                if (phone) {
+                    const contacto = await db.upsertContacto(phone, c.nombre || `Usuario ${phone}`, req.params.codigo, c.email || null);
+                    if (contacto && contacto.id) importedIds.push(contacto.id);
                 }
             }
+            return res.json({ success: true, importedIds });
         }
-        res.json({ success: true, importedIds });
+
+        // Si se envió lista de números simples
+        if (Array.isArray(numbers)) {
+            for (const num of numbers) {
+                if (!num || typeof num !== 'string' || num.trim() === '') continue;
+                const cleanedNum = normalizePhoneNumber(num); 
+                if (cleanedNum) {
+                    const contacto = await db.upsertContacto(cleanedNum, 'Usuario ' + cleanedNum, req.params.codigo);
+                    if (contacto && contacto.id) {
+                        importedIds.push(contacto.id);
+                    }
+                }
+            }
+            return res.json({ success: true, importedIds });
+        }
+
+        return res.status(400).json({ error: 'Formato inválido. Se esperaba numbers o contacts.' });
     } catch (error) {
         console.error('Error importing contacts:', error);
         res.status(500).json({ error: 'Error importando contactos' });
+    }
+});
+
+// Endpoint para subir y procesar archivo Excel (.xlsx/.xls/.csv) de contactos con análisis de IA
+app.post('/api/empresas/:codigo/upload-contacts-excel', upload.single('file'), async (req, res) => {
+    try {
+        if (!req.file) return res.status(400).json({ error: 'No se subió ningún archivo' });
+
+        const filePath = req.file.path;
+        
+        // 1. Procesar archivo y analizar columnas con IA (Groq)
+        const result = await processExcelContactsWithAI(filePath);
+        
+        // Limpiar archivo temporal
+        if (fs.existsSync(filePath)) {
+            fs.unlinkSync(filePath);
+        }
+
+        if (!result.success) {
+            return res.status(400).json({ error: result.error });
+        }
+
+        // 2. Guardar contactos procesados en la base de datos
+        const importedContacts = [];
+        for (const c of result.contacts) {
+            const dbContacto = await db.upsertContacto(c.telefono, c.nombre, req.params.codigo, c.email);
+            if (dbContacto && dbContacto.id) {
+                importedContacts.push({
+                    id: dbContacto.id,
+                    telefono: c.telefono,
+                    nombre: c.nombre,
+                    email: c.email
+                });
+            }
+        }
+
+        res.json({
+            success: true,
+            totalRows: result.totalRows,
+            validCount: importedContacts.length,
+            invalidCount: result.invalidCount,
+            mappingDetected: result.mappingDetected,
+            contacts: importedContacts
+        });
+    } catch (error) {
+        console.error('Error procesando Excel de contactos:', error);
+        if (req.file && fs.existsSync(req.file.path)) {
+            fs.unlinkSync(req.file.path);
+        }
+        res.status(500).json({ error: 'Error procesando el archivo Excel: ' + error.message });
     }
 });
 
@@ -388,7 +490,7 @@ app.get('/api/empresas/:codigo/templates', async (req, res) => {
 // Enviar campaña masiva
 app.post('/api/empresas/:codigo/massive', async (req, res) => {
     try {
-        const { contactIds, templateName, languageCode, messagesPerMinute, campaignName } = req.body;
+        const { contactIds, templateName, languageCode, messagesPerMinute, campaignName, useContactName } = req.body;
         const empresa = await db.obtenerEmpresa(req.params.codigo);
         if (!empresa) return res.status(404).json({ error: 'Empresa no encontrada' });
         
@@ -404,7 +506,7 @@ app.post('/api/empresas/:codigo/massive', async (req, res) => {
         const nombreCampana = campaignName || `Campaña ${templateName}`;
         const campanaId = await db.crearCampana(req.params.codigo, nombreCampana, contactIds.length);
 
-        // Calcular delay para respetar messagesPerMinute (Phase 2 & 3)
+        // Calcular delay para respetar messagesPerMinute
         const delayMs = Math.max(1000, Math.floor(60000 / (messagesPerMinute || 10)));
 
         // Encolar los trabajos en BullMQ
@@ -417,7 +519,8 @@ app.post('/api/empresas/:codigo/massive', async (req, res) => {
                 phoneId,
                 accessToken,
                 campanaId,
-                delayMs
+                delayMs,
+                useContactName: Boolean(useContactName)
             },
             opts: {
                 removeOnComplete: true,

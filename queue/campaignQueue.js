@@ -14,7 +14,7 @@ const campaignQueue = new Queue('outgoing-campaigns', {
 });
 
 const campaignWorker = new Worker('outgoing-campaigns', async (job) => {
-    const { isCompletionJob, campanaId, contactId, templateName, languageCode, phoneId, accessToken, delayMs } = job.data;
+    const { isCompletionJob, campanaId, contactId, templateName, languageCode, phoneId, accessToken, delayMs, useContactName } = job.data;
 
     try {
         if (isCompletionJob) {
@@ -24,13 +24,23 @@ const campaignWorker = new Worker('outgoing-campaigns', async (job) => {
 
         const [contacts] = await db.pool.query('SELECT * FROM contactos WHERE id = ?', [contactId]);
         if (contacts.length > 0) {
-            const telefono = contacts[0].telefono;
+            const contacto = contacts[0];
+            const telefono = contacto.telefono;
             
-            // Enviamos la plantilla
-            const wamid = await sendWhatsAppTemplate(telefono, templateName, languageCode || 'es_AR', phoneId, accessToken);
+            // Parámetros para variables de la plantilla (ej. {{1}} = Nombre)
+            let parameters = [];
+            if (useContactName && contacto.nombre) {
+                parameters = [contacto.nombre];
+            }
+
+            // Enviamos la plantilla con los parámetros
+            const wamid = await sendWhatsAppTemplate(telefono, templateName, languageCode || 'es_AR', phoneId, accessToken, parameters);
             
             // Guardamos el mensaje en la base de datos
-            await db.guardarMensaje(contactId, wamid, 'SALIENTE', 'template', `[Plantilla Masiva: ${templateName}]`, campanaId);
+            const contenidoGuardado = parameters.length > 0 
+                ? `[Plantilla: ${templateName} | Nombre: ${contacto.nombre}]`
+                : `[Plantilla Masiva: ${templateName}]`;
+            await db.guardarMensaje(contactId, wamid, 'SALIENTE', 'template', contenidoGuardado, campanaId);
             
             // Simulamos el delay (rate limit) dentro del worker para espaciar los envíos de forma controlada
             // Nota: En sistemas más avanzados, se puede usar Rate Limiter nativo de BullMQ Pro.
