@@ -10,6 +10,8 @@ const cors = require('cors');
 const multer = require('multer');
 const { extractTextFromFile } = require('./fileProcessor');
 const fs = require('fs');
+const { incomingMessageQueue } = require('./queue/messageQueue');
+const { campaignQueue } = require('./queue/campaignQueue');
 
 const upload = multer({ dest: 'public/uploads/' });
 
@@ -164,187 +166,25 @@ app.post('/api/messages/whatsapp/receive', async (req, res) => {
                 // 1. Guardar o actualizar contacto
                 const dbContacto = await db.upsertContacto(cleanMessage.identificador.valor, cleanMessage.remitente, codigoEmpresa);
 
-                // Obtener historial ANTES de guardar el mensaje actual (para no duplicarlo)
-                const history = await db.obtenerHistorialMensajes(dbContacto.id, 10);
-
-                // Si es multimedia, descargar el archivo
-                let contenidoFinal = cleanMessage.contenido;
-                if (cleanMessage.id_media && accessToken) {
-                    const localUrl = await downloadWhatsAppMedia(cleanMessage.id_media, accessToken);
-                    if (localUrl) {
-                        contenidoFinal = JSON.stringify({
-                            url: localUrl,
-                            caption: cleanMessage.contenido || ''
-                        });
+                // En lugar de procesar todo inmediatamente, lo metemos en la cola
+                // para proteger a la IA de la concurrencia masiva (Phase 1)
+                await incomingMessageQueue.add('processMessage', {
+                    cleanMessage,
+                    dbContacto,
+                    codigoEmpresa,
+                    empresa,
+                    phoneId,
+                    accessToken
+                }, {
+                    removeOnComplete: true, // Limpiar trabajos exitosos de Redis
+                    removeOnFail: false,    // Mantener los fallidos para depurar
+                    attempts: 3,            // Reintentar hasta 3 veces si Groq/Meta falla
+                    backoff: {
+                        type: 'exponential',
+                        delay: 2000         // Empezar esperando 2 segundos
                     }
-                }
-
-                // 2. Guardar mensaje entrante
-                await db.guardarMensaje(
-                    dbContacto.id, 
-                    cleanMessage.id_mensaje_meta, 
-                    'ENTRANTE', 
-                    cleanMessage.tipo_mensaje, 
-                    contenidoFinal
-                );
-
-                console.log(`\n💬 Nuevo mensaje de ${cleanMessage.remitente} guardado en BD para empresa ${codigoEmpresa}.`);
-
-                // --- FLUJO DE EJECUCIÓN GRÁFICA (React Flow) ---
-                if (cleanMessage.contenido && dbContacto.estado_bot === 'ACTIVO') {
-                    (async () => {
-                        try {
-                            const handledByFlow = await handleFlowEngine(dbContacto, cleanMessage, empresa, accessToken, phoneId, history);
-                            
-                            // Si el flujo procesó el mensaje, no hacemos nada más en esta iteración.
-                            if (handledByFlow) {
-                                return;
-                            }
-
-                            // --- FLUJO DE RESPUESTA AUTOMÁTICA CON IA (Fallback si no hay flujo gráfico activo) ---
-                            // 1. Obtener roles de la empresa
-                            const rolesEmpresa = await db.obtenerRoles(codigoEmpresa);
-                            const rolesString = rolesEmpresa.map(r => r.nombre).join(', ');
-                            
-                            // 2. Obtener flujos activos (para que la IA sepa qué flujos existen y sus palabras clave)
-                            const flujos = await db.obtenerFlujos(codigoEmpresa);
-                            const flujosActivos = flujos.filter(f => f.activo);
-                            const flujosString = flujosActivos.length > 0 
-                                ? flujosActivos.map(f => `- Flujo: "${f.nombre}" | Palabra Clave: "${f.trigger_keyword}"`).join('\n')
-                                : 'No hay flujos automáticos activos.';
-
-                            // 3. Información del contacto
-                            const contactInfo = `Nombre/Remitente: ${dbContacto.nombre || cleanMessage.remitente}\nTeléfono: ${dbContacto.identificador_valor}`;
-
-                            // 4. Integrar todo en el prompt de la IA
-                            const contextoAdicional = `
-[CONTEXTO OBLIGATORIO PARA LA IA]
-INFORMACIÓN DEL CONTACTO:
-${contactInfo}
-
-ROLES DISPONIBLES EN LA EMPRESA (Para derivación):
-${rolesString}
-
-FLUJOS DISPONIBLES:
-${flujosString}
-(NOTA: Puedes sugerirle al usuario que escriba una de las palabras clave para iniciar automáticamente un proceso o flujo si lo ves útil).
-`;
-
-                            const empresaContext = { 
-                                ...empresa, 
-                                prompt_ia: `${empresa.prompt_ia || ''}\n${contextoAdicional}` 
-                            };
-
-                            let aiResponse = await processMessageWithAI(cleanMessage.contenido, history, empresaContext);
-                            
-                            // Extraer Rol asignado
-                            const roleMatch = aiResponse.match(/\[ROLE:(.*?)\]/i);
-                            if (roleMatch) {
-                                const rolName = roleMatch[1].trim();
-                                await db.actualizarAsignacionContacto(dbContacto.id, rolName);
-                                aiResponse = aiResponse.replace(/\[ROLE:.*?\]/ig, '').trim();
-                                console.log(`✅ Chat asignado al rol: ${rolName}`);
-                            }
-                            
-                            if (aiResponse.includes('[HANDOFF]')) {
-                                console.log('⚠️ La IA derivó el chat a un humano. Guardando nuevo estado...');
-                                await db.actualizarEstadoBot(dbContacto.id, 'HANDOFF');
-                                
-                                // Limpiamos la etiqueta para no mostrarla al usuario final
-                                let msgToUser = aiResponse.replace(/\[HANDOFF\]/g, '').trim();
-                                if (!msgToUser) {
-                                    msgToUser = 'Entiendo. Un asesor humano se conectará al chat en breve para ayudarte.';
-                                }
-                                
-                                const outMetaId = await sendWhatsAppMessage(cleanMessage.identificador.valor, msgToUser, phoneId, accessToken);
-                                await db.guardarMensaje(dbContacto.id, outMetaId, 'SALIENTE', 'text', msgToUser);
-                            } else {
-                                const outMetaId = await sendWhatsAppMessage(cleanMessage.identificador.valor, aiResponse, phoneId, accessToken);
-                                await db.guardarMensaje(dbContacto.id, outMetaId, 'SALIENTE', 'text', aiResponse);
-                                console.log(`✅ Respuesta enviada y guardada en BD para ${cleanMessage.remitente}`);
-                            }
-                        } catch (err) {
-                            console.error('❌ Error en el flujo asíncrono de respuesta:', err);
-                        }
-                    })();
-                } else if (dbContacto.estado_bot === 'HANDOFF') {
-                    // Verificar si el último mensaje SALIENTE fue una plantilla.
-                    // Si es así, el cliente respondió a nuestra plantilla → reactivar IA.
-                    const [lastOutgoing] = await db.pool.query(
-                        `SELECT tipo FROM mensajes WHERE contacto_id = ? AND direccion = 'SALIENTE' ORDER BY id DESC LIMIT 1`,
-                        [dbContacto.id]
-                    );
-                    
-                    if (lastOutgoing[0]?.tipo === 'template') {
-                        console.log(`✅ El cliente respondió a una plantilla. Reactivando IA para ${cleanMessage.remitente}...`);
-                        await db.actualizarEstadoBot(dbContacto.id, 'ACTIVO');
-                        
-                        // Procesar respuesta con IA ahora que está activa
-                        (async () => {
-                            try {
-                                const freshHistory = await db.obtenerHistorialMensajes(dbContacto.id, 10);
-                                // 1. Obtener roles
-                                const rolesEmpresa = await db.obtenerRoles(codigoEmpresa);
-                                const rolesString = rolesEmpresa.map(r => r.nombre).join(', ');
-                                
-                                // 2. Obtener flujos activos
-                                const flujos = await db.obtenerFlujos(codigoEmpresa);
-                                const flujosActivos = flujos.filter(f => f.activo);
-                                const flujosString = flujosActivos.length > 0 
-                                    ? flujosActivos.map(f => `- Flujo: "${f.nombre}" | Palabra Clave: "${f.trigger_keyword}"`).join('\n')
-                                    : 'No hay flujos automáticos activos.';
-
-                                // 3. Información del contacto
-                                const contactInfo = `Nombre/Remitente: ${dbContacto.nombre || cleanMessage.remitente}\nTeléfono: ${dbContacto.identificador_valor}`;
-
-                                // 4. Integrar todo en el prompt de la IA
-                                const contextoAdicional = `
-[CONTEXTO OBLIGATORIO PARA LA IA]
-INFORMACIÓN DEL CONTACTO:
-${contactInfo}
-
-ROLES DISPONIBLES EN LA EMPRESA (Para derivación):
-${rolesString}
-
-FLUJOS DISPONIBLES:
-${flujosString}
-(NOTA: Puedes sugerirle al usuario que escriba una de las palabras clave para iniciar automáticamente un proceso o flujo si lo ves útil).
-`;
-
-                                const empresaContext = { 
-                                    ...empresa, 
-                                    prompt_ia: `${empresa.prompt_ia || ''}\n${contextoAdicional}` 
-                                };
-
-                                let aiResponse = await processMessageWithAI(cleanMessage.contenido, freshHistory, empresaContext);
-                                
-                                // Extraer Rol
-                                const roleMatch = aiResponse.match(/\[ROLE:(.*?)\]/i);
-                                if (roleMatch) {
-                                    const rolName = roleMatch[1].trim();
-                                    await db.actualizarAsignacionContacto(dbContacto.id, rolName);
-                                    aiResponse = aiResponse.replace(/\[ROLE:.*?\]/ig, '').trim();
-                                }
-                                
-                                if (aiResponse.includes('[HANDOFF]')) {
-                                    await db.actualizarEstadoBot(dbContacto.id, 'HANDOFF');
-                                    let msgToUser = aiResponse.replace(/\[HANDOFF\]/g, '').trim();
-                                    if (!msgToUser) msgToUser = 'Entiendo. Un asesor humano se conectará al chat en breve.';
-                                    const outMetaId = await sendWhatsAppMessage(cleanMessage.identificador.valor, msgToUser, phoneId, accessToken);
-                                    await db.guardarMensaje(dbContacto.id, outMetaId, 'SALIENTE', 'text', msgToUser);
-                                } else {
-                                    const outMetaId = await sendWhatsAppMessage(cleanMessage.identificador.valor, aiResponse, phoneId, accessToken);
-                                    await db.guardarMensaje(dbContacto.id, outMetaId, 'SALIENTE', 'text', aiResponse);
-                                    console.log(`✅ IA reactivada y respondió a ${cleanMessage.remitente}`);
-                                }
-                            } catch (err) {
-                                console.error('❌ Error al responder tras reactivación de IA:', err);
-                            }
-                        })();
-                    } else {
-                        console.log(`⏸️ Chat en modo HANDOFF. La IA no responderá a ${cleanMessage.remitente}.`);
-                    }
-                }
+                });
+                console.log(`\n📥 Mensaje de ${cleanMessage.remitente} encolado para procesamiento (Empresa: ${codigoEmpresa}).`);
             }
             // CASO 2: Recibimos una confirmación de estado (Status: sent, delivered, read)
             else if (value && value.statuses && value.statuses[0]) {
@@ -564,39 +404,43 @@ app.post('/api/empresas/:codigo/massive', async (req, res) => {
         const nombreCampana = campaignName || `Campaña ${templateName}`;
         const campanaId = await db.crearCampana(req.params.codigo, nombreCampana, contactIds.length);
 
-        // Procesar en background para no bloquear
-        processMassiveCampaign(contactIds, templateName, languageCode, phoneId, accessToken, messagesPerMinute || 10, campanaId);
+        // Calcular delay para respetar messagesPerMinute (Phase 2 & 3)
+        const delayMs = Math.max(1000, Math.floor(60000 / (messagesPerMinute || 10)));
+
+        // Encolar los trabajos en BullMQ
+        const jobs = contactIds.map(contactId => ({
+            name: 'sendTemplate',
+            data: {
+                contactId,
+                templateName,
+                languageCode: languageCode || 'es_AR',
+                phoneId,
+                accessToken,
+                campanaId,
+                delayMs
+            },
+            opts: {
+                removeOnComplete: true,
+                attempts: 3,
+                backoff: { type: 'exponential', delay: 5000 }
+            }
+        }));
+
+        // Trabajo especial para marcar como completada
+        jobs.push({
+            name: 'markCampaignCompleted',
+            data: { isCompletionJob: true, campanaId },
+            opts: { removeOnComplete: true }
+        });
+
+        await campaignQueue.addBulk(jobs);
         
-        res.json({ success: true, message: 'Campaña iniciada', campanaId });
+        res.json({ success: true, message: 'Campaña iniciada y encolada', campanaId });
     } catch (error) {
         console.error('Error iniciando campaña masiva:', error);
         res.status(500).json({ error: 'Error iniciando campaña masiva' });
     }
 });
-
-async function processMassiveCampaign(contactIds, templateName, languageCode, phoneId, accessToken, messagesPerMinute, campanaId) {
-    // Calcular el delay en ms basado en msj/min (ej. 60 msj/min = 1 msj por seg = 1000ms delay)
-    const delayMs = Math.max(1000, Math.floor(60000 / messagesPerMinute));
-    
-    for (const contactId of contactIds) {
-        try {
-            const [contacts] = await db.pool.query('SELECT * FROM contactos WHERE id = ?', [contactId]);
-            if (contacts.length > 0) {
-                const telefono = contacts[0].telefono;
-                const wamid = await sendWhatsAppTemplate(telefono, templateName, languageCode || 'es_AR', phoneId, accessToken);
-                await db.guardarMensaje(contactId, wamid, 'SALIENTE', 'template', `[Plantilla Masiva: ${templateName}]`, campanaId);
-            }
-        } catch (error) {
-            console.error(`Error enviando plantilla masiva al contacto ${contactId}:`, error.message);
-        }
-        await new Promise(resolve => setTimeout(resolve, delayMs));
-    }
-    
-    // Al finalizar, actualizar estado de la campaña
-    if (db.pool && campanaId) {
-        await db.pool.query("UPDATE campanas SET estado = 'completada' WHERE id = ?", [campanaId]);
-    }
-}
 
 // Obtener campañas masivas
 app.get('/api/empresas/:codigo/campanas', async (req, res) => {
