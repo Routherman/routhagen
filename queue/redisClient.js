@@ -20,7 +20,7 @@ const redisConnection = process.env.REDIS_URL
     });
 
 redisConnection.on('connect', () => {
-    console.log('✅ [REDIS] Conectado exitosamente a Redis/Upstash.');
+    console.log('✅ [REDIS] Conectado exitosamente a Redis.');
 });
 
 redisConnection.on('error', (err) => {

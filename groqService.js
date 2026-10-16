@@ -22,7 +22,7 @@ async function queryOllama(messages, model = OLLAMA_MODEL, temperature = 0.7) {
         messages,
         temperature
     }, {
-        timeout: 45000 // 45 segundos para holgura de inferencia en CPU
+        timeout: 75000 // 75 segundos para holgura de inferencia en CPU
     });
     return response.data.choices[0]?.message?.content || '';
 }

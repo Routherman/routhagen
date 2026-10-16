@@ -26,26 +26,44 @@ async function handleFlowEngine(dbContacto, cleanMessage, empresa, accessToken, 
     let activeFlowId = dbContacto.flujo_activo_id;
     let currentNodeId = dbContacto.nodo_actual_id;
 
-    // 2. Si NO está en un flujo, verificar si el mensaje coincide con alguna palabra clave
-    if (!activeFlowId) {
-        const matchedFlow = flujosActivos.find(f => f.trigger_keyword && f.trigger_keyword.toLowerCase() === userText);
-        if (matchedFlow) {
-            console.log(`[Flow] ¡Palabra clave interceptada! Iniciando flujo: ${matchedFlow.nombre}`);
-            activeFlowId = matchedFlow.id;
-            
-            let flowData = matchedFlow.data_json;
-            if (typeof flowData === 'string') flowData = JSON.parse(flowData);
-            
-            const startNode = flowData.nodes.find(n => n.id === 'node_trigger' || n.type === 'webhook') || flowData.nodes[0];
-            if (startNode) {
-                currentNodeId = startNode.id;
-                await db.pool.query('UPDATE contactos SET flujo_activo_id = ?, nodo_actual_id = ? WHERE id = ?', [activeFlowId, currentNodeId, dbContacto.id]);
-                console.log(`[Flow] Nodo de inicio seteado a: ${currentNodeId}`);
-            } else {
-                console.log(`[Flow] No se encontró nodo de inicio.`);
+    // 2. Verificar si el mensaje coincide con alguna palabra clave de flujo (para iniciar o cambiar de flujo)
+    const matchedFlow = flujosActivos.find(f => {
+        if (!f.trigger_keyword) return false;
+        // Soporta múltiples palabras clave separadas por comas (ej: "hola, buenas, con quien hablo")
+        const keywords = f.trigger_keyword.toLowerCase().split(',').map(k => k.trim()).filter(Boolean);
+        const cleanUserText = userText.replace(/^[¡!¿?\s]+|[¡!¿?\s.,]+$/g, '');
+
+        return keywords.some(k => {
+            // Coincidencia exacta o sin signos
+            if (userText === k || cleanUserText === k) return true;
+            // Coincidencia por palabra o frase completa
+            if (k.length >= 3) {
+                const escaped = k.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                const regex = new RegExp(`(^|\\b|\\s)${escaped}(\\b|\\s|\\.|!|\\?|$)`, 'i');
+                return regex.test(userText);
             }
+            return false;
+        });
+    });
+
+    let justStartedFlow = false;
+    if (matchedFlow && (!activeFlowId || matchedFlow.id !== activeFlowId)) {
+        console.log(`[Flow] ¡Palabra clave interceptada! Iniciando flujo: ${matchedFlow.nombre}`);
+        activeFlowId = matchedFlow.id;
+        justStartedFlow = true;
+        
+        let flowData = matchedFlow.data_json;
+        if (typeof flowData === 'string') flowData = JSON.parse(flowData);
+        
+        const startNode = flowData.nodes.find(n => n.id === 'node_trigger' || n.type === 'webhook') || flowData.nodes[0];
+        if (startNode) {
+            currentNodeId = startNode.id;
+            await db.pool.query('UPDATE contactos SET flujo_activo_id = ?, nodo_actual_id = ? WHERE id = ?', [activeFlowId, currentNodeId, dbContacto.id]);
+            console.log(`[Flow] Nodo de inicio seteado a: ${currentNodeId}`);
+        } else {
+            console.log(`[Flow] No se encontró nodo de inicio.`);
         }
-    } else {
+    } else if (activeFlowId) {
         console.log(`[Flow] El usuario ya está en el flujo activo: ${activeFlowId}`);
     }
 
@@ -73,8 +91,8 @@ async function handleFlowEngine(dbContacto, cleanMessage, empresa, accessToken, 
 
     // --- BUCLE DE EJECUCIÓN DEL FLUJO ---
     let executing = true;
-    // Si el usuario ya estaba en el flujo ANTES de este turno, estamos reanudando
-    let isResuming = (dbContacto.flujo_activo_id === activeFlowId); 
+    // Si el usuario ya estaba en el flujo ANTES de este turno y no acabamos de interceptar un nuevo flujo, estamos reanudando
+    let isResuming = !justStartedFlow && (dbContacto.flujo_activo_id === activeFlowId); 
 
     while (executing) {
         let currentNode = nodes.find(n => n.id === currentNodeId);
