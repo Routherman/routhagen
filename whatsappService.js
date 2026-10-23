@@ -40,6 +40,120 @@ async function sendWhatsAppMessage(recipientId, text, phoneId, accessToken) {
     }
 }
 
+
+/**
+ * Función para enviar un formulario de selección nativo (Interactive List Message) en WhatsApp Cloud API.
+ * @param {string} recipientId - El número de teléfono destinatario.
+ * @param {object} listConfig - Configuración de la lista: { headerText, bodyText, footerText, buttonText, sections }
+ * @param {string} phoneId - El ID del teléfono de envío.
+ * @param {string} accessToken - El token de acceso de Graph API.
+ */
+async function sendWhatsAppInteractiveList(recipientId, { headerText, bodyText, footerText, buttonText = "Ver Horarios 📅", sections = [] }, phoneId, accessToken) {
+    try {
+        if (!phoneId || !accessToken) throw new Error("Faltan credenciales de WhatsApp");
+        const url = `https://graph.facebook.com/v20.0/${phoneId}/messages`;
+
+        const headers = {
+            'Authorization': `Bearer ${accessToken}`,
+            'Content-Type': 'application/json'
+        };
+
+        const interactiveObj = {
+            type: 'list',
+            body: { text: bodyText },
+            action: {
+                button: (buttonText || "Ver Opciones").substring(0, 20),
+                sections: sections
+            }
+        };
+
+        if (headerText) {
+            interactiveObj.header = {
+                type: 'text',
+                text: headerText.substring(0, 60)
+            };
+        }
+
+        if (footerText) {
+            interactiveObj.footer = {
+                text: footerText.substring(0, 60)
+            };
+        }
+
+        const data = {
+            messaging_product: 'whatsapp',
+            recipient_type: 'individual',
+            to: recipientId,
+            type: 'interactive',
+            interactive: interactiveObj
+        };
+
+        const response = await axios.post(url, data, { headers });
+        const messageId = response.data.messages?.[0]?.id;
+        return messageId;
+    } catch (error) {
+        console.error('❌ Error enviando formulario/lista interactiva de WhatsApp:', error.response?.data || error.message);
+        throw error;
+    }
+}
+
+/**
+ * Función para enviar botones interactivos (hasta 3 botones de selección rápida)
+ */
+async function sendWhatsAppInteractiveButtons(recipientId, { headerText, bodyText, footerText, buttons = [] }, phoneId, accessToken) {
+    try {
+        if (!phoneId || !accessToken) throw new Error("Faltan credenciales de WhatsApp");
+        const url = `https://graph.facebook.com/v20.0/${phoneId}/messages`;
+
+        const headers = {
+            'Authorization': `Bearer ${accessToken}`,
+            'Content-Type': 'application/json'
+        };
+
+        const interactiveObj = {
+            type: 'button',
+            body: { text: bodyText },
+            action: {
+                buttons: buttons.slice(0, 3).map((btn, idx) => ({
+                    type: 'reply',
+                    reply: {
+                        id: btn.id || `btn_${idx + 1}`,
+                        title: (btn.title || btn.text || `Opción ${idx + 1}`).substring(0, 20)
+                    }
+                }))
+            }
+        };
+
+        if (headerText) {
+            interactiveObj.header = {
+                type: 'text',
+                text: headerText.substring(0, 60)
+            };
+        }
+
+        if (footerText) {
+            interactiveObj.footer = {
+                text: footerText.substring(0, 60)
+            };
+        }
+
+        const data = {
+            messaging_product: 'whatsapp',
+            recipient_type: 'individual',
+            to: recipientId,
+            type: 'interactive',
+            interactive: interactiveObj
+        };
+
+        const response = await axios.post(url, data, { headers });
+        return response.data.messages?.[0]?.id;
+    } catch (error) {
+        console.error('❌ Error enviando botones interactivos de WhatsApp:', error.response?.data || error.message);
+        throw error;
+    }
+}
+
+
 /**
  * Función para enviar una plantilla a través de WhatsApp Cloud API.
  * @param {string} recipientId - El número de teléfono o ID del usuario destinatario.
@@ -166,5 +280,8 @@ async function downloadWhatsAppMedia(mediaId, accessToken) {
 module.exports = {
     sendWhatsAppMessage,
     sendWhatsAppTemplate,
-    downloadWhatsAppMedia
+    downloadWhatsAppMedia,
+    sendWhatsAppInteractiveList,
+    sendWhatsAppInteractiveButtons
 };
+

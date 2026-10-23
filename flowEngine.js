@@ -26,25 +26,63 @@ async function handleFlowEngine(dbContacto, cleanMessage, empresa, accessToken, 
     let activeFlowId = dbContacto.flujo_activo_id;
     let currentNodeId = dbContacto.nodo_actual_id;
 
-    // 2. Verificar si el mensaje coincide con alguna palabra clave de flujo (para iniciar o cambiar de flujo)
-    const matchedFlow = flujosActivos.find(f => {
-        if (!f.trigger_keyword) return false;
-        // Soporta múltiples palabras clave separadas por comas (ej: "hola, buenas, con quien hablo")
+    // 2. Verificar si el mensaje coincide con alguna palabra clave de flujo (priorizando la coincidencia más específica/larga)
+    let matchedFlow = null;
+    let longestMatchLen = 0;
+
+    for (const f of flujosActivos) {
+        if (!f.trigger_keyword) continue;
         const keywords = f.trigger_keyword.toLowerCase().split(',').map(k => k.trim()).filter(Boolean);
         const cleanUserText = userText.replace(/^[¡!¿?\s]+|[¡!¿?\s.,]+$/g, '');
 
-        return keywords.some(k => {
+        for (const k of keywords) {
+            let isMatch = false;
             // Coincidencia exacta o sin signos
-            if (userText === k || cleanUserText === k) return true;
-            // Coincidencia por palabra o frase completa
-            if (k.length >= 3) {
-                const escaped = k.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-                const regex = new RegExp(`(^|\\b|\\s)${escaped}(\\b|\\s|\\.|!|\\?|$)`, 'i');
-                return regex.test(userText);
+            if (userText === k || cleanUserText === k) {
+                isMatch = true;
+            } else if (k.length >= 3) {
+                // Si el usuario ya está en un flujo activo (ej: respondiendo a una pregunta),
+                // solo cambiar de flujo si el texto ingresado es una orden/intención directa y breve,
+                // no si la palabra clave aparece casualmente dentro de una respuesta larga.
+                if (activeFlowId) {
+                    const isCommandOrButton = k.startsWith('btn_') || ['1', '2', '3', 'menu', 'inicio', 'volver', 'empezar'].includes(k);
+                    if (isCommandOrButton && (userText === k || cleanUserText === k)) {
+                        isMatch = true;
+                    } else if (userText.length <= k.length + 6) {
+                        const escaped = k.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                        const regex = new RegExp(`(^|\\b|\\s)${escaped}(\\b|\\s|\\.|!|\\?|$)`, 'i');
+                        if (regex.test(userText)) isMatch = true;
+                    }
+                } else {
+                    const escaped = k.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                    const regex = new RegExp(`(^|\\b|\\s)${escaped}(\\b|\\s|\\.|!|\\?|$)`, 'i');
+                    if (regex.test(userText)) isMatch = true;
+                }
             }
-            return false;
-        });
-    });
+            if (isMatch && k.length > longestMatchLen) {
+                longestMatchLen = k.length;
+                matchedFlow = f;
+            }
+        }
+    }
+
+    // Fallback inteligente para saludos si ningún flujo específico fue capturado
+    if (!matchedFlow && (!activeFlowId || activeFlowId === null)) {
+        const greetings = ['hola', 'buenas', 'buen dia', 'buen día', 'buenos dias', 'buenos días', 'buenas tardes', 'buenas noches', 'que tal', 'saludos', 'como estás', 'como estas', 'inicio', 'empezar', 'menu'];
+        const cleanUser = userText.replace(/^[¡!¿?\s]+|[¡!¿?\s.,]+$/g, '');
+        const isGreeting = greetings.some(g => userText === g || cleanUser === g || userText.startsWith(g) || cleanUser.startsWith(g));
+        if (isGreeting) {
+            const welcomeFlow = flujosActivos.find(f => 
+                f.nombre.toLowerCase().includes('bienvenida') || 
+                f.nombre.toLowerCase().includes('maestro') || 
+                (f.trigger_keyword && f.trigger_keyword.toLowerCase().includes('hola'))
+            ) || flujosActivos[0];
+            if (welcomeFlow) {
+                matchedFlow = welcomeFlow;
+                console.log(`[Flow] Saludo genérico detectado ("${userText}"). Asignando Flujo Maestro: ${matchedFlow.nombre}`);
+            }
+        }
+    }
 
     let justStartedFlow = false;
     if (matchedFlow && (!activeFlowId || matchedFlow.id !== activeFlowId)) {
@@ -108,6 +146,57 @@ async function handleFlowEngine(dbContacto, cleanMessage, empresa, accessToken, 
             if (currentNode.type === 'identity') {
                 const varName = currentNode.data?.variable_name || 'dato_extra';
                 console.log(`[Flow] Variable guardada: ${varName} = ${userText}`);
+
+                // Detección de selección de slot interactivo o texto
+                const isCalendarNode = currentNode.id === 'node_a3_captura' || varName === 'datos_contacto_asesor';
+                if (isCalendarNode) {
+                    const emailMatch = cleanMessage.contenido.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/);
+                    const slotChoiceMatch = cleanMessage.contenido.match(/slot_([1-6])|\b([1-6])\b/i);
+                    const slotChoice = slotChoiceMatch ? (slotChoiceMatch[1] || slotChoiceMatch[2]) : '1';
+
+                    const detectedEmail = emailMatch ? emailMatch[0] : (dbContacto.email || '');
+
+                    // Si no tiene email aún pero seleccionó un horario (muy común al tocar el list selector de WhatsApp)
+                    if (!detectedEmail) {
+                        const { getAvailableWebinarSlots } = require('./googleCalendarService');
+                        const slots = await getAvailableWebinarSlots(codigoEmpresa);
+                        const chosen = slots.find(s => s.id === parseInt(slotChoice, 10)) || slots[0];
+
+                        const promptForEmail = `¡Excelente elección! 📅 Reservaste tu turno para:\n*${chosen.titulo}*\n🗓️ ${chosen.fechaStr} (${chosen.horarioStr})\n\n👉 Para emitir tu invitación formal y enviarte el acceso a Google Meet o datos de recepción, por favor respóndeme con tu *Nombre completo* y tu *Correo electrónico* (ej. *Juan Pérez juan@gmail.com*):`;
+
+                        const outMetaId = await sendWhatsAppMessage(cleanMessage.identificador.valor, promptForEmail, phoneId, accessToken);
+                        await db.guardarMensaje(dbContacto.id, outMetaId, 'SALIENTE', 'text', promptForEmail);
+                        return true; // Espera el siguiente mensaje con los datos
+                    }
+
+                    // Si ya tenemos email (o lo envió en este turno)
+                    let detectedName = cleanMessage.contenido
+                        .replace(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g, '')
+                        .replace(/slot_[1-6]|[1-6]/gi, '')
+                        .replace(/^(mi nombre es|soy|nombre:)\s*/i, '')
+                        .trim();
+                    if (!detectedName || detectedName.length < 2) detectedName = dbContacto.nombre || 'Asesor Candidato';
+
+                    try {
+                        const { processBooking } = require('./googleCalendarService');
+                        const bookingRes = await processBooking({
+                            slotChoice,
+                            customerName: detectedName,
+                            customerEmail: detectedEmail,
+                            customerPhone: cleanMessage.identificador.valor,
+                            codigoEmpresa
+                        });
+
+                        if (bookingRes && bookingRes.whatsappResponse) {
+                            const outMetaId = await sendWhatsAppMessage(cleanMessage.identificador.valor, bookingRes.whatsappResponse, phoneId, accessToken);
+                            await db.guardarMensaje(dbContacto.id, outMetaId, 'SALIENTE', 'text', bookingRes.whatsappResponse);
+                            await clearFlowState(dbContacto.id);
+                            return true; // Finalizado: ticket creado y confirmaciones enviadas a ambas casillas
+                        }
+                    } catch (bookingErr) {
+                        console.error('[Flow] Error en processBooking:', bookingErr.message);
+                    }
+                }
             } else if (currentNode.type === 'rag') {
                 console.log(`[Flow] Ejecutando RAG local con el mensaje del usuario.`);
                 const nodePrompt = currentNode.data?.prompt || 'Eres un asistente útil.';
@@ -168,10 +257,37 @@ async function handleFlowEngine(dbContacto, cleanMessage, empresa, accessToken, 
             }
         } 
         else if (currentNode.type === 'identity') {
-            const question = currentNode.data?.question || '¿Cuál es tu respuesta?';
-            console.log(`[Flow] Solicitando Identity: "${question}"`);
-            const outMetaId = await sendWhatsAppMessage(cleanMessage.identificador.valor, question, phoneId, accessToken);
-            await db.guardarMensaje(dbContacto.id, outMetaId, 'SALIENTE', 'text', question);
+            const varName = currentNode.data?.variable_name || '';
+            const isCalendarNode = currentNode.id === 'node_a3_captura' || varName === 'datos_contacto_asesor';
+
+            if (isCalendarNode) {
+                const { sendWhatsAppInteractiveList } = require('./whatsappService');
+                const { formatInteractiveCalendarList, formatCalendarOptionsText } = require('./googleCalendarService');
+                
+                let sentInteractive = false;
+                try {
+                    const listPayload = await formatInteractiveCalendarList(codigoEmpresa);
+                    const outMetaId = await sendWhatsAppInteractiveList(cleanMessage.identificador.valor, listPayload, phoneId, accessToken);
+                    if (outMetaId) {
+                        sentInteractive = true;
+                        await db.guardarMensaje(dbContacto.id, outMetaId, 'SALIENTE', 'interactive', 'Menú Interactivo: Selección de Turnos de Capacitación');
+                        console.log(`[Flow] Formulario interactivo de WhatsApp enviado exitosamente.`);
+                    }
+                } catch (listErr) {
+                    console.warn(`[Flow] Falló envío interactivo (${listErr.message}), usando texto limpio de respaldo.`);
+                }
+
+                if (!sentInteractive) {
+                    const cleanText = await formatCalendarOptionsText(codigoEmpresa);
+                    const outMetaId = await sendWhatsAppMessage(cleanMessage.identificador.valor, cleanText, phoneId, accessToken);
+                    await db.guardarMensaje(dbContacto.id, outMetaId, 'SALIENTE', 'text', cleanText);
+                }
+            } else {
+                const question = currentNode.data?.question || '¿Cuál es tu respuesta?';
+                console.log(`[Flow] Solicitando Identity: "${question}"`);
+                const outMetaId = await sendWhatsAppMessage(cleanMessage.identificador.valor, question, phoneId, accessToken);
+                await db.guardarMensaje(dbContacto.id, outMetaId, 'SALIENTE', 'text', question);
+            }
             executing = false; // Pausamos el flujo esperando respuesta del usuario
             continue;
         }

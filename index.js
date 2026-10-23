@@ -1,6 +1,9 @@
 const express = require('express');
 const bodyParser = require('body-parser');
-require('dotenv').config();
+const path = require('path');
+require('dotenv').config({ path: path.join(__dirname, '.env') });
+
+
 
 const { processMessageWithAI, summarizeDocument } = require('./groqService');
 const { sendWhatsAppMessage, sendWhatsAppTemplate, downloadWhatsAppMedia } = require('./whatsappService');
@@ -13,6 +16,8 @@ const fs = require('fs');
 const { incomingMessageQueue } = require('./queue/messageQueue');
 const { campaignQueue } = require('./queue/campaignQueue');
 const { processExcelContactsWithAI, normalizePhoneNumber } = require('./excelService');
+const { sendTicketEmail } = require('./emailService');
+const { summarizeConversationWithAI } = require('./aiRouter');
 
 const upload = multer({ dest: 'public/uploads/' });
 
@@ -97,6 +102,19 @@ function parseMessage(message, contact) {
             return `${name} (${phone})`;
         }).join(', ');
         contenido = `Contacto(s) recibido(s): ${contactDetails}`;
+    }
+    else if (messageType === 'button') {
+        contenido = message.button?.payload || message.button?.text || '';
+    }
+    else if (messageType === 'interactive') {
+        const interactive = message.interactive || {};
+        if (interactive.type === 'button_reply') {
+            contenido = interactive.button_reply?.id || interactive.button_reply?.title || '';
+        } else if (interactive.type === 'list_reply') {
+            contenido = interactive.list_reply?.id || interactive.list_reply?.title || '';
+        } else {
+            contenido = interactive.title || '';
+        }
     }
     else {
         contenido = `Contenido no parseado para el tipo: ${messageType}`;
@@ -850,6 +868,415 @@ app.delete('/api/empresas/:codigo/flujos/:id', async (req, res) => {
         else res.status(404).json({ error: 'Flujo no encontrado' });
     } catch (error) {
         res.status(500).json({ error: 'Error eliminando flujo' });
+    }
+});
+
+// ---------------------------------------------------------
+// RUTAS PARA TICKETS (HELPDESK / ÓRDENES)
+// ---------------------------------------------------------
+
+app.get('/api/empresas/:codigo/tickets', async (req, res) => {
+    try {
+        const tickets = await db.obtenerTickets(req.params.codigo, req.query.status);
+        res.json({ success: true, tickets });
+    } catch (error) {
+        console.error('Error obteniendo tickets:', error);
+        res.status(500).json({ success: false, error: 'Error obteniendo tickets' });
+    }
+});
+
+app.post('/api/empresas/:codigo/tickets', async (req, res) => {
+    try {
+        const { contacto_id, customer_number, customer_name, status, summary, assigned_to_user_id, assigned_to_name } = req.body;
+        const insertId = await db.crearTicket(
+            req.params.codigo,
+            contacto_id || null,
+            customer_number,
+            customer_name || null,
+            status || 'open',
+            summary || null,
+            assigned_to_user_id || null,
+            assigned_to_name || null
+        );
+        res.json({ success: true, id: insertId });
+    } catch (error) {
+        console.error('Error creando ticket:', error);
+        res.status(500).json({ success: false, error: 'Error creando ticket' });
+    }
+});
+
+app.put('/api/empresas/:codigo/tickets/:id', async (req, res) => {
+    try {
+        const success = await db.actualizarTicket(req.params.id, req.params.codigo, req.body);
+        if (success) res.json({ success: true });
+        else res.status(404).json({ success: false, error: 'Ticket no encontrado' });
+    } catch (error) {
+        console.error('Error actualizando ticket:', error);
+        res.status(500).json({ success: false, error: 'Error actualizando ticket' });
+    }
+});
+
+app.delete('/api/empresas/:codigo/tickets/:id', async (req, res) => {
+    try {
+        const success = await db.eliminarTicket(req.params.id, req.params.codigo);
+        if (success) res.json({ success: true });
+        else res.status(404).json({ success: false, error: 'Ticket no encontrado' });
+    } catch (error) {
+        console.error('Error eliminando ticket:', error);
+        res.status(500).json({ success: false, error: 'Error eliminando ticket' });
+    }
+});
+
+// Enviar ticket por Email a colaboratium@gmail.com o email indicado
+app.post('/api/empresas/:codigo/tickets/:id/send-email', async (req, res) => {
+    try {
+        const ticket = await db.obtenerTicket(req.params.id, req.params.codigo);
+        if (!ticket) return res.status(404).json({ success: false, error: 'Ticket no encontrado' });
+
+        const targetEmail = req.body.email || 'colaboratium@gmail.com';
+        const sendResult = await sendTicketEmail(ticket, targetEmail);
+
+        if (sendResult.success) {
+            await db.actualizarTicket(ticket.id, req.params.codigo, {
+                email_sent_to: targetEmail,
+                email_sent_at: new Date()
+            });
+            res.json({ success: true, message: `Ticket enviado con éxito a ${targetEmail}` });
+        } else {
+            res.status(500).json({ success: false, error: sendResult.error });
+        }
+    } catch (error) {
+        console.error('Error enviando ticket por email:', error);
+        res.status(500).json({ success: false, error: 'Error al enviar ticket por email' });
+    }
+});
+
+// Resumen automático de conversación con IA para un ticket
+app.post('/api/empresas/:codigo/tickets/summarize', async (req, res) => {
+    try {
+        const { phone, customer_number } = req.body;
+        const targetNumber = phone || customer_number;
+        if (!targetNumber) return res.status(400).json({ success: false, error: 'Teléfono no proporcionado' });
+
+        // Buscar contacto y mensajes recientes
+        const [contactRows] = await db.pool.query(
+            'SELECT id, nombre, telefono FROM contactos WHERE codigo_empresa = ? AND (telefono = ? OR telefono LIKE ?)',
+            [req.params.codigo, targetNumber, `%${targetNumber.replace(/\D/g, '').slice(-10)}%`]
+        );
+
+        let chatText = '';
+        if (contactRows.length > 0) {
+            const history = await db.obtenerHistorialMensajes(contactRows[0].id, 25);
+            chatText = history.map(m => `${m.direccion === 'ENTRANTE' ? 'Cliente' : 'Asesor/Bot'}: ${m.contenido}`).join('\n');
+        } else {
+            chatText = `Consulta inicial de cliente número ${targetNumber}`;
+        }
+
+        const summary = await summarizeConversationWithAI(chatText, req.params.codigo);
+        res.json({ success: true, summary });
+    } catch (error) {
+        console.error('Error resumiendo conversación:', error);
+        res.status(500).json({ success: false, error: 'Error generando resumen' });
+    }
+});
+
+// ---------------------------------------------------------
+// RUTAS PARA AGENDA CRM (CONTACTOS ENRIQUECIDOS)
+// ---------------------------------------------------------
+
+app.get('/api/empresas/:codigo/crm/contacts', async (req, res) => {
+    try {
+        const { grupo, search } = req.query;
+        const contacts = await db.obtenerContactosCRM(req.params.codigo, grupo, search);
+        res.json({ success: true, contacts });
+    } catch (error) {
+        console.error('Error obteniendo contactos CRM:', error);
+        res.status(500).json({ success: false, error: 'Error obteniendo contactos CRM' });
+    }
+});
+
+app.post('/api/empresas/:codigo/crm/contacts', async (req, res) => {
+    try {
+        const insertId = await db.crearContactoCRM(req.params.codigo, req.body);
+        res.json({ success: true, id: insertId });
+    } catch (error) {
+        console.error('Error creando contacto CRM:', error);
+        res.status(500).json({ success: false, error: 'Error guardando contacto' });
+    }
+});
+
+app.put('/api/empresas/:codigo/crm/contacts/:id', async (req, res) => {
+    try {
+        const success = await db.actualizarContactoCRM(req.params.id, req.params.codigo, req.body);
+        if (success) res.json({ success: true });
+        else res.status(404).json({ success: false, error: 'Contacto no encontrado' });
+    } catch (error) {
+        console.error('Error actualizando contacto CRM:', error);
+        res.status(500).json({ success: false, error: 'Error actualizando contacto' });
+    }
+});
+
+app.delete('/api/empresas/:codigo/crm/contacts/:id', async (req, res) => {
+    try {
+        const success = await db.eliminarContactoCRM(req.params.id, req.params.codigo);
+        if (success) res.json({ success: true });
+        else res.status(404).json({ success: false, error: 'Contacto no encontrado' });
+    } catch (error) {
+        console.error('Error eliminando contacto CRM:', error);
+        res.status(500).json({ success: false, error: 'Error eliminando contacto' });
+    }
+});
+
+// Grupos y Rubros de la Agenda
+app.get('/api/empresas/:codigo/crm/rubros', async (req, res) => {
+    try {
+        const rubros = await db.obtenerRubros(req.params.codigo);
+        res.json({ success: true, rubros });
+    } catch (error) {
+        res.status(500).json({ success: false, error: 'Error obteniendo rubros' });
+    }
+});
+
+app.post('/api/empresas/:codigo/crm/rubros', async (req, res) => {
+    try {
+        const insertId = await db.crearRubro(req.params.codigo, req.body.nombre);
+        res.json({ success: true, id: insertId });
+    } catch (error) {
+        res.status(500).json({ success: false, error: 'Error creando rubro' });
+    }
+});
+
+// Exportación completa a archivo VCF (vCard para celulares)
+app.get('/api/empresas/:codigo/crm/export-vcf', async (req, res) => {
+    try {
+        const contacts = await db.obtenerContactosCRM(req.params.codigo, req.query.grupo);
+        if (!contacts || contacts.length === 0) {
+            return res.status(400).send('No hay contactos para exportar');
+        }
+
+        let vcardContent = '';
+        for (const c of contacts) {
+            const rawPhone = (c.telefono || '').toString().replace(/[^\d+]/g, '');
+            if (!rawPhone) continue;
+            const name = c.nombre || `Cliente ${rawPhone}`;
+
+            vcardContent += 'BEGIN:VCARD\r\n';
+            vcardContent += 'VERSION:3.0\r\n';
+            vcardContent += `FN:${name}\r\n`;
+            vcardContent += `TEL;TYPE=CELL:${rawPhone}\r\n`;
+            if (c.email) vcardContent += `EMAIL:${c.email}\r\n`;
+            if (c.dni || c.cbu || c.alias || c.banco || c.grupo) {
+                const note = `DNI: ${c.dni || '-'} | CBU: ${c.cbu || '-'} | Alias: ${c.alias || '-'} | Banco: ${c.banco || '-'} | Grupo: ${c.grupo || 'CLIENTES'}`;
+                vcardContent += `NOTE:${note}\r\n`;
+            }
+            vcardContent += 'END:VCARD\r\n';
+        }
+
+        res.setHeader('Content-Type', 'text/vcard; charset=utf-8');
+        res.setHeader('Content-Disposition', `attachment; filename="contactos_${req.params.codigo}_${Date.now()}.vcf"`);
+        res.send(vcardContent);
+    } catch (error) {
+        console.error('Error exportando VCF:', error);
+        res.status(500).send('Error exportando contactos VCF');
+    }
+});
+
+// Importación masiva por lote (desde CSV o tabla)
+app.post('/api/empresas/:codigo/crm/import-batch', async (req, res) => {
+    try {
+        const { contacts } = req.body;
+        if (!Array.isArray(contacts)) return res.status(400).json({ success: false, error: 'Formato inválido' });
+
+        let imported = 0;
+        for (const c of contacts) {
+            if (c.telefono) {
+                await db.crearContactoCRM(req.params.codigo, c);
+                imported++;
+            }
+        }
+        res.json({ success: true, imported });
+    } catch (error) {
+        console.error('Error importando contactos en lote:', error);
+        res.status(500).json({ success: false, error: 'Error importando lote de contactos' });
+    }
+});
+
+// ---------------------------------------------------------
+// RUTAS PARA MODELOS IA Y MÉTRICAS DE TOKENS
+// ---------------------------------------------------------
+
+app.get('/api/empresas/:codigo/ai-metrics', async (req, res) => {
+    try {
+        const stats = await db.obtenerAiStats(req.params.codigo);
+        const totalTokens = stats.reduce((acc, m) => acc + (Number(m.tokens_used) || 0), 0);
+        const totalSuccess = stats.reduce((acc, m) => acc + (Number(m.success_count) || 0), 0);
+        const totalFail = stats.reduce((acc, m) => acc + (Number(m.fail_count) || 0), 0);
+
+        const ollamaStats = stats.filter(m => (m.model_name || '').toLowerCase().includes('ollama') || (m.model_name || '').toLowerCase().includes('local'));
+        const ollamaTokens = ollamaStats.reduce((acc, m) => acc + (Number(m.tokens_used) || 0), 0);
+
+        res.json({
+            success: true,
+            stats,
+            summary: {
+                totalTokens,
+                totalSuccess,
+                totalFail,
+                ollamaTokens,
+                successRate: (totalSuccess + totalFail) > 0 ? ((totalSuccess / (totalSuccess + totalFail)) * 100).toFixed(1) : '100.0'
+            }
+        });
+    } catch (error) {
+        console.error('Error obteniendo métricas IA:', error);
+        res.status(500).json({ success: false, error: 'Error obteniendo métricas' });
+    }
+});
+
+// ---------------------------------------------------------
+// RUTAS PARA INBOX GMAIL (ESTILO IABOX) & CALENDAR MEET
+// ---------------------------------------------------------
+const { getInboxEmails, getEmailBody, sendReplyEmail } = require('./inboxService');
+const { getAvailableWebinarSlots, processBooking } = require('./googleCalendarService');
+
+app.get('/api/empresas/:codigo/inbox', async (req, res) => {
+    try {
+        const limit = parseInt(req.query.limit, 10) || 35;
+        const result = await getInboxEmails(limit);
+        res.json(result);
+    } catch (error) {
+        console.error('Error obteniendo correos inbox:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+app.get('/api/empresas/:codigo/inbox/:uid', async (req, res) => {
+    try {
+        const result = await getEmailBody(req.params.uid);
+        res.json(result);
+    } catch (error) {
+        console.error('Error obteniendo cuerpo de correo:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+app.post('/api/empresas/:codigo/inbox/reply', async (req, res) => {
+    try {
+        const { to, subject, body, inReplyTo } = req.body;
+        if (!to || !body) {
+            return res.status(400).json({ success: false, error: 'Faltan campos obligatorios (to, body)' });
+        }
+        const result = await sendReplyEmail({ to, subject, body, inReplyTo });
+        res.json(result);
+    } catch (error) {
+        console.error('Error enviando respuesta de correo:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+app.get('/api/empresas/:codigo/calendar/slots', async (req, res) => {
+    try {
+        const slots = await getAvailableWebinarSlots(req.params.codigo);
+        res.json({ success: true, slots });
+    } catch (error) {
+        console.error('Error obteniendo slots de calendario:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+app.get('/api/empresas/:codigo/calendar/subscriber/:id', async (req, res) => {
+    try {
+        const { getSubscriberProfile } = require('./googleCalendarService');
+        const profile = await getSubscriberProfile(req.params.codigo, req.params.id);
+        if (!profile) {
+            return res.status(404).json({ success: false, error: 'Inscripto no encontrado' });
+        }
+        res.json({ success: true, ...profile });
+    } catch (error) {
+        console.error('Error obteniendo perfil del inscripto:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+app.post('/api/empresas/:codigo/calendar/book', async (req, res) => {
+    try {
+        const { slotChoice, customerName, customerEmail, customerPhone } = req.body;
+        const result = await processBooking({
+            slotChoice,
+            customerName,
+            customerEmail,
+            customerPhone,
+            codigoEmpresa: req.params.codigo
+        });
+        res.json(result);
+    } catch (error) {
+        console.error('Error reservando slot de capacitación:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+// Endpoint del Copiloto Flotante Multi-Sección
+app.post('/api/empresas/:codigo/copilot/chat', async (req, res) => {
+    try {
+        const { message, context = {} } = req.body;
+        const codigoEmpresa = req.params.codigo;
+        const empresa = await db.obtenerEmpresa(codigoEmpresa);
+
+        const currentSection = context.section || 'General';
+        let liveDataSection = '';
+        try {
+            if (currentSection.includes('Calendario') || /inscript|calendario|fecha|horario|slot|meet|reuni/i.test(message)) {
+                const slots = await getAvailableWebinarSlots(codigoEmpresa);
+                const slotsSummary = slots.map(s => {
+                    const subs = (s.subscribers || []).map(sub => `${sub.nombre} (${sub.email || sub.telefono})`).join(', ');
+                    return `- Opción ${s.id}: ${s.titulo} [${s.modalidad}] - ${s.fechaStr} ${s.horarioStr} | ${s.inscriptosCount} Inscripto(s): ${subs || 'Sin inscriptos'}`;
+                }).join('\n');
+                liveDataSection = `\n\nESTADO EN TIEMPO REAL DE SESIONES Y CALENDARIO:\n${slotsSummary}`;
+            }
+        } catch (e) {
+            console.error('Error inyectando liveData en Copilot:', e.message);
+        }
+
+        const copilotSystemPrompt = `Eres el Copiloto Inteligente de Routh Agent para la empresa Colaboratium (Global Loan S.A.).
+Tu función es asistir al operador o directivo mientras navega por la plataforma.
+Actualmente el usuario está en la sección: [${currentSection}].
+Ruta activa: ${context.pathname || '/dashboard'}
+${liveDataSection}
+
+CONOCIMIENTO EMPRESARIAL OBLIGATORIO:
+- Empresa: Colaboratium (Global Loan S.A.)
+- Registro Oficial BCRA: Nº 40.015 (https://www.bcra.gob.ar/registro-de-proveedores-de-servicios-de-creditos-entre-particulares-a-traves-de-plataformas/)
+- Oficinas Comerciales: Av. del Libertador 264, 1° Piso Contrafrente, Vicente López, Buenos Aires.
+- Bancos aliados: Banco BIND y Banco Coinag.
+- Regla Cero Costo al Inversor: No se le cobra nada al inversor, todo lo paga el tomador del préstamo.
+- No Custodial: Cada inversor opera desde su propio CVU bancarizado.
+- Comisiones de Asesores: 4% a 3m, 5% a 6m, 6% a 12m (3% al calce inmediato y el resto en cuotas).
+- Leads de Colaboratium (Caso Juan Ramírez): 3% inicial para Colaboratium, cuotas residuales y 100% de reinversiones para el asesor.
+- Líderes: 10% adicional de la bolsa de comisiones del equipo.
+- Reuniones y Capacitación: Lunes, Miércoles y Viernes por Google Meet (meet.google.com/qmv-wqzk-hxo) o Presencial en Vicente López los Miércoles a las 14:30 hs.
+
+INSTRUCCIONES DE RESPUESTA:
+- Responde de forma ejecutiva, precisa, profesional y con formato Markdown amigable (viñetas, negritas, emojis).
+- Si te piden datos de inscriptos, menciónalos con nombres y detalles reales provistos en el contexto.
+- Si te piden redactar un mensaje, un email o una respuesta para un cliente, redáctala lista para copiar y pegar.
+- Sé proactivo con sugerencias útiles según la sección del panel.`;
+
+        const empresaContext = {
+            ...(empresa || {}),
+            codigo: codigoEmpresa,
+            prompt_ia: copilotSystemPrompt
+        };
+
+        const aiResponse = await processMessageWithAI(message, context.history || [], empresaContext);
+        const cleanResponse = (aiResponse || '').replace(/\[ROLE:.*?\]/ig, '').replace(/\[HANDOFF\]/g, '').trim();
+
+        res.json({
+            success: true,
+            reply: cleanResponse,
+            section: currentSection
+        });
+    } catch (error) {
+        console.error('Error en Copiloto Chat:', error);
+        res.status(500).json({ success: false, error: error.message });
     }
 });
 

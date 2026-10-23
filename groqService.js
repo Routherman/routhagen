@@ -39,80 +39,18 @@ async function queryGroq(messages, model = 'openai/gpt-oss-20b', temperature = 0
     return chatCompletion.choices[0]?.message?.content || '';
 }
 
+const aiRouter = require('./aiRouter');
+
 /**
- * Función principal para analizar el mensaje con IA, usando memoria del chat.
- * Implementa Ollama local como primera opción con fallback transparente a Groq.
+ * Función principal para analizar el mensaje con IA.
+ * Utiliza el Router Multi-IA de alta velocidad con cascada (Groq -> Cerebras -> Gemini -> OpenRouter -> Ollama)
+ * y telemetría de tokens y costos en USD.
  */
 async function processMessageWithAI(userMessage, history = [], empresaData = {}) {
     try {
-        const customPrompt = empresaData.prompt_ia || 'Eres un asistente útil y amable.';
-        const customKnowledge = empresaData.conocimiento_ia ? `\nBASE DE CONOCIMIENTO (Usa esta información para responder si aplica):\n${empresaData.conocimiento_ia}` : '';
-
-        // Armamos el arreglo de mensajes para la IA
-        const messages = [
-            {
-                role: 'system',
-                content: `${customPrompt}${customKnowledge}
-                
-REGLA CRÍTICA DE SISTEMA: 
-1. Si no puedes ayudar al usuario con su consulta (ya sea porque escapa a tu base de conocimiento, porque el administrador te dio instrucciones de rechazar ese tema, o porque el usuario pide un humano), DEBES incluir obligatoriamente la etiqueta [HANDOFF] en tu respuesta. Puedes agregar el texto de rechazo que el administrador te haya configurado, pero SIEMPRE debes incluir [HANDOFF] para que el sistema pueda pausar el bot. Ejemplo: "No puedo ayudarte con eso [HANDOFF]".
-2. OBLIGATORIO: Al final de tu respuesta, DEBES asignar el chat a un rol agregando EXACTAMENTE UNA etiqueta con el formato [ROLE:nombre_del_rol]. Usa el rol que más se acerque a la intención del usuario. Si es una consulta general sin intención específica, usa [ROLE:General]. Tu respuesta no será válida si no incluye esta etiqueta.`
-            }
-        ];
-
-        // Añadimos el historial previo
-        for (const msg of history) {
-            messages.push({
-                role: msg.direccion === 'ENTRANTE' ? 'user' : 'assistant',
-                content: msg.contenido
-            });
-        }
-
-        // Añadimos el mensaje actual
-        messages.push({
-            role: 'user',
-            content: `${userMessage}\n\n[INSTRUCCIÓN INTERNA AL MODELO]: Recuerda que es OBLIGATORIO añadir al final de tu respuesta una etiqueta con el formato [ROLE:nombre_del_rol] para derivar el chat (por ejemplo [ROLE:Soporte], [ROLE:Ventas], etc. o [ROLE:General] si no corresponde). Si debes derivar a un humano, añade también [HANDOFF].`
-        });
-
-        // 1. SI OLLAMA ES LA PRIMERA IA (Predeterminado)
-        if (AI_PROVIDER === 'ollama') {
-            try {
-                console.log(`🦙 [OLLAMA LOCAL] Procesando mensaje con modelo '${OLLAMA_MODEL}'...`);
-                const reply = await queryOllama(messages, OLLAMA_MODEL, 0.7);
-                if (reply && reply.trim()) {
-                    console.log(`✅ [OLLAMA LOCAL] Respuesta generada exitosamente por Ollama.`);
-                    return reply;
-                }
-            } catch (ollamaErr) {
-                console.warn(`⚠️ [OLLAMA LOCAL] Falló o no responde (${ollamaErr.message}). Conmutando automáticamente a Groq...`);
-            }
-
-            // Fallback a Groq en caso de que Ollama esté cerrado o demore
-            try {
-                console.log(`☁️ [GROQ NUBE] Procesando respuesta como respaldo...`);
-                return await queryGroq(messages, 'openai/gpt-oss-20b', 0.7);
-            } catch (groqErr) {
-                console.error(`❌ [GROQ NUBE] Error en respaldo de Groq:`, groqErr.message);
-                return 'Lo siento, en este momento nuestros sistemas de atención automática están ocupados.';
-            }
-        } 
-        // 2. SI GROQ ES LA PRIMERA IA
-        else {
-            try {
-                console.log(`☁️ [GROQ NUBE] Procesando mensaje con Groq...`);
-                return await queryGroq(messages, 'openai/gpt-oss-20b', 0.7);
-            } catch (groqErr) {
-                console.warn(`⚠️ [GROQ NUBE] Error (${groqErr.message}). Conmutando a Ollama Local...`);
-                try {
-                    return await queryOllama(messages, OLLAMA_MODEL, 0.7);
-                } catch (ollamaErr) {
-                    console.error(`❌ [OLLAMA LOCAL] Falló también Ollama:`, ollamaErr.message);
-                    return 'Lo siento, en este momento nuestros sistemas de atención automática están ocupados.';
-                }
-            }
-        }
+        return await aiRouter.routeAiMessage(userMessage, history, empresaData);
     } catch (error) {
-        console.error('❌ Error general en servicio de IA:', error);
+        console.error('❌ Error general en servicio de IA Router:', error);
         return 'Lo siento, en este momento no puedo procesar tu solicitud.';
     }
 }

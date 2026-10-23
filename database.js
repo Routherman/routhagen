@@ -1,5 +1,6 @@
 const mysql = require('mysql2/promise');
-require('dotenv').config();
+const path = require('path');
+require('dotenv').config({ path: path.join(__dirname, '.env') });
 
 const dbConfig = {
     host: process.env.DB_HOST || 'localhost',
@@ -7,21 +8,21 @@ const dbConfig = {
     password: process.env.DB_PASSWORD || '',
 };
 
-const DB_NAME = process.env.DB_NAME || 'whatsapp_bot_db';
+const getDBName = () => process.env.DB_NAME || 'routhagent';
 
 let pool;
 
 async function initDB() {
     try {
-        // 1. Conectarnos a MySQL (sin seleccionar base de datos) para crearla si no existe
+        const dbName = getDBName();
         const connection = await mysql.createConnection(dbConfig);
-        await connection.query(`CREATE DATABASE IF NOT EXISTS \`${DB_NAME}\`;`);
+        await connection.query(`CREATE DATABASE IF NOT EXISTS \`${dbName}\`;`);
         await connection.end();
 
         // 2. Crear el pool de conexiones conectado específicamente a nuestra base de datos
         pool = mysql.createPool({
             ...dbConfig,
-            database: DB_NAME,
+            database: dbName,
             waitForConnections: true,
             connectionLimit: 10,
             queueLimit: 0
@@ -119,7 +120,7 @@ async function initDB() {
                 id INT AUTO_INCREMENT PRIMARY KEY,
                 codigo_empresa VARCHAR(50) NOT NULL,
                 nombre VARCHAR(150),
-                trigger_keyword VARCHAR(100),
+                trigger_keyword VARCHAR(255),
                 data_json JSON,
                 activo BOOLEAN DEFAULT TRUE,
                 creado_en TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -127,6 +128,9 @@ async function initDB() {
         `);
 
         // Update existing tables
+        try {
+            await pool.query('ALTER TABLE flujos MODIFY COLUMN trigger_keyword VARCHAR(255)');
+        } catch(e) {}
         try {
             await pool.query('ALTER TABLE empresas ADD COLUMN prompt_ia TEXT');
         } catch(e) {}
@@ -155,8 +159,85 @@ async function initDB() {
         try {
             await pool.query("ALTER TABLE contactos ADD COLUMN nodo_actual_id VARCHAR(100) DEFAULT NULL");
         } catch(e) {}
+        // Tabla de Tickets
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS tickets (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                codigo_empresa VARCHAR(50) NOT NULL,
+                contacto_id INT DEFAULT NULL,
+                customer_number VARCHAR(100) NOT NULL,
+                customer_name VARCHAR(150) DEFAULT NULL,
+                status VARCHAR(50) DEFAULT 'open',
+                summary TEXT DEFAULT NULL,
+                assigned_to_user_id VARCHAR(150) DEFAULT NULL,
+                assigned_to_name VARCHAR(150) DEFAULT NULL,
+                email_sent_to VARCHAR(150) DEFAULT NULL,
+                email_sent_at TIMESTAMP NULL DEFAULT NULL,
+                creado_en TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                actualizado_en TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                FOREIGN KEY (contacto_id) REFERENCES contactos(id) ON DELETE SET NULL
+            );
+        `);
+
+        // Tabla de Estadísticas de Modelos IA (Consumo de Tokens)
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS ai_models_stats (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                codigo_empresa VARCHAR(50) NOT NULL,
+                model_name VARCHAR(150) NOT NULL,
+                tokens_used BIGINT DEFAULT 0,
+                success_count INT DEFAULT 0,
+                fail_count INT DEFAULT 0,
+                actualizado_en TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                UNIQUE KEY unique_company_model (codigo_empresa, model_name)
+            );
+        `);
+
+        // Tabla de Rubros / Grupos de Contactos
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS rubros (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                codigo_empresa VARCHAR(50) NOT NULL,
+                nombre VARCHAR(100) NOT NULL,
+                creado_en TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+        `);
+
         try {
-            await pool.query("ALTER TABLE contactos ADD COLUMN email VARCHAR(150) DEFAULT NULL");
+            await pool.query('ALTER TABLE contactos ADD COLUMN dni VARCHAR(50) DEFAULT NULL');
+        } catch(e) {}
+        try {
+            await pool.query('ALTER TABLE contactos ADD COLUMN direccion TEXT DEFAULT NULL');
+        } catch(e) {}
+        try {
+            await pool.query('ALTER TABLE contactos ADD COLUMN cbu VARCHAR(50) DEFAULT NULL');
+        } catch(e) {}
+        try {
+            await pool.query('ALTER TABLE contactos ADD COLUMN alias VARCHAR(50) DEFAULT NULL');
+        } catch(e) {}
+        try {
+            await pool.query('ALTER TABLE contactos ADD COLUMN banco VARCHAR(100) DEFAULT NULL');
+        } catch(e) {}
+        try {
+            await pool.query('ALTER TABLE contactos ADD COLUMN sucursal VARCHAR(100) DEFAULT NULL');
+        } catch(e) {}
+        try {
+            await pool.query("ALTER TABLE contactos ADD COLUMN grupo VARCHAR(100) DEFAULT 'CLIENTES'");
+        } catch(e) {}
+        try {
+            await pool.query('ALTER TABLE contactos ADD COLUMN instagram VARCHAR(150) DEFAULT NULL');
+        } catch(e) {}
+        try {
+            await pool.query('ALTER TABLE contactos ADD COLUMN facebook VARCHAR(150) DEFAULT NULL');
+        } catch(e) {}
+        try {
+            await pool.query('ALTER TABLE contactos ADD COLUMN linkedin VARCHAR(150) DEFAULT NULL');
+        } catch(e) {}
+        try {
+            await pool.query('ALTER TABLE contactos ADD COLUMN telegram VARCHAR(150) DEFAULT NULL');
+        } catch(e) {}
+        try {
+            await pool.query('ALTER TABLE contactos ADD COLUMN metadata_extra JSON DEFAULT NULL');
         } catch(e) {}
 
         console.log('✅ Base de datos MySQL y tablas inicializadas correctamente.');
@@ -313,16 +394,27 @@ async function obtenerTodosLosMensajes(contactoId) {
 async function upsertUser(clerkId, email, firstName, lastName, imageUrl, token) {
     if (!pool) return null;
     
+    // Si es una cuenta de administrador de Colaboratium, preasignar empresa y rol master (ID 1)
+    const adminEmails = ['colaboratium@gmail.com', 'publicidadgloballoan@gmail.com', 'publididadgloballoan@gmail.com'];
+    let defaultCodigo = null;
+    let defaultRolId = null;
+    if (email && adminEmails.includes(email.toLowerCase().trim())) {
+        defaultCodigo = 'KRZMJI';
+        defaultRolId = 1;
+    }
+
     await pool.query(`
-        INSERT INTO users (clerk_id, email, first_name, last_name, image_url, token) 
-        VALUES (?, ?, ?, ?, ?, ?) 
+        INSERT INTO users (clerk_id, email, first_name, last_name, image_url, token, codigo_empresa, rol_id) 
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?) 
         ON DUPLICATE KEY UPDATE 
             email = VALUES(email),
             first_name = VALUES(first_name),
             last_name = VALUES(last_name),
             image_url = VALUES(image_url),
-            token = COALESCE(VALUES(token), token)
-    `, [clerkId, email, firstName, lastName, imageUrl, token]);
+            token = COALESCE(VALUES(token), token),
+            codigo_empresa = IF(VALUES(codigo_empresa) IS NOT NULL, VALUES(codigo_empresa), codigo_empresa),
+            rol_id = IF(VALUES(rol_id) IS NOT NULL, VALUES(rol_id), rol_id)
+    `, [clerkId, email, firstName, lastName, imageUrl, token, defaultCodigo, defaultRolId]);
     
     const [rows] = await pool.query('SELECT * FROM users WHERE clerk_id = ?', [clerkId]);
     return rows[0];
@@ -613,6 +705,172 @@ async function actualizarContactoFlujo(contactoId, flujoId, nodoId) {
     await pool.query('UPDATE contactos SET flujo_activo_id = ?, nodo_actual_id = ? WHERE id = ?', [flujoId, nodoId, contactoId]);
 }
 
+// -------------------------------------------------------------
+// TICKETS (HELPDESK / ÓRDENES)
+// -------------------------------------------------------------
+async function crearTicket(codigo_empresa, contacto_id, customer_number, customer_name, status = 'open', summary = null, assigned_to_user_id = null, assigned_to_name = null) {
+    if (!pool) return null;
+    const [result] = await pool.query(`
+        INSERT INTO tickets (codigo_empresa, contacto_id, customer_number, customer_name, status, summary, assigned_to_user_id, assigned_to_name)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `, [codigo_empresa, contacto_id, customer_number, customer_name, status, summary, assigned_to_user_id, assigned_to_name]);
+    return result.insertId;
+}
+
+async function obtenerTickets(codigo_empresa, status = null) {
+    if (!pool) return [];
+    let query = 'SELECT * FROM tickets WHERE codigo_empresa = ?';
+    const params = [codigo_empresa];
+    if (status && status !== 'all') {
+        const statuses = status.split(',').map(s => s.trim());
+        query += ` AND status IN (${statuses.map(() => '?').join(',')})`;
+        params.push(...statuses);
+    }
+    query += ' ORDER BY creado_en DESC';
+    const [rows] = await pool.query(query, params);
+    return rows;
+}
+
+async function obtenerTicket(id, codigo_empresa) {
+    if (!pool) return null;
+    const [rows] = await pool.query('SELECT * FROM tickets WHERE id = ? AND codigo_empresa = ?', [id, codigo_empresa]);
+    return rows[0] || null;
+}
+
+async function actualizarTicket(id, codigo_empresa, updateData) {
+    if (!pool) return false;
+    const fields = [];
+    const values = [];
+    for (const [key, val] of Object.entries(updateData)) {
+        if (['status', 'summary', 'assigned_to_user_id', 'assigned_to_name', 'email_sent_to', 'email_sent_at', 'customer_name'].includes(key)) {
+            fields.push(`${key} = ?`);
+            values.push(val);
+        }
+    }
+    if (fields.length === 0) return false;
+    values.push(id, codigo_empresa);
+    await pool.query(`UPDATE tickets SET ${fields.join(', ')} WHERE id = ? AND codigo_empresa = ?`, values);
+    return true;
+}
+
+async function eliminarTicket(id, codigo_empresa) {
+    if (!pool) return false;
+    await pool.query('DELETE FROM tickets WHERE id = ? AND codigo_empresa = ?', [id, codigo_empresa]);
+    return true;
+}
+
+// -------------------------------------------------------------
+// TELEMETRÍA DE MODELOS IA & CONSUMO DE TOKENS
+// -------------------------------------------------------------
+async function actualizarAiStat(codigo_empresa, model_name, tokens_used = 0, success = 1, fail = 0) {
+    if (!pool) return;
+    try {
+        await pool.query(`
+            INSERT INTO ai_models_stats (codigo_empresa, model_name, tokens_used, success_count, fail_count)
+            VALUES (?, ?, ?, ?, ?)
+            ON DUPLICATE KEY UPDATE 
+                tokens_used = tokens_used + VALUES(tokens_used),
+                success_count = success_count + VALUES(success_count),
+                fail_count = fail_count + VALUES(fail_count)
+        `, [codigo_empresa, model_name, tokens_used, success, fail]);
+    } catch (e) {
+        console.error('Error actualizando ai_models_stats:', e.message);
+    }
+}
+
+async function obtenerAiStats(codigo_empresa) {
+    if (!pool) return [];
+    const [rows] = await pool.query('SELECT * FROM ai_models_stats WHERE codigo_empresa = ? ORDER BY tokens_used DESC', [codigo_empresa]);
+    return rows;
+}
+
+// -------------------------------------------------------------
+// CRM DE CONTACTOS (AGENDA COMPLETA)
+// -------------------------------------------------------------
+async function obtenerContactosCRM(codigo_empresa, grupo = null, search = '') {
+    if (!pool) return [];
+    let query = 'SELECT * FROM contactos WHERE codigo_empresa = ?';
+    const params = [codigo_empresa];
+    if (grupo && grupo !== 'TODOS') {
+        query += ' AND grupo = ?';
+        params.push(grupo);
+    }
+    if (search && search.trim()) {
+        query += ' AND (nombre LIKE ? OR telefono LIKE ? OR email LIKE ? OR dni LIKE ?)';
+        const s = `%${search.trim()}%`;
+        params.push(s, s, s, s);
+    }
+    query += ' ORDER BY creado_en DESC';
+    const [rows] = await pool.query(query, params);
+    return rows;
+}
+
+async function actualizarContactoCRM(id, codigo_empresa, data) {
+    if (!pool) return false;
+    const allowed = ['nombre', 'email', 'dni', 'direccion', 'cbu', 'alias', 'banco', 'sucursal', 'grupo', 'instagram', 'facebook', 'linkedin', 'telegram', 'metadata_extra'];
+    const fields = [];
+    const values = [];
+    for (const [k, v] of Object.entries(data)) {
+        if (allowed.includes(k)) {
+            fields.push(`${k} = ?`);
+            values.push(k === 'metadata_extra' && typeof v === 'object' ? JSON.stringify(v) : v);
+        }
+    }
+    if (fields.length === 0) return false;
+    values.push(id, codigo_empresa);
+    await pool.query(`UPDATE contactos SET ${fields.join(', ')} WHERE id = ? AND codigo_empresa = ?`, values);
+    return true;
+}
+
+async function crearContactoCRM(codigo_empresa, data) {
+    if (!pool) return null;
+    const metaStr = data.metadata_extra && typeof data.metadata_extra === 'object' ? JSON.stringify(data.metadata_extra) : data.metadata_extra;
+    const [res] = await pool.query(`
+        INSERT INTO contactos (telefono, nombre, codigo_empresa, email, dni, direccion, cbu, alias, banco, sucursal, grupo, instagram, facebook, linkedin, telegram, metadata_extra)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON DUPLICATE KEY UPDATE
+            nombre = VALUES(nombre),
+            email = VALUES(email),
+            dni = VALUES(dni),
+            direccion = VALUES(direccion),
+            cbu = VALUES(cbu),
+            alias = VALUES(alias),
+            banco = VALUES(banco),
+            sucursal = VALUES(sucursal),
+            grupo = VALUES(grupo),
+            instagram = VALUES(instagram),
+            facebook = VALUES(facebook),
+            linkedin = VALUES(linkedin),
+            telegram = VALUES(telegram),
+            metadata_extra = VALUES(metadata_extra)
+    `, [
+        data.telefono, data.nombre || '', codigo_empresa, data.email || null,
+        data.dni || null, data.direccion || null, data.cbu || null, data.alias || null,
+        data.banco || null, data.sucursal || null, data.grupo || 'CLIENTES',
+        data.instagram || null, data.facebook || null, data.linkedin || null, data.telegram || null,
+        metaStr || null
+    ]);
+    return res.insertId;
+}
+
+async function eliminarContactoCRM(id, codigo_empresa) {
+    if (!pool) return false;
+    await pool.query('DELETE FROM contactos WHERE id = ? AND codigo_empresa = ?', [id, codigo_empresa]);
+    return true;
+}
+
+async function obtenerRubros(codigo_empresa) {
+    if (!pool) return [];
+    const [rows] = await pool.query('SELECT * FROM rubros WHERE codigo_empresa = ? ORDER BY nombre ASC', [codigo_empresa]);
+    return rows;
+}
+
+async function crearRubro(codigo_empresa, nombre) {
+    if (!pool) return null;
+    const [res] = await pool.query('INSERT INTO rubros (codigo_empresa, nombre) VALUES (?, ?)', [codigo_empresa, nombre]);
+    return res.insertId;
+}
+
 module.exports = {
     initDB,
     upsertContacto,
@@ -647,5 +905,19 @@ module.exports = {
     actualizarFlujo,
     eliminarFlujo,
     actualizarContactoFlujo,
+    // Nuevas funciones
+    crearTicket,
+    obtenerTickets,
+    obtenerTicket,
+    actualizarTicket,
+    eliminarTicket,
+    actualizarAiStat,
+    obtenerAiStats,
+    obtenerContactosCRM,
+    actualizarContactoCRM,
+    crearContactoCRM,
+    eliminarContactoCRM,
+    obtenerRubros,
+    crearRubro,
     get pool() { return pool; }
 };
