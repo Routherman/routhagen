@@ -258,8 +258,223 @@ async function sendWebinarNotificationToCompany(booking) {
     }
 }
 
+/**
+ * Notifica a colaboratium@gmail.com que un Líder de Equipo dejó sus datos
+ */
+async function sendLeaderInquiryToCompany(leader) {
+    try {
+        const mailer = getTransporter();
+        const fromEmail = process.env.SMTP_USER || 'colaboratium@gmail.com';
+        const targetEmail = 'colaboratium@gmail.com';
+
+        const subject = `👑 NUEVO LÍDER DE EQUIPO INTERESADO: ${leader.nombre} (${leader.telefono})`;
+
+        const htmlContent = `
+        <!DOCTYPE html>
+        <html>
+        <body style="font-family:sans-serif;background-color:#0f172a;color:#f8fafc;padding:25px;">
+            <div style="background-color:#1e293b;border-radius:16px;padding:24px;max-width:600px;margin:0 auto;border:1px solid #334155;">
+                <div style="display:flex;align-items:center;gap:10px;margin-bottom:15px;">
+                    <span style="background:#8b5cf6;color:#ffffff;padding:4px 10px;border-radius:20px;font-size:11px;font-weight:bold;text-transform:uppercase;">Programa de Líderes</span>
+                </div>
+                <h2 style="color:#a78bfa;margin-top:0;">Nuevo Líder de Red Comercial Contactado</h2>
+                <hr style="border:0;border-top:1px solid #334155;margin:15px 0;">
+                <p><strong>Nombre del Líder:</strong> ${leader.nombre}</p>
+                <p><strong>Email:</strong> <a href="mailto:${leader.email}" style="color:#38bdf8;">${leader.email}</a></p>
+                <p><strong>Teléfono WhatsApp:</strong> <a href="https://wa.me/${(leader.telefono||'').replace(/\D/g,'')}" style="color:#38bdf8;">${leader.telefono}</a></p>
+                <p><strong>Detalle de Solicitud:</strong> ${leader.datosRed || 'Coordinación de Reunión Ejecutiva en Vicente López o Webinar de Líderes'}</p>
+                <p><strong>Ticket Helpdesk:</strong> #${leader.ticketId || '-'}</p>
+                <div style="margin-top:20px;padding:12px;background:#0f172a;border-radius:10px;font-size:12px;color:#94a3b8;">
+                    Este líder expresó interés en el 10% de la bolsa de comisiones y solicita coordinar reunión ejecutiva en Vicente López o sumarse al Webinar de Líderes. Se le enviaron las opciones de turnos disponibles vía WhatsApp.
+                </div>
+            </div>
+        </body>
+        </html>
+        `;
+
+        const info = await mailer.sendMail({
+            from: `"Routh Agent Notificador" <${fromEmail}>`,
+            to: targetEmail,
+            subject: subject,
+            html: htmlContent
+        });
+
+        console.log(`✅ [LEADER INQUIRY EMAIL] Notificación enviada a ${targetEmail} (ID: ${info.messageId})`);
+        return { success: true, messageId: info.messageId };
+    } catch (err) {
+        console.error('❌ [LEADER INQUIRY ERROR]:', err.message);
+        return { success: false, error: err.message };
+    }
+}
+
+/**
+ * Envía la Guía Oficial de Ingreso, Login y Operatoria al Inversor
+ */
+async function sendInvestorWelcomeGuide(investor) {
+    try {
+        const mailer = getTransporter();
+        const fromEmail = process.env.SMTP_USER || 'colaboratium@gmail.com';
+        const targetEmail = investor.email;
+
+        const subject = `📈 ¡Bienvenido a Colaboratium! - Guía de Ingreso y Operatoria de Inversión`;
+
+        const htmlContent = `
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <meta charset="utf-8">
+            <style>
+                body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #0b0f19; color: #f8fafc; padding: 25px; margin: 0; }
+                .card { background-color: #111827; border-radius: 20px; border: 1px solid #1f2937; max-width: 620px; margin: 0 auto; overflow: hidden; box-shadow: 0 20px 25px -5px rgba(0,0,0,0.5); }
+                .header { background: linear-gradient(135deg, #10b981, #0284c7); padding: 30px; text-align: left; }
+                .tag { background: rgba(0,0,0,0.25); color: #ecfdf5; padding: 4px 12px; border-radius: 999px; font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.5px; display: inline-block; margin-bottom: 12px; }
+                .title { font-size: 22px; font-weight: 800; color: #ffffff; margin: 0; line-height: 1.3; }
+                .content { padding: 30px; }
+                .step { display: flex; gap: 14px; margin-bottom: 18px; }
+                .step-num { width: 32px; height: 32px; border-radius: 10px; background: #059669; color: #ffffff; font-weight: 800; display: flex; align-items: center; justify-content: center; flex-shrink: 0; font-size: 14px; }
+                .step-body { font-size: 13px; color: #cbd5e1; line-height: 1.5; }
+                .step-body strong { color: #f1f5f9; }
+                .cta-btn { display: inline-block; background: #10b981; color: #ffffff !important; font-weight: 800; font-size: 14px; text-decoration: none; padding: 14px 28px; border-radius: 12px; margin-top: 15px; }
+                .highlight-box { background: #1e293b; border-left: 4px solid #10b981; padding: 14px 18px; border-radius: 8px; margin: 20px 0; font-size: 12px; color: #94a3b8; }
+                .footer { padding: 20px 30px; background: #0b0f19; border-top: 1px solid #1f2937; font-size: 11px; color: #64748b; text-align: center; }
+            </style>
+        </head>
+        <body>
+            <div class="card">
+                <div class="header">
+                    <span class="tag">Inversión Inteligente P2P • BCRA Nº 40.015</span>
+                    <h1 class="title">Hola, ${investor.nombre || 'Inversor'} 👋</h1>
+                    <p style="margin: 8px 0 0 0; color: rgba(255,255,255,0.9); font-size: 13px;">Tu acceso para invertir con respaldo bancario ya está listo.</p>
+                </div>
+                <div class="content">
+                    <p style="font-size: 14px; color: #e2e8f0; margin-top: 0;">
+                        Gracias por tu interés en <strong>Colaboratium</strong> (Global Loan S.A.). A continuación te detallamos los pasos simples para ingresar y activar tu cuenta:
+                    </p>
+
+                    <div class="step">
+                        <div class="step-num">1</div>
+                        <div class="step-body">
+                            <strong>Ingreso y Creación de Usuario:</strong><br>
+                            Accedé a nuestra consola oficial en <a href="https://consola.colaboratium.com.ar" style="color: #38bdf8;">consola.colaboratium.com.ar</a> con tu correo electrónico.
+                        </div>
+                    </div>
+
+                    <div class="step">
+                        <div class="step-num">2</div>
+                        <div class="step-body">
+                            <strong>Validación Biométrica (BCRA Nº 40.015):</strong><br>
+                            Subí una foto de tu DNI frente y dorso y realizá la verificación facial con Renaper en menos de 2 minutos.
+                        </div>
+                    </div>
+
+                    <div class="step">
+                        <div class="step-num">3</div>
+                        <div class="step-body">
+                            <strong>Apertura de tu CVU Bancarizado No Custodial:</strong><br>
+                            Se generará tu CVU propio con soporte de <em>Banco BIND y Banco Coinag</em>. Colaboratium nunca toca tu dinero; el capital fluye de tu CVU directo al crédito elegido.
+                        </div>
+                    </div>
+
+                    <div class="step">
+                        <div class="step-num">4</div>
+                        <div class="step-body">
+                            <strong>Elegí tu Perfil y Empezá a Colocar:</strong><br>
+                            Podés invertir desde <strong>$100.000 ARS</strong> hasta <strong>$10.000.000 ARS sin presentar documentación extra</strong>.
+                        </div>
+                    </div>
+
+                    <div class="highlight-box">
+                        💡 <strong>Simulador en Vivo:</strong> Podés proyectar tus rendimientos estimados según plazo (3, 6 o 12 meses) en nuestro simulador oficial:<br>
+                        👉 <a href="https://colaboratium.com.ar/inversiones.php#simulador" style="color: #34d399; font-weight: bold;">https://colaboratium.com.ar/inversiones.php#simulador</a>
+                    </div>
+
+                    <div style="text-align: center; margin: 25px 0;">
+                        <a href="https://consola.colaboratium.com.ar" class="cta-btn">🚀 Ingresar a la Plataforma</a>
+                    </div>
+
+                    <p style="font-size: 12px; color: #94a3b8; text-align: center; margin-bottom: 0;">
+                        ¿Deseás que un Asesor Financiero te acompañe en tu primera colocación? Simplemente respondé "Sí" a nuestro mensaje de WhatsApp.
+                    </p>
+                </div>
+                <div class="footer">
+                    Colaboratium (Global Loan S.A.) • Registro BCRA Nº 40.015<br>
+                    Av. del Libertador 264, 1° Piso Contrafrente, Vicente López, Buenos Aires.<br>
+                    <em>Al inversor jamás se le cobra comisión ni gastos de mantenimiento.</em>
+                </div>
+            </div>
+        </body>
+        </html>
+        `;
+
+        const info = await mailer.sendMail({
+            from: `"Colaboratium Inversiones" <${fromEmail}>`,
+            to: targetEmail,
+            subject: subject,
+            html: htmlContent
+        });
+
+        console.log(`✅ [INVESTOR GUIDE EMAIL] Guía de ingreso enviada a ${targetEmail} (ID: ${info.messageId})`);
+        return { success: true, messageId: info.messageId };
+    } catch (err) {
+        console.error('❌ [INVESTOR GUIDE ERROR]:', err.message);
+        return { success: false, error: err.message };
+    }
+}
+
+/**
+ * Notifica a colaboratium@gmail.com que un Inversor dejó sus datos
+ */
+async function sendInvestorInquiryToCompany(investor) {
+    try {
+        const mailer = getTransporter();
+        const fromEmail = process.env.SMTP_USER || 'colaboratium@gmail.com';
+        const targetEmail = 'colaboratium@gmail.com';
+
+        const subject = `📈 NUEVO INVERSOR REGISTRADO: ${investor.nombre} (${investor.telefono})`;
+
+        const htmlContent = `
+        <!DOCTYPE html>
+        <html>
+        <body style="font-family:sans-serif;background-color:#0f172a;color:#f8fafc;padding:25px;">
+            <div style="background-color:#1e293b;border-radius:16px;padding:24px;max-width:600px;margin:0 auto;border:1px solid #334155;">
+                <div style="display:flex;align-items:center;gap:10px;margin-bottom:15px;">
+                    <span style="background:#10b981;color:#ffffff;padding:4px 10px;border-radius:20px;font-size:11px;font-weight:bold;text-transform:uppercase;">Nuevo Inversor</span>
+                </div>
+                <h2 style="color:#34d399;margin-top:0;">Nuevo Lead de Inversor en Colaboratium</h2>
+                <hr style="border:0;border-top:1px solid #334155;margin:15px 0;">
+                <p><strong>Nombre del Inversor:</strong> ${investor.nombre}</p>
+                <p><strong>Email:</strong> <a href="mailto:${investor.email}" style="color:#38bdf8;">${investor.email}</a></p>
+                <p><strong>Teléfono WhatsApp:</strong> <a href="https://wa.me/${(investor.telefono||'').replace(/\D/g,'')}" style="color:#38bdf8;">${investor.telefono}</a></p>
+                <p><strong>Capital / Consulta:</strong> ${investor.detalles || 'Sin monto especificado'}</p>
+                <p><strong>Ticket Helpdesk:</strong> #${investor.ticketId || '-'}</p>
+                <div style="margin-top:20px;padding:12px;background:#0f172a;border-radius:10px;font-size:12px;color:#94a3b8;">
+                    Se le despachó automáticamente la Guía de Ingreso, Login y Operatoria por correo electrónico. El ticket quedó en estado <strong>Pendiente de Autorización</strong> para delegar a un Asesor Financiero o Líder comercial desde el Administrador de Tickets.
+                </div>
+            </div>
+        </body>
+        </html>
+        `;
+
+        const info = await mailer.sendMail({
+            from: `"Routh Agent Notificador" <${fromEmail}>`,
+            to: targetEmail,
+            subject: subject,
+            html: htmlContent
+        });
+
+        console.log(`✅ [INVESTOR INQUIRY EMAIL] Notificación enviada a ${targetEmail} (ID: ${info.messageId})`);
+        return { success: true, messageId: info.messageId };
+    } catch (err) {
+        console.error('❌ [INVESTOR INQUIRY ERROR]:', err.message);
+        return { success: false, error: err.message };
+    }
+}
+
 module.exports = {
     sendTicketEmail,
     sendWebinarConfirmationToAdvisor,
-    sendWebinarNotificationToCompany
+    sendWebinarNotificationToCompany,
+    sendLeaderInquiryToCompany,
+    sendInvestorWelcomeGuide,
+    sendInvestorInquiryToCompany
 };

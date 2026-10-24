@@ -33,10 +33,12 @@ function getNodemailerTransport() {
     });
 }
 
+const db = require('./database');
+
 /**
- * Obtiene la lista de correos recientes del Inbox de Gmail
+ * Obtiene la lista de correos recientes del Inbox de Gmail y vincula datos de CRM de contactos
  */
-async function getInboxEmails(limit = 35) {
+async function getInboxEmails(limit = 35, codigoEmpresa = 'KRZMJI') {
     const client = getImapClient();
     await client.connect();
     const lock = await client.getMailboxLock("INBOX");
@@ -61,15 +63,59 @@ async function getInboxEmails(limit = 35) {
                 from: env?.from?.[0]?.name
                     ? `${env.from[0].name} <${env.from[0].address}>`
                     : env?.from?.[0]?.address || "Desconocido",
-                fromEmail: env?.from?.[0]?.address || "",
+                fromEmail: (env?.from?.[0]?.address || "").toLowerCase().trim(),
                 fromName: env?.from?.[0]?.name || env?.from?.[0]?.address?.split('@')[0] || "",
                 to: env?.to?.[0]?.address || "",
-                messageId: env?.messageId || ""
+                messageId: env?.messageId || "",
+                contact: null
             });
         }
 
         // Ordenar del más nuevo al más viejo
         emailList.reverse();
+
+        // Cruzar con la base de datos de contactos para traer datos CRM (Juan Ramón Valle, Rol, Ticket, etc.)
+        if (db && db.pool && emailList.length > 0) {
+            try {
+                const uniqueEmails = [...new Set(emailList.map(e => e.fromEmail).filter(Boolean))];
+                if (uniqueEmails.length > 0) {
+                    const [contactRows] = await db.pool.query(
+                        "SELECT id, nombre, email, telefono, grupo, rol_asignado, metadata_extra FROM contactos WHERE LOWER(email) IN (?) AND codigo_empresa = ?",
+                        [uniqueEmails, codigoEmpresa]
+                    );
+
+                    const contactMap = {};
+                    (contactRows || []).forEach(c => {
+                        if (c.email) contactMap[c.email.toLowerCase().trim()] = c;
+                    });
+
+                    emailList.forEach(em => {
+                        const matched = contactMap[em.fromEmail];
+                        if (matched) {
+                            let meta = matched.metadata_extra;
+                            if (typeof meta === 'string') {
+                                try { meta = JSON.parse(meta); } catch(e) { meta = {}; }
+                            }
+                            em.contact = {
+                                id: matched.id,
+                                nombre: matched.nombre,
+                                email: matched.email,
+                                telefono: matched.telefono,
+                                grupo: matched.grupo || 'ASESORES',
+                                rol_asignado: matched.rol_asignado || 'General',
+                                metadata_extra: meta
+                            };
+                            // Si en la base de datos está registrado su nombre real, mostrarlo con prioridad
+                            if (matched.nombre && matched.nombre.trim().length > 1) {
+                                em.fromName = matched.nombre;
+                            }
+                        }
+                    });
+                }
+            } catch (errDB) {
+                console.error("Error enriqueciendo correos con contactos DB:", errDB.message);
+            }
+        }
 
         return {
             success: true,

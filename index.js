@@ -951,6 +951,94 @@ app.post('/api/empresas/:codigo/tickets/:id/send-email', async (req, res) => {
     }
 });
 
+// Autorizar ticket
+app.post('/api/empresas/:codigo/tickets/:id/authorize', async (req, res) => {
+    try {
+        const { usuario_id, usuario_nombre, usuario_email, rol } = req.body;
+        const success = await db.actualizarTicket(req.params.id, req.params.codigo, {
+            status: 'open',
+            authorized_at: new Date(),
+            authorized_by_user_id: usuario_id || 'admin'
+        });
+
+        if (success) {
+            await db.registrarAuditLog({
+                codigo_empresa: req.params.codigo,
+                usuario_id,
+                usuario_nombre,
+                usuario_email,
+                rol,
+                accion: 'AUTORIZAR_TICKET',
+                entidad: 'tickets',
+                entidad_id: String(req.params.id),
+                detalles: `Ticket #${req.params.id} autorizado exitosamente por ${usuario_nombre || 'Administrador'}`
+            });
+            res.json({ success: true, message: 'Ticket autorizado con éxito' });
+        } else {
+            res.status(404).json({ success: false, error: 'Ticket no encontrado' });
+        }
+    } catch (error) {
+        console.error('Error autorizando ticket:', error);
+        res.status(500).json({ success: false, error: 'Error autorizando ticket' });
+    }
+});
+
+// Delegar ticket a un usuario o equipo
+app.post('/api/empresas/:codigo/tickets/:id/delegate', async (req, res) => {
+    try {
+        const { assigned_to_user_id, assigned_to_name, internal_notes, delegator_id, delegator_name, delegator_email, rol } = req.body;
+        const updatePayload = {
+            assigned_to_user_id: assigned_to_user_id || null,
+            assigned_to_name: assigned_to_name || 'Sin Asignar'
+        };
+        if (internal_notes) updatePayload.internal_notes = internal_notes;
+
+        const success = await db.actualizarTicket(req.params.id, req.params.codigo, updatePayload);
+
+        if (success) {
+            await db.registrarAuditLog({
+                codigo_empresa: req.params.codigo,
+                usuario_id: delegator_id,
+                usuario_nombre: delegator_name,
+                usuario_email: delegator_email,
+                rol,
+                accion: 'DELEGAR_TICKET',
+                entidad: 'tickets',
+                entidad_id: String(req.params.id),
+                detalles: `Ticket #${req.params.id} delegado a ${assigned_to_name}. Notas: ${internal_notes || 'Ninguna'}`
+            });
+            res.json({ success: true, message: `Ticket delegado a ${assigned_to_name} con éxito` });
+        } else {
+            res.status(404).json({ success: false, error: 'Ticket no encontrado' });
+        }
+    } catch (error) {
+        console.error('Error delegando ticket:', error);
+        res.status(500).json({ success: false, error: 'Error delegando ticket' });
+    }
+});
+
+// Logs de Auditoría y Sucesos (Google Colaboratium)
+app.get('/api/empresas/:codigo/audit-logs', async (req, res) => {
+    try {
+        const logs = await db.obtenerAuditLogs(req.params.codigo, req.query.limit || 50);
+        res.json({ success: true, logs });
+    } catch (error) {
+        res.status(500).json({ success: false, error: 'Error obteniendo logs de auditoría' });
+    }
+});
+
+app.post('/api/empresas/:codigo/audit-logs', async (req, res) => {
+    try {
+        const logId = await db.registrarAuditLog({
+            codigo_empresa: req.params.codigo,
+            ...req.body
+        });
+        res.json({ success: true, id: logId });
+    } catch (error) {
+        res.status(500).json({ success: false, error: 'Error registrando log' });
+    }
+});
+
 // Resumen automático de conversación con IA para un ticket
 app.post('/api/empresas/:codigo/tickets/summarize', async (req, res) => {
     try {
@@ -1024,6 +1112,107 @@ app.delete('/api/empresas/:codigo/crm/contacts/:id', async (req, res) => {
     } catch (error) {
         console.error('Error eliminando contacto CRM:', error);
         res.status(500).json({ success: false, error: 'Error eliminando contacto' });
+    }
+});
+
+// Derivar contacto a Team / Staff
+app.post('/api/empresas/:codigo/contacts/:id/assign-team', async (req, res) => {
+    try {
+        const { rol_asignado, usuario_asignado_id, usuario_nombre, updated_by } = req.body;
+        const codigoEmpresa = req.params.codigo;
+        const contactId = req.params.id;
+
+        const success = await db.derivarContactoTeam(contactId, codigoEmpresa, rol_asignado, usuario_asignado_id);
+        if (success) {
+            await db.registrarAuditLog({
+                codigo_empresa: codigoEmpresa,
+                usuario_id: updated_by?.id || null,
+                usuario_nombre: updated_by?.name || 'Administrador',
+                rol: updated_by?.role || 'master',
+                accion: 'contacto_derivado_team',
+                entidad: 'contacto',
+                entidad_id: contactId.toString(),
+                detalles: `Contacto derivado a Team: "${rol_asignado}" ${usuario_nombre ? `(Asignado a: ${usuario_nombre})` : ''}`,
+                google_scope: 'colaboratium@gmail.com'
+            });
+            res.json({ success: true });
+        } else {
+            res.status(404).json({ success: false, error: 'Contacto no encontrado' });
+        }
+    } catch (error) {
+        console.error('Error derivando contacto a team:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+// Asignar Líder o Asesor al contacto (Árbol de Dependencias)
+app.post('/api/empresas/:codigo/contacts/:id/assign-hierarchy', async (req, res) => {
+    try {
+        const { lider_id, asesor_id, updated_by } = req.body;
+        const codigoEmpresa = req.params.codigo;
+        const contactId = req.params.id;
+
+        const success = await db.asignarJerarquiaContacto(contactId, codigoEmpresa, lider_id, asesor_id);
+        if (success) {
+            await db.registrarAuditLog({
+                codigo_empresa: codigoEmpresa,
+                usuario_id: updated_by?.id || null,
+                usuario_nombre: updated_by?.name || 'Administrador',
+                rol: updated_by?.role || 'master',
+                accion: 'contacto_asignado_jerarquia',
+                entidad: 'contacto',
+                entidad_id: contactId.toString(),
+                detalles: `Contacto asignado en Árbol: Líder ID ${lider_id || 'Ninguno'}, Asesor ID ${asesor_id || 'Ninguno'}`,
+                google_scope: 'colaboratium@gmail.com'
+            });
+            res.json({ success: true });
+        } else {
+            res.status(404).json({ success: false, error: 'Contacto no encontrado' });
+        }
+    } catch (error) {
+        console.error('Error asignando jerarquía:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+// Marcar como Resuelto o Pendiente (con nota flotante)
+app.post('/api/empresas/:codigo/contacts/:id/resolution', async (req, res) => {
+    try {
+        const { estado_resolucion, nota_pendiente, updated_by } = req.body;
+        const codigoEmpresa = req.params.codigo;
+        const contactId = req.params.id;
+
+        const success = await db.actualizarResolucionContacto(contactId, codigoEmpresa, estado_resolucion, nota_pendiente);
+        if (success) {
+            await db.registrarAuditLog({
+                codigo_empresa: codigoEmpresa,
+                usuario_id: updated_by?.id || null,
+                usuario_nombre: updated_by?.name || 'Administrador',
+                rol: updated_by?.role || 'master',
+                accion: 'contacto_estado_resolucion',
+                entidad: 'contacto',
+                entidad_id: contactId.toString(),
+                detalles: `Contacto marcado como ${estado_resolucion}. ${nota_pendiente ? `Nota: "${nota_pendiente}"` : ''}`,
+                google_scope: 'colaboratium@gmail.com'
+            });
+            res.json({ success: true });
+        } else {
+            res.status(404).json({ success: false, error: 'Contacto no encontrado' });
+        }
+    } catch (error) {
+        console.error('Error actualizando resolución:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+// Árbol de Dependencias de Colaboratium (Raíz -> Líderes -> Asesores -> Inversores)
+app.get('/api/empresas/:codigo/crm/tree', async (req, res) => {
+    try {
+        const tree = await db.obtenerArbolDependencias(req.params.codigo);
+        res.json({ success: true, tree });
+    } catch (error) {
+        console.error('Error obteniendo árbol de dependencias:', error);
+        res.status(500).json({ success: false, error: error.message });
     }
 });
 
@@ -1141,10 +1330,33 @@ const { getAvailableWebinarSlots, processBooking } = require('./googleCalendarSe
 app.get('/api/empresas/:codigo/inbox', async (req, res) => {
     try {
         const limit = parseInt(req.query.limit, 10) || 35;
-        const result = await getInboxEmails(limit);
+        const result = await getInboxEmails(limit, req.params.codigo);
         res.json(result);
     } catch (error) {
         console.error('Error obteniendo correos inbox:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+app.get('/api/empresas/:codigo/inbox/contact-profile', async (req, res) => {
+    try {
+        const { email, contactId } = req.query;
+        let cId = contactId ? parseInt(contactId, 10) : null;
+        if (!cId && email) {
+            const [rows] = await db.pool.query(
+                "SELECT id FROM contactos WHERE LOWER(email) = ? AND codigo_empresa = ? LIMIT 1",
+                [email.trim().toLowerCase(), req.params.codigo]
+            );
+            if (rows && rows.length > 0) cId = rows[0].id;
+        }
+        if (!cId) {
+            return res.status(404).json({ success: false, error: 'Contacto no encontrado en la base de datos' });
+        }
+        const { getSubscriberProfile } = require('./googleCalendarService');
+        const profile = await getSubscriberProfile(req.params.codigo, cId);
+        res.json({ success: true, ...profile });
+    } catch (error) {
+        console.error('Error obteniendo perfil desde inbox:', error);
         res.status(500).json({ success: false, error: error.message });
     }
 });
@@ -1210,6 +1422,74 @@ app.post('/api/empresas/:codigo/calendar/book', async (req, res) => {
         res.json(result);
     } catch (error) {
         console.error('Error reservando slot de capacitación:', error);
+    }
+});
+
+app.post('/api/empresas/:codigo/calendar/events', async (req, res) => {
+    try {
+        const { titulo, tipo = 'webinar', modalidad = 'VIRTUAL', categoria = 'ASESORES', fecha, horario, meetLink, ubicacion, cupos = 25, userId, userName, userRole } = req.body;
+        const codigoEmpresa = req.params.codigo;
+
+        const eventId = await db.crearCalendarEvent(codigoEmpresa, {
+            titulo,
+            tipo,
+            modalidad,
+            categoria,
+            fecha,
+            horario,
+            meet_link: meetLink,
+            ubicacion,
+            cupos,
+            creado_por_usuario_id: userId,
+            creado_por_nombre: userName,
+            creado_por_rol: userRole
+        });
+
+        // Registrar en Log de Sucesos del Ámbito Google Colaboratium
+        await db.registrarAuditLog({
+            codigo_empresa: codigoEmpresa,
+            usuario_id: userId,
+            usuario_nombre: userName,
+            rol: userRole,
+            accion: 'calendar_event_created',
+            entidad: 'calendar',
+            entidad_id: eventId.toString(),
+            detalles: `Evento creado: ${tipo === 'webinar' ? 'Webinar Capacitación' : 'Reunión Meet Inversores'} - "${titulo}" (${fecha} ${horario}, modalidad ${modalidad})`,
+            google_scope: 'colaboratium@gmail.com'
+        });
+
+        res.json({ success: true, id: eventId });
+    } catch (error) {
+        console.error('Error creando evento de calendario:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+app.delete('/api/empresas/:codigo/calendar/events/:id', async (req, res) => {
+    try {
+        const codigoEmpresa = req.params.codigo;
+        const { userId, userName, userRole } = req.body || {};
+
+        const deleted = await db.eliminarCalendarEvent(req.params.id, codigoEmpresa);
+
+        if (deleted) {
+            await db.registrarAuditLog({
+                codigo_empresa: codigoEmpresa,
+                usuario_id: userId,
+                usuario_nombre: userName,
+                rol: userRole,
+                accion: 'calendar_event_deleted',
+                entidad: 'calendar',
+                entidad_id: req.params.id,
+                detalles: `Evento de calendario eliminado ID ${req.params.id}`,
+                google_scope: 'colaboratium@gmail.com'
+            });
+            res.json({ success: true });
+        } else {
+            res.status(404).json({ success: false, error: 'Evento no encontrado' });
+        }
+    } catch (error) {
+        console.error('Error eliminando evento de calendario:', error);
         res.status(500).json({ success: false, error: error.message });
     }
 });
@@ -1217,10 +1497,17 @@ app.post('/api/empresas/:codigo/calendar/book', async (req, res) => {
 // Endpoint del Copiloto Flotante Multi-Sección
 app.post('/api/empresas/:codigo/copilot/chat', async (req, res) => {
     try {
-        const { message, context = {} } = req.body;
+        const { message, context = {}, user = {} } = req.body;
         const codigoEmpresa = req.params.codigo;
-        const empresa = await db.obtenerEmpresa(codigoEmpresa);
 
+        // 1. Verificar comandos de acción del Copiloto (búsqueda de chats, flujos, calendar, tickets, historial 360, PDF)
+        const { processCopilotCommand } = require('./copilotService');
+        const actionResult = await processCopilotCommand({ message, context, codigoEmpresa, user });
+        if (actionResult) {
+            return res.json(actionResult);
+        }
+
+        const empresa = await db.obtenerEmpresa(codigoEmpresa);
         const currentSection = context.section || 'General';
         let liveDataSection = '';
         try {

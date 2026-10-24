@@ -35,6 +35,12 @@ async function handleFlowEngine(dbContacto, cleanMessage, empresa, accessToken, 
         const keywords = f.trigger_keyword.toLowerCase().split(',').map(k => k.trim()).filter(Boolean);
         const cleanUserText = userText.replace(/^[¡!¿?\s]+|[¡!¿?\s.,]+$/g, '');
 
+        // Si el usuario ya está dentro de un flujo activo y escribe un solo número (ej: 1, 2, 3),
+        // este número pertenece a las opciones/slots del flujo actual, no a un trigger de cambio global.
+        if (activeFlowId && /^[1-9]$/.test(cleanUserText)) {
+            continue;
+        }
+
         for (const k of keywords) {
             let isMatch = false;
             // Coincidencia exacta o sin signos
@@ -147,7 +153,7 @@ async function handleFlowEngine(dbContacto, cleanMessage, empresa, accessToken, 
                 const varName = currentNode.data?.variable_name || 'dato_extra';
                 console.log(`[Flow] Variable guardada: ${varName} = ${userText}`);
 
-                // Detección de selección de slot interactivo o texto
+                // Detección de selección de slot interactivo o texto para Asesores
                 const isCalendarNode = currentNode.id === 'node_a3_captura' || varName === 'datos_contacto_asesor';
                 if (isCalendarNode) {
                     const emailMatch = cleanMessage.contenido.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/);
@@ -159,7 +165,7 @@ async function handleFlowEngine(dbContacto, cleanMessage, empresa, accessToken, 
                     // Si no tiene email aún pero seleccionó un horario (muy común al tocar el list selector de WhatsApp)
                     if (!detectedEmail) {
                         const { getAvailableWebinarSlots } = require('./googleCalendarService');
-                        const slots = await getAvailableWebinarSlots(codigoEmpresa);
+                        const slots = await getAvailableWebinarSlots(codigoEmpresa, 'asesores');
                         const chosen = slots.find(s => s.id === parseInt(slotChoice, 10)) || slots[0];
 
                         const promptForEmail = `¡Excelente elección! 📅 Reservaste tu turno para:\n*${chosen.titulo}*\n🗓️ ${chosen.fechaStr} (${chosen.horarioStr})\n\n👉 Para emitir tu invitación formal y enviarte el acceso a Google Meet o datos de recepción, por favor respóndeme con tu *Nombre completo* y tu *Correo electrónico* (ej. *Juan Pérez juan@gmail.com*):`;
@@ -184,7 +190,8 @@ async function handleFlowEngine(dbContacto, cleanMessage, empresa, accessToken, 
                             customerName: detectedName,
                             customerEmail: detectedEmail,
                             customerPhone: cleanMessage.identificador.valor,
-                            codigoEmpresa
+                            codigoEmpresa,
+                            category: 'asesores'
                         });
 
                         if (bookingRes && bookingRes.whatsappResponse) {
@@ -196,6 +203,247 @@ async function handleFlowEngine(dbContacto, cleanMessage, empresa, accessToken, 
                     } catch (bookingErr) {
                         console.error('[Flow] Error en processBooking:', bookingErr.message);
                     }
+                }
+
+                // Detección de datos de Red y selección de turnos para Líderes de Equipo
+                const isLeaderNode = currentNode.id === 'node_c3_captura' || varName === 'datos_red_lider' || dbContacto.rol_asignado === 'Lideres';
+                if (isLeaderNode) {
+                    const rawLower = cleanMessage.contenido.toLowerCase().trim();
+                    const emailMatch = cleanMessage.contenido.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/);
+                    const detectedEmail = emailMatch ? emailMatch[0].toLowerCase().trim() : (dbContacto.email || '');
+
+                    // Detección flexible de opción de turno:
+                    let slotChoice = null;
+                    const slotChoiceMatch = cleanMessage.contenido.match(/slot_([1-6])|\b([1-6])\b|opci[oó]n\s*([1-6])/i);
+                    if (slotChoiceMatch) {
+                        slotChoice = slotChoiceMatch[1] || slotChoiceMatch[2] || slotChoiceMatch[3];
+                    } else if (rawLower.includes('martes') || rawLower.includes('virtual') || rawLower.includes('meet')) {
+                        slotChoice = '1';
+                    } else if (rawLower.includes('jueves') || rawLower.includes('presencial') || rawLower.includes('vicente') || rawLower.includes('oficina')) {
+                        slotChoice = '2';
+                    }
+
+                    // Extraer nombre del líder si vino en el texto
+                    let detectedName = cleanMessage.contenido
+                        .split('\n')[0]
+                        .replace(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g, '')
+                        .replace(/[0-9+()\-]/g, '')
+                        .replace(/^(mi nombre es|soy|nombre:)\s*/i, '')
+                        .trim();
+                    if (!detectedName || detectedName.length < 2) detectedName = dbContacto.nombre || 'Líder Comercial';
+
+                    // Si el líder ya eligió un turno (ej. slot_1, "1", "2", "Martes", "Presencial", etc.):
+                    if (slotChoice && detectedEmail) {
+                        try {
+                            const { processBooking } = require('./googleCalendarService');
+                            const bookingRes = await processBooking({
+                                slotChoice,
+                                customerName: detectedName,
+                                customerEmail: detectedEmail,
+                                customerPhone: cleanMessage.identificador.valor,
+                                codigoEmpresa,
+                                category: 'lideres'
+                            });
+
+                            if (bookingRes && bookingRes.whatsappResponse) {
+                                const outMetaId = await sendWhatsAppMessage(cleanMessage.identificador.valor, bookingRes.whatsappResponse, phoneId, accessToken);
+                                await db.guardarMensaje(dbContacto.id, outMetaId, 'SALIENTE', 'text', bookingRes.whatsappResponse);
+                                await clearFlowState(dbContacto.id);
+                                return true;
+                            }
+                        } catch (bookingErr) {
+                            console.error('[Flow] Error en booking de líder:', bookingErr.message);
+                        }
+                    }
+
+                    // Si ya habíamos registrado sus datos (email ya existe en BD) y no eligió slot, puede estar haciendo una consulta:
+                    const alreadyCaptured = !!dbContacto.email && !emailMatch;
+                    if (alreadyCaptured) {
+                        console.log(`[Flow] Líder con datos ya registrados realizó consulta adicional. Derivando a RAG.`);
+                        const nextEdge = edges.find(e => e.source === currentNode.id);
+                        if (nextEdge) {
+                            contacto.nodo_actual_id = nextEdge.target;
+                            await db.actualizarContactoFlujo(dbContacto.id, flujo.id, nextEdge.target);
+                            isResuming = false;
+                            continue;
+                        }
+                    }
+
+                    // Si el líder envió sus datos de red por primera vez:
+                    const cleanPhone = (cleanMessage.identificador.valor || '').replace(/\D/g, '');
+                    
+                    // 1. Actualizar contacto en BD con su nombre real, email y grupo LIDERES
+                    await db.actualizarContactoCRM(dbContacto.id, codigoEmpresa, {
+                        nombre: detectedName,
+                        email: detectedEmail || null,
+                        grupo: 'LIDERES'
+                    });
+                    await db.actualizarAsignacionContacto(dbContacto.id, 'Lideres');
+
+                    // 2. Crear Ticket Helpdesk para Líderes
+                    let ticketId = null;
+                    try {
+                        ticketId = await db.crearTicket(
+                            codigoEmpresa,
+                            dbContacto.id,
+                            cleanPhone,
+                            detectedName,
+                            'pending_auth',
+                            `Líder de Red interesado: ${detectedName} (${detectedEmail}) - ${cleanMessage.contenido.replace(/\n/g, ' ')}`,
+                            null,
+                            'Equipo Líderes'
+                        );
+                    } catch (tErr) {
+                        console.error('[Flow] Error creando ticket de líder:', tErr.message);
+                    }
+
+                    // 3. Notificar por email a colaboratium@gmail.com
+                    try {
+                        const { sendLeaderInquiryToCompany } = require('./emailService');
+                        await sendLeaderInquiryToCompany({
+                            nombre: detectedName,
+                            email: detectedEmail || 'Sin email provisto',
+                            telefono: cleanPhone,
+                            datosRed: cleanMessage.contenido,
+                            ticketId
+                        });
+                    } catch (mailErr) {
+                        console.error('[Flow] Error enviando email de líder a la empresa:', mailErr.message);
+                    }
+
+                    // 4. Ofrecerle las opciones de webinar y reunión ejecutiva de líderes por WhatsApp
+                    const { sendWhatsAppInteractiveList } = require('./whatsappService');
+                    const { formatInteractiveCalendarList, formatCalendarOptionsText } = require('./googleCalendarService');
+
+                    let sentInteractive = false;
+                    try {
+                        const listPayload = await formatInteractiveCalendarList(codigoEmpresa, 'lideres');
+                        const outMetaId = await sendWhatsAppInteractiveList(cleanMessage.identificador.valor, listPayload, phoneId, accessToken);
+                        if (outMetaId) {
+                            sentInteractive = true;
+                            await db.guardarMensaje(dbContacto.id, outMetaId, 'SALIENTE', 'interactive', 'Menú Interactivo: Turnos para Líderes de Equipo');
+                            console.log(`[Flow] Formulario interactivo de líderes enviado exitosamente.`);
+                        }
+                    } catch (listErr) {
+                        console.warn(`[Flow] Falló interactive list de líderes, usando texto:`, listErr.message);
+                    }
+
+                    if (!sentInteractive) {
+                        const cleanText = await formatCalendarOptionsText(codigoEmpresa, 'lideres');
+                        const outMetaId = await sendWhatsAppMessage(cleanMessage.identificador.valor, cleanText, phoneId, accessToken);
+                        await db.guardarMensaje(dbContacto.id, outMetaId, 'SALIENTE', 'text', cleanText);
+                    }
+
+                    return true; // Espera que el líder elija su opción
+                }
+
+                // Detección de registro y solicitud de asesor para Inversores de Capital
+                const isInvestorNode = currentNode.id === 'node_b4_captura' || varName === 'datos_registro_inversor' || varName === 'perfil_capital_inversor' || dbContacto.rol_asignado === 'Inversores';
+                if (isInvestorNode) {
+                    const rawLower = cleanMessage.contenido.toLowerCase().trim();
+                    const emailMatch = cleanMessage.contenido.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/);
+                    const cleanPhone = (cleanMessage.identificador.valor || '').replace(/\D/g, '');
+
+                    // Caso A: El inversor ya tiene email registrado y responde a la pregunta de si desea un Asesor Personalizado
+                    const wantsAdvisorMatch = /^(s[ií]|dale|por favor|me interesa|quiero|ok|bueno|si por favor|si me interesa|necesito asesor)\b/i.test(rawLower);
+                    const rejectsAdvisorMatch = /^(no|por ahora no|no gracias|solo|autogestion)\b/i.test(rawLower);
+
+                    if (dbContacto.email && (wantsAdvisorMatch || rejectsAdvisorMatch)) {
+                        if (wantsAdvisorMatch) {
+                            try {
+                                await db.crearTicket(
+                                    codigoEmpresa,
+                                    dbContacto.id,
+                                    cleanPhone,
+                                    dbContacto.nombre || 'Inversor Registrado',
+                                    'pending_auth',
+                                    `Inversor solicita Asesor Personalizado: ${dbContacto.nombre} (${dbContacto.email}) - Pendiente de delegar a Agente o Líder`,
+                                    null,
+                                    'Mesa de Inversiones'
+                                );
+                            } catch (e) {
+                                console.error('[Flow] Error actualizando ticket inversor:', e.message);
+                            }
+
+                            const confirmMsg = `¡Excelente! 🤝 Hemos generado la solicitud en nuestro sistema. El equipo de Dirección Comercial te asignará un *Asesor Financiero personalizado* quien se pondrá en contacto contigo a la brevedad para acompañarte en tu primera inversión.`;
+                            const outMetaId = await sendWhatsAppMessage(cleanMessage.identificador.valor, confirmMsg, phoneId, accessToken);
+                            await db.guardarMensaje(dbContacto.id, outMetaId, 'SALIENTE', 'text', confirmMsg);
+                            await clearFlowState(dbContacto.id);
+                            return true;
+                        } else {
+                            const selfMsg = `¡Entendido! Podés realizar tu registro y colocación de forma 100% autogestionada siguiendo la guía enviada a tu correo. Ante cualquier inquietud o consulta sobre el simulador, estamos a tu disposición por este medio.`;
+                            const outMetaId = await sendWhatsAppMessage(cleanMessage.identificador.valor, selfMsg, phoneId, accessToken);
+                            await db.guardarMensaje(dbContacto.id, outMetaId, 'SALIENTE', 'text', selfMsg);
+                            await clearFlowState(dbContacto.id);
+                            return true;
+                        }
+                    }
+
+                    // Caso B: El inversor envía sus datos por primera vez (Nombre, email, monto)
+                    const detectedEmail = emailMatch ? emailMatch[0].toLowerCase().trim() : (dbContacto.email || '');
+                    let detectedName = cleanMessage.contenido
+                        .split('\n')[0]
+                        .replace(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g, '')
+                        .replace(/[0-9+()$\-]/g, '')
+                        .replace(/^(mi nombre es|soy|nombre:)\s*/i, '')
+                        .trim();
+                    if (!detectedName || detectedName.length < 2) detectedName = dbContacto.nombre || 'Inversor Registrado';
+
+                    // 1. Actualizar contacto en CRM
+                    await db.actualizarContactoCRM(dbContacto.id, codigoEmpresa, {
+                        nombre: detectedName,
+                        email: detectedEmail || null,
+                        grupo: 'INVERSORES'
+                    });
+                    await db.actualizarAsignacionContacto(dbContacto.id, 'Inversores');
+
+                    // 2. Crear Ticket Helpdesk en estado 'pending_auth'
+                    let ticketId = null;
+                    try {
+                        ticketId = await db.crearTicket(
+                            codigoEmpresa,
+                            dbContacto.id,
+                            cleanPhone,
+                            detectedName,
+                            'pending_auth',
+                            `Inversor registrado: ${detectedName} (${detectedEmail}) - Capital/Detalle: ${cleanMessage.contenido.replace(/\n/g, ' ')}`,
+                            null,
+                            'Mesa de Inversiones'
+                        );
+                    } catch (tErr) {
+                        console.error('[Flow] Error creando ticket inversor:', tErr.message);
+                    }
+
+                    // 3. Enviar Guía de Ingreso, Login y Operatoria al Inversor por email
+                    if (detectedEmail) {
+                        try {
+                            const { sendInvestorWelcomeGuide, sendInvestorInquiryToCompany } = require('./emailService');
+                            await sendInvestorWelcomeGuide({
+                                nombre: detectedName,
+                                email: detectedEmail,
+                                telefono: cleanPhone,
+                                detalles: cleanMessage.contenido
+                            });
+                            await sendInvestorInquiryToCompany({
+                                nombre: detectedName,
+                                email: detectedEmail,
+                                telefono: cleanPhone,
+                                detalles: cleanMessage.contenido,
+                                ticketId
+                            });
+                        } catch (mailErr) {
+                            console.error('[Flow] Error despachando email inversor:', mailErr.message);
+                        }
+                    }
+
+                    // 4. Enviar mensaje de WhatsApp confirmando y preguntando si desea Asesor personalizado
+                    const investorReply = `¡Muchas gracias, *${detectedName}*! 📈 Te acabamos de enviar a *${detectedEmail || 'tu casilla de correo'}* la *Guía Oficial de Ingreso y Operatoria* con el paso a paso para acceder a la plataforma, validar tu identidad ante el BCRA y fondear tu CVU bancarizado.\n\n` +
+                        `📊 *Simulador Online:* Recordá que podés calcular tus retornos según plazo en https://colaboratium.com.ar/inversiones.php#simulador (montos desde *$100.000* hasta *$10.000.000* sin papeles extra).\n\n` +
+                        `👉 *¿Te gustaría que te asignemos un Asesor Financiero personalizado para acompañarte y resolver cualquier duda en tu primera inversión?* (Responde *Sí* o *No*)`;
+
+                    const outMetaId = await sendWhatsAppMessage(cleanMessage.identificador.valor, investorReply, phoneId, accessToken);
+                    await db.guardarMensaje(dbContacto.id, outMetaId, 'SALIENTE', 'text', investorReply);
+                    return true; // Espera respuesta de Sí o No para delegar el ticket
                 }
             } else if (currentNode.type === 'rag') {
                 console.log(`[Flow] Ejecutando RAG local con el mensaje del usuario.`);
@@ -259,8 +507,29 @@ async function handleFlowEngine(dbContacto, cleanMessage, empresa, accessToken, 
         else if (currentNode.type === 'identity') {
             const varName = currentNode.data?.variable_name || '';
             const isCalendarNode = currentNode.id === 'node_a3_captura' || varName === 'datos_contacto_asesor';
+            const isWelcomeMenu = currentNode.id === 'node_id_seleccion' || varName === 'opcion_seleccionada';
 
-            if (isCalendarNode) {
+            if (isWelcomeMenu) {
+                const { sendWhatsAppInteractiveList, formatWelcomeInteractiveList } = require('./whatsappService');
+                let sentInteractive = false;
+                try {
+                    const welcomePayload = formatWelcomeInteractiveList();
+                    const outMetaId = await sendWhatsAppInteractiveList(cleanMessage.identificador.valor, welcomePayload, phoneId, accessToken);
+                    if (outMetaId) {
+                        sentInteractive = true;
+                        await db.guardarMensaje(dbContacto.id, outMetaId, 'SALIENTE', 'interactive', 'Menú Principal: Selección de Perfil');
+                        console.log(`[Flow] Menú interactivo de bienvenida enviado exitosamente.`);
+                    }
+                } catch (e) {
+                    console.warn(`[Flow] Falló menú interactivo de bienvenida (${e.message}), enviando texto.`);
+                }
+
+                if (!sentInteractive) {
+                    const question = currentNode.data?.question || '¿Qué perfil deseas explorar? Escribe 1 (Inversor), 2 (Asesor) o 3 (Líder):';
+                    const outMetaId = await sendWhatsAppMessage(cleanMessage.identificador.valor, question, phoneId, accessToken);
+                    await db.guardarMensaje(dbContacto.id, outMetaId, 'SALIENTE', 'text', question);
+                }
+            } else if (isCalendarNode) {
                 const { sendWhatsAppInteractiveList } = require('./whatsappService');
                 const { formatInteractiveCalendarList, formatCalendarOptionsText } = require('./googleCalendarService');
                 

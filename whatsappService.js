@@ -7,8 +7,27 @@ const axios = require('axios');
  * @param {string} phoneId - El ID del teléfono de envío.
  * @param {string} accessToken - El token de acceso de Graph API.
  */
+async function resolveWhatsAppCredentials(phoneId, accessToken, codigoEmpresa = 'KRZMJI') {
+    if (phoneId && accessToken) return { phoneId, accessToken };
+    try {
+        const db = require('./database');
+        const emp = await db.obtenerEmpresa(codigoEmpresa);
+        if (emp && emp.cuentas_vinculadas) {
+            const cv = typeof emp.cuentas_vinculadas === 'string' ? JSON.parse(emp.cuentas_vinculadas) : emp.cuentas_vinculadas;
+            phoneId = phoneId || cv?.whatsapp?.phone_id;
+            accessToken = accessToken || cv?.whatsapp?.access_token;
+        }
+    } catch (e) {}
+    phoneId = phoneId || process.env.WHATSAPP_PHONE_ID;
+    accessToken = accessToken || process.env.WHATSAPP_ACCESS_TOKEN || process.env.WHATSAPP_TOKEN;
+    return { phoneId, accessToken };
+}
+
 async function sendWhatsAppMessage(recipientId, text, phoneId, accessToken) {
     try {
+        const creds = await resolveWhatsAppCredentials(phoneId, accessToken);
+        phoneId = creds.phoneId;
+        accessToken = creds.accessToken;
         if (!phoneId || !accessToken) throw new Error("Faltan credenciales de WhatsApp");
         // Utilizamos la versión 20.0 de la API (puedes ajustarla según necesites)
         const url = `https://graph.facebook.com/v20.0/${phoneId}/messages`;
@@ -50,6 +69,9 @@ async function sendWhatsAppMessage(recipientId, text, phoneId, accessToken) {
  */
 async function sendWhatsAppInteractiveList(recipientId, { headerText, bodyText, footerText, buttonText = "Ver Horarios 📅", sections = [] }, phoneId, accessToken) {
     try {
+        const creds = await resolveWhatsAppCredentials(phoneId, accessToken);
+        phoneId = creds.phoneId;
+        accessToken = creds.accessToken;
         if (!phoneId || !accessToken) throw new Error("Faltan credenciales de WhatsApp");
         const url = `https://graph.facebook.com/v20.0/${phoneId}/messages`;
 
@@ -277,11 +299,46 @@ async function downloadWhatsAppMedia(mediaId, accessToken) {
     }
 }
 
+/**
+ * Genera el payload de formulario interactivo de 3 opciones para el Menú Principal
+ */
+function formatWelcomeInteractiveList() {
+    return {
+        headerText: "Colaboratium (BCRA Nº 40.015)",
+        bodyText: "¿Con qué opción te gustaría avanzar hoy? Elige tu perfil en el menú interactivo para acceder a la información correspondiente:",
+        footerText: "Registro BCRA Nº 40.015",
+        buttonText: "Elegir Perfil 📋",
+        sections: [
+            {
+                title: "PERFILES DISPONIBLES",
+                rows: [
+                    {
+                        id: "1",
+                        title: "1. Inversor",
+                        description: "Quiero invertir en la plataforma"
+                    },
+                    {
+                        id: "2",
+                        title: "2. Asesor Comercial",
+                        description: "Quiero trabajar con ustedes"
+                    },
+                    {
+                        id: "3",
+                        title: "3. Líder de Equipo",
+                        description: "Tengo equipo y me interesa su propuesta"
+                    }
+                ]
+            }
+        ]
+    };
+}
+
 module.exports = {
     sendWhatsAppMessage,
     sendWhatsAppTemplate,
     downloadWhatsAppMedia,
     sendWhatsAppInteractiveList,
-    sendWhatsAppInteractiveButtons
+    sendWhatsAppInteractiveButtons,
+    formatWelcomeInteractiveList
 };
 

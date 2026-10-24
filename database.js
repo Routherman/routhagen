@@ -179,6 +179,61 @@ async function initDB() {
             );
         `);
 
+        try {
+            await pool.query("ALTER TABLE tickets ADD COLUMN priority VARCHAR(50) DEFAULT 'media'");
+        } catch(e) {}
+        try {
+            await pool.query("ALTER TABLE tickets ADD COLUMN category VARCHAR(100) DEFAULT 'General'");
+        } catch(e) {}
+        try {
+            await pool.query("ALTER TABLE tickets ADD COLUMN internal_notes TEXT DEFAULT NULL");
+        } catch(e) {}
+        try {
+            await pool.query("ALTER TABLE tickets ADD COLUMN authorized_at TIMESTAMP NULL DEFAULT NULL");
+        } catch(e) {}
+        try {
+            await pool.query("ALTER TABLE tickets ADD COLUMN authorized_by_user_id VARCHAR(150) DEFAULT NULL");
+        } catch(e) {}
+
+        // Tabla de Auditoría y Logs de Sucesos (Ámbito Google / Colaboratium)
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS audit_logs (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                codigo_empresa VARCHAR(50) NOT NULL,
+                usuario_id VARCHAR(150) DEFAULT NULL,
+                usuario_email VARCHAR(150) DEFAULT NULL,
+                usuario_nombre VARCHAR(150) DEFAULT NULL,
+                rol VARCHAR(100) DEFAULT NULL,
+                accion VARCHAR(100) NOT NULL,
+                entidad VARCHAR(100) NOT NULL,
+                entidad_id VARCHAR(100) DEFAULT NULL,
+                detalles TEXT DEFAULT NULL,
+                google_scope VARCHAR(150) DEFAULT 'colaboratium@gmail.com',
+                creado_en TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+        `);
+
+        // Tabla de Eventos Personalizados de Calendario (Webinars & Meet)
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS calendar_events (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                codigo_empresa VARCHAR(50) NOT NULL,
+                titulo VARCHAR(255) NOT NULL,
+                tipo VARCHAR(50) NOT NULL DEFAULT 'webinar',
+                modalidad VARCHAR(50) NOT NULL DEFAULT 'VIRTUAL',
+                categoria VARCHAR(50) NOT NULL DEFAULT 'ASESORES',
+                fecha VARCHAR(100) NOT NULL,
+                horario VARCHAR(100) NOT NULL,
+                meet_link VARCHAR(255) DEFAULT 'https://meet.google.com/qmv-wqzk-hxo',
+                ubicacion VARCHAR(255) DEFAULT 'Google Meet',
+                cupos INT DEFAULT 25,
+                creado_por_usuario_id VARCHAR(150) DEFAULT NULL,
+                creado_por_nombre VARCHAR(150) DEFAULT NULL,
+                creado_por_rol VARCHAR(100) DEFAULT NULL,
+                creado_en TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+        `);
+
         // Tabla de Estadísticas de Modelos IA (Consumo de Tokens)
         await pool.query(`
             CREATE TABLE IF NOT EXISTS ai_models_stats (
@@ -239,6 +294,18 @@ async function initDB() {
         try {
             await pool.query('ALTER TABLE contactos ADD COLUMN metadata_extra JSON DEFAULT NULL');
         } catch(e) {}
+        try {
+            await pool.query("ALTER TABLE contactos ADD COLUMN estado_resolucion VARCHAR(50) DEFAULT 'RESUELTO'");
+        } catch(e) {}
+        try {
+            await pool.query("ALTER TABLE contactos ADD COLUMN nota_pendiente TEXT DEFAULT NULL");
+        } catch(e) {}
+        try {
+            await pool.query("ALTER TABLE contactos ADD COLUMN lider_id INT DEFAULT NULL");
+        } catch(e) {}
+        try {
+            await pool.query("ALTER TABLE contactos ADD COLUMN asesor_id INT DEFAULT NULL");
+        } catch(e) {}
 
         console.log('✅ Base de datos MySQL y tablas inicializadas correctamente.');
     } catch (error) {
@@ -252,16 +319,54 @@ async function initDB() {
  */
 async function upsertContacto(telefono, nombre, codigo_empresa, email = null) {
     if (!pool) return null;
-    
+    const cleanPhone = (telefono || '').replace(/\D/g, '');
+    if (!cleanPhone) return null;
+
+    // 1. Buscar si ya existe por teléfono limpio o con +
+    const [existing] = await pool.query(
+        "SELECT id, nombre, email, telefono FROM contactos WHERE (telefono = ? OR telefono = ?) AND codigo_empresa = ? LIMIT 1",
+        [cleanPhone, `+${cleanPhone}`, codigo_empresa]
+    );
+
+    if (existing && existing.length > 0) {
+        const contactId = existing[0].id;
+        const currentName = existing[0].nombre;
+        const updateFields = [];
+        const updateVals = [];
+
+        // Si viene un nombre nuevo más completo (ej. la persona dio su nombre real vs pushname)
+        if (nombre && nombre !== currentName && !nombre.startsWith('Usuario ') && nombre.trim().length > 2) {
+            updateFields.push('nombre = ?');
+            updateVals.push(nombre.trim());
+        }
+        if (email && email !== existing[0].email) {
+            updateFields.push('email = ?');
+            updateVals.push(email.trim().toLowerCase());
+        }
+        // Normalizar teléfono a sólo dígitos
+        if (existing[0].telefono !== cleanPhone) {
+            updateFields.push('telefono = ?');
+            updateVals.push(cleanPhone);
+        }
+
+        if (updateFields.length > 0) {
+            updateVals.push(contactId);
+            await pool.query(`UPDATE contactos SET ${updateFields.join(', ')} WHERE id = ?`, updateVals);
+        }
+
+        const [rows] = await pool.query('SELECT id, estado_bot, nombre, telefono, email, grupo, rol_asignado FROM contactos WHERE id = ?', [contactId]);
+        return rows[0];
+    }
+
     await pool.query(`
         INSERT INTO contactos (telefono, nombre, codigo_empresa, email) 
         VALUES (?, ?, ?, ?) 
         ON DUPLICATE KEY UPDATE 
             nombre = IF(VALUES(nombre) IS NOT NULL AND VALUES(nombre) != '', VALUES(nombre), nombre),
             email = IF(VALUES(email) IS NOT NULL AND VALUES(email) != '', VALUES(email), email)
-    `, [telefono, nombre, codigo_empresa, email]);
+    `, [cleanPhone, nombre, codigo_empresa, email]);
     
-    const [rows] = await pool.query('SELECT id, estado_bot, nombre, telefono, email FROM contactos WHERE telefono = ? AND codigo_empresa = ?', [telefono, codigo_empresa]);
+    const [rows] = await pool.query('SELECT id, estado_bot, nombre, telefono, email, grupo, rol_asignado FROM contactos WHERE telefono = ? AND codigo_empresa = ?', [cleanPhone, codigo_empresa]);
     return rows[0];
 }
 
@@ -708,12 +813,12 @@ async function actualizarContactoFlujo(contactoId, flujoId, nodoId) {
 // -------------------------------------------------------------
 // TICKETS (HELPDESK / ÓRDENES)
 // -------------------------------------------------------------
-async function crearTicket(codigo_empresa, contacto_id, customer_number, customer_name, status = 'open', summary = null, assigned_to_user_id = null, assigned_to_name = null) {
+async function crearTicket(codigo_empresa, contacto_id, customer_number, customer_name, status = 'open', summary = null, assigned_to_user_id = null, assigned_to_name = null, priority = 'media', category = 'General', internal_notes = null) {
     if (!pool) return null;
     const [result] = await pool.query(`
-        INSERT INTO tickets (codigo_empresa, contacto_id, customer_number, customer_name, status, summary, assigned_to_user_id, assigned_to_name)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `, [codigo_empresa, contacto_id, customer_number, customer_name, status, summary, assigned_to_user_id, assigned_to_name]);
+        INSERT INTO tickets (codigo_empresa, contacto_id, customer_number, customer_name, status, summary, assigned_to_user_id, assigned_to_name, priority, category, internal_notes)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `, [codigo_empresa, contacto_id, customer_number, customer_name, status, summary, assigned_to_user_id, assigned_to_name, priority, category, internal_notes]);
     return result.insertId;
 }
 
@@ -742,7 +847,7 @@ async function actualizarTicket(id, codigo_empresa, updateData) {
     const fields = [];
     const values = [];
     for (const [key, val] of Object.entries(updateData)) {
-        if (['status', 'summary', 'assigned_to_user_id', 'assigned_to_name', 'email_sent_to', 'email_sent_at', 'customer_name'].includes(key)) {
+        if (['status', 'summary', 'priority', 'category', 'internal_notes', 'assigned_to_user_id', 'assigned_to_name', 'authorized_at', 'authorized_by_user_id', 'email_sent_to', 'email_sent_at', 'customer_name'].includes(key)) {
             fields.push(`${key} = ?`);
             values.push(val);
         }
@@ -756,6 +861,72 @@ async function actualizarTicket(id, codigo_empresa, updateData) {
 async function eliminarTicket(id, codigo_empresa) {
     if (!pool) return false;
     await pool.query('DELETE FROM tickets WHERE id = ? AND codigo_empresa = ?', [id, codigo_empresa]);
+    return true;
+}
+
+// -------------------------------------------------------------
+// LOGS DE AUDITORÍA Y SUCESOS (ÁMBITO GOOGLE COLABORATIUM)
+// -------------------------------------------------------------
+async function registrarAuditLog({ codigo_empresa, usuario_id = null, usuario_email = null, usuario_nombre = null, rol = null, accion, entidad, entidad_id = null, detalles = null, google_scope = 'colaboratium@gmail.com' }) {
+    if (!pool) return null;
+    try {
+        const [res] = await pool.query(`
+            INSERT INTO audit_logs (codigo_empresa, usuario_id, usuario_email, usuario_nombre, rol, accion, entidad, entidad_id, detalles, google_scope)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `, [codigo_empresa, usuario_id, usuario_email, usuario_nombre, rol, accion, entidad, entidad_id, detalles, google_scope]);
+        return res.insertId;
+    } catch(e) {
+        console.error('Error registrando audit log:', e.message);
+        return null;
+    }
+}
+
+async function obtenerAuditLogs(codigo_empresa, limit = 50) {
+    if (!pool) return [];
+    try {
+        const [rows] = await pool.query('SELECT * FROM audit_logs WHERE codigo_empresa = ? ORDER BY creado_en DESC LIMIT ?', [codigo_empresa, parseInt(limit, 10) || 50]);
+        return rows;
+    } catch(e) {
+        return [];
+    }
+}
+
+// -------------------------------------------------------------
+// EVENTOS DE CALENDARIO (WEBINARS Y MEET)
+// -------------------------------------------------------------
+async function crearCalendarEvent(codigo_empresa, eventData) {
+    if (!pool) return null;
+    const { 
+        titulo, 
+        tipo = 'webinar', 
+        modalidad = 'VIRTUAL', 
+        categoria = 'ASESORES', 
+        fecha, 
+        horario, 
+        meet_link = 'https://meet.google.com/qmv-wqzk-hxo', 
+        ubicacion = 'Google Meet', 
+        cupos = 25, 
+        creado_por_usuario_id = null, 
+        creado_por_nombre = null, 
+        creado_por_rol = null 
+    } = eventData;
+
+    const [res] = await pool.query(`
+        INSERT INTO calendar_events (codigo_empresa, titulo, tipo, modalidad, categoria, fecha, horario, meet_link, ubicacion, cupos, creado_por_usuario_id, creado_por_nombre, creado_por_rol)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `, [codigo_empresa, titulo, tipo, modalidad, categoria, fecha, horario, meet_link, ubicacion, cupos, creado_por_usuario_id, creado_por_nombre, creado_por_rol]);
+    return res.insertId;
+}
+
+async function obtenerCalendarEvents(codigo_empresa) {
+    if (!pool) return [];
+    const [rows] = await pool.query('SELECT * FROM calendar_events WHERE codigo_empresa = ? ORDER BY id DESC', [codigo_empresa]);
+    return rows;
+}
+
+async function eliminarCalendarEvent(id, codigo_empresa) {
+    if (!pool) return false;
+    await pool.query('DELETE FROM calendar_events WHERE id = ? AND codigo_empresa = ?', [id, codigo_empresa]);
     return true;
 }
 
@@ -807,7 +978,11 @@ async function obtenerContactosCRM(codigo_empresa, grupo = null, search = '') {
 
 async function actualizarContactoCRM(id, codigo_empresa, data) {
     if (!pool) return false;
-    const allowed = ['nombre', 'email', 'dni', 'direccion', 'cbu', 'alias', 'banco', 'sucursal', 'grupo', 'instagram', 'facebook', 'linkedin', 'telegram', 'metadata_extra'];
+    const allowed = [
+        'nombre', 'email', 'dni', 'direccion', 'cbu', 'alias', 'banco', 'sucursal', 'grupo', 
+        'instagram', 'facebook', 'linkedin', 'telegram', 'metadata_extra',
+        'estado_resolucion', 'nota_pendiente', 'lider_id', 'asesor_id', 'rol_asignado', 'usuario_asignado_id'
+    ];
     const fields = [];
     const values = [];
     for (const [k, v] of Object.entries(data)) {
@@ -822,8 +997,88 @@ async function actualizarContactoCRM(id, codigo_empresa, data) {
     return true;
 }
 
+async function derivarContactoTeam(id, codigo_empresa, rol_asignado, usuario_asignado_id = null) {
+    if (!pool) return false;
+    await pool.query(
+        'UPDATE contactos SET rol_asignado = ?, usuario_asignado_id = ? WHERE id = ? AND codigo_empresa = ?',
+        [rol_asignado, usuario_asignado_id, id, codigo_empresa]
+    );
+    return true;
+}
+
+async function asignarJerarquiaContacto(id, codigo_empresa, lider_id = null, asesor_id = null) {
+    if (!pool) return false;
+    await pool.query(
+        'UPDATE contactos SET lider_id = ?, asesor_id = ? WHERE id = ? AND codigo_empresa = ?',
+        [lider_id, asesor_id, id, codigo_empresa]
+    );
+    return true;
+}
+
+async function actualizarResolucionContacto(id, codigo_empresa, estado_resolucion, nota_pendiente = null) {
+    if (!pool) return false;
+    await pool.query(
+        'UPDATE contactos SET estado_resolucion = ?, nota_pendiente = ? WHERE id = ? AND codigo_empresa = ?',
+        [estado_resolucion, nota_pendiente, id, codigo_empresa]
+    );
+    return true;
+}
+
+async function obtenerArbolDependencias(codigo_empresa) {
+    if (!pool) return null;
+    const [all] = await pool.query(
+        'SELECT id, nombre, telefono, email, grupo, rol_asignado, estado_resolucion, nota_pendiente, lider_id, asesor_id, creado_en FROM contactos WHERE codigo_empresa = ? ORDER BY id ASC',
+        [codigo_empresa]
+    );
+
+    const lideres = all.filter(c => (c.grupo || '').toUpperCase() === 'LIDERES' || (c.rol_asignado || '').toLowerCase() === 'lideres');
+    const asesores = all.filter(c => (c.grupo || '').toUpperCase() === 'ASESORES' || (c.rol_asignado || '').toLowerCase() === 'asesores');
+    const inversores = all.filter(c => (c.grupo || '').toUpperCase() === 'INVERSORES' || (c.rol_asignado || '').toLowerCase() === 'inversores');
+    const clientes = all.filter(c => (c.grupo || '').toUpperCase() === 'CLIENTES' && !['Lideres', 'Asesores', 'Inversores'].includes(c.rol_asignado));
+
+    return {
+        root: {
+            email: 'colaboratium@gmail.com',
+            name: 'Colaboratium Dirección Central',
+            role: 'MASTER'
+        },
+        lideres,
+        asesores,
+        inversores,
+        clientes,
+        total: all.length
+    };
+}
+
 async function crearContactoCRM(codigo_empresa, data) {
     if (!pool) return null;
+    const cleanPhone = (data.telefono || '').replace(/\D/g, '');
+
+    // 1. Verificar si ya existe por teléfono (con o sin +) o por email
+    let existingId = null;
+    if (cleanPhone) {
+        const [byPhone] = await pool.query(
+            "SELECT id FROM contactos WHERE (telefono = ? OR telefono = ?) AND codigo_empresa = ? LIMIT 1",
+            [cleanPhone, `+${cleanPhone}`, codigo_empresa]
+        );
+        if (byPhone && byPhone.length > 0) existingId = byPhone[0].id;
+    }
+    if (!existingId && data.email) {
+        const [byEmail] = await pool.query(
+            "SELECT id FROM contactos WHERE email = ? AND codigo_empresa = ? LIMIT 1",
+            [data.email.trim().toLowerCase(), codigo_empresa]
+        );
+        if (byEmail && byEmail.length > 0) existingId = byEmail[0].id;
+    }
+
+    if (existingId) {
+        await actualizarContactoCRM(existingId, codigo_empresa, {
+            ...data,
+            telefono: cleanPhone || data.telefono
+        });
+        return existingId;
+    }
+
     const metaStr = data.metadata_extra && typeof data.metadata_extra === 'object' ? JSON.stringify(data.metadata_extra) : data.metadata_extra;
     const [res] = await pool.query(`
         INSERT INTO contactos (telefono, nombre, codigo_empresa, email, dni, direccion, cbu, alias, banco, sucursal, grupo, instagram, facebook, linkedin, telegram, metadata_extra)
@@ -844,7 +1099,7 @@ async function crearContactoCRM(codigo_empresa, data) {
             telegram = VALUES(telegram),
             metadata_extra = VALUES(metadata_extra)
     `, [
-        data.telefono, data.nombre || '', codigo_empresa, data.email || null,
+        cleanPhone || data.telefono, data.nombre || '', codigo_empresa, data.email || null,
         data.dni || null, data.direccion || null, data.cbu || null, data.alias || null,
         data.banco || null, data.sucursal || null, data.grupo || 'CLIENTES',
         data.instagram || null, data.facebook || null, data.linkedin || null, data.telegram || null,
@@ -919,5 +1174,14 @@ module.exports = {
     eliminarContactoCRM,
     obtenerRubros,
     crearRubro,
+    registrarAuditLog,
+    obtenerAuditLogs,
+    crearCalendarEvent,
+    obtenerCalendarEvents,
+    eliminarCalendarEvent,
+    derivarContactoTeam,
+    asignarJerarquiaContacto,
+    actualizarResolucionContacto,
+    obtenerArbolDependencias,
     get pool() { return pool; }
 };

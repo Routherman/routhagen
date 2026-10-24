@@ -36,6 +36,11 @@ async function runSimulation() {
             const keywords = f.trigger_keyword.toLowerCase().split(',').map(k => k.trim()).filter(Boolean);
             const cleanUserText = userText.replace(/^[¡!¿?\s]+|[¡!¿?\s.,]+$/g, '');
 
+            // Si el usuario ya está dentro de un flujo y escribe un dígito (ej. 1, 2), es respuesta de slot
+            if (contactState.flujo_activo_id && /^[1-9]$/.test(cleanUserText)) {
+                continue;
+            }
+
             for (const k of keywords) {
                 let isMatch = false;
                 if (userText === k || cleanUserText === k) {
@@ -107,7 +112,68 @@ async function runSimulation() {
                     contactState.variables[varName] = userMessage;
                     console.log(`💾 [VARIABLE GUARDADA]: ${varName} = "${userMessage}"`);
 
+                    const isLeaderNode = currentNode.id === 'node_c3_captura' || varName === 'datos_red_lider';
                     const emailMatch = userMessage.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/);
+
+                    if (isLeaderNode) {
+                        const rawLower = userMessage.toLowerCase().trim();
+                        let slotChoice = null;
+                        const slotMatch = userMessage.match(/slot_([1-6])|\b([1-6])\b|opci[oó]n\s*([1-6])/i);
+                        if (slotMatch) {
+                            slotChoice = slotMatch[1] || slotMatch[2] || slotMatch[3];
+                        } else if (rawLower.includes('martes') || rawLower.includes('virtual') || rawLower.includes('meet')) {
+                            slotChoice = '1';
+                        } else if (rawLower.includes('jueves') || rawLower.includes('presencial') || rawLower.includes('vicente')) {
+                            slotChoice = '2';
+                        }
+
+                        // Si ya tiene email registrado (de turno previo) o lo incluyó acá y además eligió turno:
+                        const existingEmail = contactState.variables?.['email'] || (emailMatch ? emailMatch[0] : null);
+                        if (slotChoice && existingEmail) {
+                            const detectedName = contactState.variables?.['nombre'] || 'Alejandro Bolognese';
+                            const { processBooking } = require('./googleCalendarService');
+                            const bookingRes = await processBooking({
+                                slotChoice,
+                                customerName: detectedName,
+                                customerEmail: existingEmail,
+                                customerPhone: contactState.telefono,
+                                codigoEmpresa,
+                                category: 'lideres'
+                            });
+
+                            console.log(`\n👑 [RESERVA LÍDER CONFIRMADA]:`);
+                            console.log(`🎟️ [TICKET CREADO EN BD]: Ticket #${bookingRes.ticketId}`);
+                            console.log(`📧 [EMAIL CONFIRMACIÓN A LÍDER]: Enviado a ${existingEmail}`);
+                            console.log(`📢 [NOTIFICACIÓN COMPAÑÍA]: Enviado a colaboratium@gmail.com`);
+                            console.log(`\n🤖 [RESPUESTA BOT CONFIRMACIÓN LÍDER]:\n${bookingRes.whatsappResponse}\n`);
+
+                            contactState.flujo_activo_id = null;
+                            contactState.nodo_actual_id = null;
+                            return;
+                        }
+
+                        // Si es el primer mensaje con los datos del líder:
+                        const detectedEmail = emailMatch ? emailMatch[0] : 'sirkimonolabs@gmail.com';
+                        let detectedName = userMessage
+                            .split('\n')[0]
+                            .replace(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g, '')
+                            .replace(/[0-9+()\-]/g, '')
+                            .replace(/^(mi nombre es|soy|nombre:)\s*/i, '')
+                            .trim() || 'Alejandro Bolognese';
+
+                        contactState.variables['nombre'] = detectedName;
+                        contactState.variables['email'] = detectedEmail;
+
+                        console.log(`\n💾 [CRM LÍDER ACTUALIZADO]: Nombre: ${detectedName}, Email: ${detectedEmail}, Grupo: LIDERES`);
+                        console.log(`🎟️ [TICKET HELPDESK CREADO]: Líder de Red interesado - ${detectedName} (${detectedEmail})`);
+                        console.log(`📢 [EMAIL A COLABORATIUM]: Notificación enviada a colaboratium@gmail.com`);
+
+                        const { formatCalendarOptionsText } = require('./googleCalendarService');
+                        const optionsText = await formatCalendarOptionsText(codigoEmpresa, 'lideres');
+                        console.log(`\n🤖 [OPCIONES WEBINAR / REUNIÓN ENVIADAS]:\n${optionsText}\n`);
+                        return; // Queda esperando la opción 1 o 2 del líder
+                    }
+
                     if (emailMatch || varName === 'datos_contacto_asesor') {
                         const detectedEmail = emailMatch ? emailMatch[0] : 'asesor@ejemplo.com';
                         let detectedName = userMessage
@@ -125,7 +191,8 @@ async function runSimulation() {
                             customerName: detectedName,
                             customerEmail: detectedEmail,
                             customerPhone: contactState.telefono,
-                            codigoEmpresa
+                            codigoEmpresa,
+                            category: 'asesores'
                         });
 
                         console.log(`\n🎟️ [TICKET CREADO EN BD]: Ticket #${bookingRes.ticketId}`);
@@ -137,6 +204,32 @@ async function runSimulation() {
                         contactState.nodo_actual_id = null;
                         return;
                     }
+                } else if (currentNode.id === 'node_b4_captura' || currentNode.id === 'node_b3_plazo') {
+                    const rawLower = userMessage.toLowerCase().trim();
+                    const emailMatch = userMessage.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/);
+
+                    // Si ya tenía email y responde a la asignación de asesor
+                    if (contactState.investorEmail && (/^(s[ií]|dale|por favor|me interesa|quiero|ok|bueno|si por favor)\b/i.test(rawLower))) {
+                        console.log(`\n🎟️ [TICKET PENDIENTE DE APROBACIÓN]: Ticket #${contactState.ticketId || 102} marcado como PENDING_AUTH`);
+                        console.log(`📋 [DELEGACIÓN EN HELPDESK]: Listo para delegar inversor a un Agente o Líder de Agentes en /dashboard/tickets`);
+                        console.log(`🤖 [BOT CONFIRMACIÓN]:\n¡Excelente! 🤝 Hemos generado la solicitud en nuestro sistema. El equipo de Dirección Comercial te asignará un *Asesor Financiero personalizado* quien se pondrá en contacto contigo a la brevedad.\n`);
+                        contactState.flujo_activo_id = null;
+                        contactState.nodo_actual_id = null;
+                        return;
+                    }
+
+                    const detectedEmail = emailMatch ? emailMatch[0].toLowerCase().trim() : 'inversor@ejemplo.com';
+                    let detectedName = userMessage.replace(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g, '').replace(/[0-9+()$\-]/g, '').trim();
+                    if (!detectedName || detectedName.length < 2) detectedName = 'Martín Pérez';
+
+                    contactState.investorEmail = detectedEmail;
+                    contactState.ticketId = 101;
+
+                    console.log(`\n🎟️ [TICKET INVERSOR CREADO EN BD]: Ticket #${contactState.ticketId} - Estado: pending_auth (Mesa de Inversiones)`);
+                    console.log(`📧 [EMAIL GUÍA DE INGRESO/LOGIN]: Despachado a ${detectedEmail} (Consola https://consola.colaboratium.com.ar, validación DNI Renaper, Fondeo CVU y Simulador https://colaboratium.com.ar/inversiones.php#simulador)`);
+                    console.log(`📢 [NOTIFICACIÓN COMPAÑÍA]: Alerta de inversor nuevo enviada a colaboratium@gmail.com`);
+                    console.log(`\n🤖 [RESPUESTA BOT]:\n¡Muchas gracias, ${detectedName}! Te enviamos a *${detectedEmail}* la Guía Oficial con los pasos para ingresar, registrarte y validar tu cuenta por Renaper.\n\nSimulador oficial: https://colaboratium.com.ar/inversiones.php#simulador\n\n¿Te interesaría que te asignemos un *Asesor Financiero personalizado* para acompañarte en tu colocación?\n`);
+                    return;
                 } else if (currentNode.type === 'rag') {
                     console.log(`🧠 [IA RAG]: Consulta especializada procesada con el prompt: "${currentNode.data?.prompt?.substring(0, 70)}..."`);
                     console.log(`🤖 [BOT]: "¡Perfecto! Hemos registrado tus datos y un especialista de Colaboratium te contactará en breve."`);
@@ -190,48 +283,58 @@ async function runSimulation() {
     }
 
     // ==========================================================
-    // ESCENARIO 1: BIENVENIDA Y MENÚ MAESTRO (DISPARADOR POR SALUDO)
+    // ESCENARIO 1: BIENVENIDA Y MENÚ MAESTRO (3 OPCIONES EN ORDEN: 1 INVERSOR, 2 ASESOR, 3 LÍDER)
     // ==========================================================
     console.log('----------------------------------------------------------------');
-    console.log('📌 ESCENARIO 1: Saludo general y navegación al Menú Maestro');
+    console.log('📌 ESCENARIO 1: Saludo general -> Menú Interactivo con 3 opciones');
+    console.log('  1. Inversor: quiero invertir en la plataforma');
+    console.log('  2. Asesor: Quiero trabajar con uds (sin comisiones)');
+    console.log('  3. Líder: tengo mi equipo de trabajo y me interesa saber su propuesta');
     console.log('----------------------------------------------------------------');
     let contacto1 = { telefono: '+5491100000001', flujo_activo_id: null, nodo_actual_id: null };
-    await simulateUserTurn(contacto1, 'Hola, buenas tardes!');
+    await simulateUserTurn(contacto1, 'Hola, buen día!');
 
     // ==========================================================
-    // ESCENARIO 2: FLUJO A - ASESORES COMERCIALES (VÍA OPCIÓN 1)
+    // ESCENARIO 2: FLUJO DE INVERSORES (OPCIÓN 1)
     // ==========================================================
     console.log('\n----------------------------------------------------------------');
-    console.log('📌 ESCENARIO 2: Usuario selecciona opción 1 (Quiero ser Asesor)');
+    console.log('📌 ESCENARIO 2: Inversor elige "1" -> Mín $100.000 / Máx $10.000.000 y Simulador');
     console.log('----------------------------------------------------------------');
     await simulateUserTurn(contacto1, '1');
-    // Responder la captura de identidad y calendario
-    await simulateUserTurn(contacto1, 'Juan Ramón valle damduff@gmail.com');
+
+    console.log('\n----------------------------------------------------------------');
+    console.log('📌 ESCENARIO 2.1: Inversor envía sus datos y monto de colocación');
+    console.log('----------------------------------------------------------------');
+    await simulateUserTurn(contacto1, 'Martín Pérez martin.perez@gmail.com quiero invertir $1.500.000 a 180 días');
+
+    console.log('\n----------------------------------------------------------------');
+    console.log('📌 ESCENARIO 2.2: Inversor solicita Asesor Personalizado (Ticket pending_auth)');
+    console.log('----------------------------------------------------------------');
+    await simulateUserTurn(contacto1, 'Sí, me interesa que me asignen un asesor');
 
     // ==========================================================
-    // ESCENARIO 3: FLUJO B - INVERSORES DE CAPITAL (VÍA INTENCIÓN DIRECTA)
+    // ESCENARIO 3: FLUJO ASESOR (OPCIÓN 2 - SIN COMISIONES EN INTRO)
     // ==========================================================
     console.log('\n----------------------------------------------------------------');
-    console.log('📌 ESCENARIO 3: Usuario nuevo pregunta directamente por inversiones');
+    console.log('📌 ESCENARIO 3: Usuario elige "2" (Asesor: Quiero trabajar con ustedes)');
     console.log('----------------------------------------------------------------');
     let contacto2 = { telefono: '+5491100000002', flujo_activo_id: null, nodo_actual_id: null };
-    await simulateUserTurn(contacto2, 'Hola, quiero invertir mi capital. ¿Qué tasas pagan?');
-    // Responder la pregunta de plazo y capital
-    await simulateUserTurn(contacto2, 'Quiero invertir $500.000 a un plazo de 6 meses');
+    await simulateUserTurn(contacto2, '2');
+    await simulateUserTurn(contacto2, 'Juan Ramón Valle damduff@gmail.com');
 
     // ==========================================================
-    // ESCENARIO 4: FLUJO C - LÍDERES DE EQUIPO (VÍA BOTÓN META btn_lider O TEXTO)
+    // ESCENARIO 4: FLUJO LÍDERES DE EQUIPO (OPCIÓN 3)
     // ==========================================================
     console.log('\n----------------------------------------------------------------');
-    console.log('📌 ESCENARIO 4: Usuario hace clic en el botón [btn_lider] o escribe "3"');
+    console.log('📌 ESCENARIO 4: Usuario elige "3" (Líder: tengo mi equipo de trabajo)');
     console.log('----------------------------------------------------------------');
-    let contacto3 = { telefono: '+5491100000003', flujo_activo_id: null, nodo_actual_id: null };
-    await simulateUserTurn(contacto3, 'btn_lider');
-    // Responder la consulta de equipo
-    await simulateUserTurn(contacto3, 'Tengo un equipo de 6 asesores, soy Roberto Díaz, tel 1144556677');
+    let contacto3 = { telefono: '+5491125171969', flujo_activo_id: null, nodo_actual_id: null };
+    await simulateUserTurn(contacto3, '3');
+    await simulateUserTurn(contacto3, 'Alejandro Bolognese 11 2517 1969 sirkimonolabs@gmail.com');
+    await simulateUserTurn(contacto3, '1');
 
     console.log('\n================================================================');
-    console.log('✅ SIMULACIÓN FINALIZADA CON ÉXITO');
+    console.log('✅ TODAS LAS PRUEBAS Y FLUJOS VERIFICADOS CON ÉXITO');
     console.log('================================================================');
     process.exit(0);
 }

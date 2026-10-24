@@ -83,7 +83,7 @@ const DEFAULT_SLOTS = [
     }
 ];
 
-async function getAvailableWebinarSlots(codigoEmpresa = 'KRZMJI') {
+async function getAvailableWebinarSlots(codigoEmpresa = 'KRZMJI', category = 'all') {
     let rawSlots = [];
 
     // 1. Lectura en tiempo real desde la Dirección Secreta iCal de Google Calendar
@@ -97,7 +97,11 @@ async function getAvailableWebinarSlots(codigoEmpresa = 'KRZMJI') {
                 const ev = events[k];
                 if (ev && ev.type === 'VEVENT') {
                     const summary = (ev.summary || '').toLowerCase();
-                    if (summary.includes('webinar') || summary.includes('capacitacion') || summary.includes('asesor') || summary.includes('presencial')) {
+                    const isRelevant = summary.includes('webinar') || summary.includes('capacitacion') || summary.includes('asesor') || summary.includes('lider') || summary.includes('líder') || summary.includes('presencial');
+                    if (isRelevant) {
+                        const isLider = /lider|líder/i.test(summary);
+                        if (category === 'lideres' && !isLider) continue;
+                        if (category === 'asesores' && isLider) continue;
                         liveEvents.push(ev);
                     }
                 }
@@ -107,6 +111,7 @@ async function getAvailableWebinarSlots(codigoEmpresa = 'KRZMJI') {
                 liveEvents.sort((a, b) => new Date(a.start) - new Date(b.start));
                 rawSlots = liveEvents.map((ev, index) => {
                     const isPresencial = (ev.summary || '').toLowerCase().includes('presencial');
+                    const isLider = /lider|líder/i.test(ev.summary || '');
                     const start = new Date(ev.start);
                     const end = new Date(ev.end);
                     const fechaStr = start.toLocaleDateString('es-AR', { weekday: 'long', day: 'numeric', month: 'long', timeZone: 'America/Argentina/Buenos_Aires' });
@@ -116,8 +121,9 @@ async function getAvailableWebinarSlots(codigoEmpresa = 'KRZMJI') {
                     return {
                         id: index + 1,
                         uid: ev.uid,
-                        titulo: ev.summary || (isPresencial ? 'Reunión Presencial de Asesores' : 'Webinar Virtual de Capacitación'),
+                        titulo: ev.summary || (isLider ? (isPresencial ? 'Reunión Ejecutiva de Líderes' : 'Webinar Virtual de Líderes') : (isPresencial ? 'Reunión Presencial de Asesores' : 'Webinar Virtual de Capacitación')),
                         modalidad: isPresencial ? 'PRESENCIAL' : 'VIRTUAL',
+                        categoria: isLider ? 'LIDERES' : 'ASESORES',
                         fechaStr: fechaStr.charAt(0).toUpperCase() + fechaStr.slice(1),
                         horarioStr: `${horaInicio} a ${horaFin} hs`,
                         meetLink: 'https://meet.google.com/qmv-wqzk-hxo',
@@ -136,6 +142,44 @@ async function getAvailableWebinarSlots(codigoEmpresa = 'KRZMJI') {
         rawSlots = JSON.parse(JSON.stringify(DEFAULT_SLOTS));
     }
 
+    // 1.1 Cargar eventos personalizados creados por Líderes (Webinars) o Asesores (Meet) en BD
+    if (db && !db.pool) {
+        try { await db.initDB(); } catch(e) {}
+    }
+    if (codigoEmpresa && db && db.pool) {
+        try {
+            const [customEvents] = await db.pool.query(
+                `SELECT * FROM calendar_events WHERE codigo_empresa = ? ORDER BY id ASC`,
+                [codigoEmpresa]
+            );
+            if (customEvents && customEvents.length > 0) {
+                customEvents.forEach((ev) => {
+                    const isLider = ev.tipo === 'webinar' || ev.categoria === 'LIDERES';
+                    if (category === 'lideres' && !isLider) return;
+                    if (category === 'asesores' && isLider) return;
+
+                    rawSlots.push({
+                        id: rawSlots.length + 1,
+                        dbId: ev.id,
+                        titulo: ev.titulo,
+                        modalidad: ev.modalidad,
+                        categoria: isLider ? 'LIDERES' : 'ASESORES',
+                        fechaStr: ev.fecha,
+                        horarioStr: ev.horario,
+                        meetLink: ev.meet_link || 'https://meet.google.com/qmv-wqzk-hxo',
+                        ubicacion: ev.ubicacion || (ev.modalidad === 'PRESENCIAL' ? 'Av. del Libertador 264, Vicente López' : 'Google Meet'),
+                        cupos: ev.cupos || (ev.modalidad === 'PRESENCIAL' ? 15 : 25),
+                        isCustom: true,
+                        creadoPor: ev.creado_por_nombre || ev.creado_por_rol,
+                        subscribers: []
+                    });
+                });
+            }
+        } catch (e) {
+            console.error('⚠️ [GOOGLE CALENDAR]: Error al cargar calendar_events:', e.message);
+        }
+    }
+
     // 2. Asociar inscriptos reales desde la base de datos
     if (db && !db.pool) {
         try { await db.initDB(); } catch(e) {}
@@ -148,7 +192,7 @@ async function getAvailableWebinarSlots(codigoEmpresa = 'KRZMJI') {
                         t.id as ticket_id, t.status as ticket_status, t.summary as ticket_summary
                  FROM contactos c
                  LEFT JOIN tickets t ON (t.contacto_id = c.id OR t.customer_number = c.telefono)
-                 WHERE c.codigo_empresa = ? AND (c.grupo = 'ASESORES' OR c.metadata_extra IS NOT NULL)
+                 WHERE c.codigo_empresa = ? AND (c.grupo = 'ASESORES' OR c.grupo = 'LIDERES' OR c.metadata_extra IS NOT NULL)
                  ORDER BY c.creado_en DESC`,
                 [codigoEmpresa]
             );
@@ -251,16 +295,17 @@ async function getAvailableWebinarSlots(codigoEmpresa = 'KRZMJI') {
 /**
  * Genera la estructura de formulario/lista interactiva nativa de WhatsApp (Interactive List)
  */
-async function formatInteractiveCalendarList(codigoEmpresa = 'KRZMJI') {
-    const slots = await getAvailableWebinarSlots(codigoEmpresa);
+async function formatInteractiveCalendarList(codigoEmpresa = 'KRZMJI', category = 'asesores') {
+    const slots = await getAvailableWebinarSlots(codigoEmpresa, category);
     const virtualSlots = slots.filter(s => s.modalidad === 'VIRTUAL');
     const presencialSlots = slots.filter(s => s.modalidad === 'PRESENCIAL');
+    const isLider = category === 'lideres';
 
     const sections = [];
 
     if (virtualSlots.length > 0) {
         sections.push({
-            title: "💻 WEBINAR VIRTUAL (MEET)",
+            title: isLider ? "💻 WEBINAR LÍDERES" : "💻 WEBINAR VIRTUAL",
             rows: virtualSlots.map(s => {
                 const shortDia = s.fechaStr.split(',')[0].trim();
                 const shortHora = s.horarioStr.split(' a ')[0].replace(/\s*[a-z.]+/gi, '').trim();
@@ -275,7 +320,7 @@ async function formatInteractiveCalendarList(codigoEmpresa = 'KRZMJI') {
 
     if (presencialSlots.length > 0) {
         sections.push({
-            title: "🏢 REUNIÓN PRESENCIAL",
+            title: isLider ? "🏢 REUNIÓN EJECUTIVA" : "🏢 REUNIÓN PRESENCIAL",
             rows: presencialSlots.map(s => {
                 const shortDia = s.fechaStr.split(',')[0].trim();
                 const shortHora = s.horarioStr.split(' a ')[0].replace(/\s*[a-z.]+/gi, '').trim();
@@ -289,10 +334,12 @@ async function formatInteractiveCalendarList(codigoEmpresa = 'KRZMJI') {
     }
 
     return {
-        headerText: "Capacitación Colaboratium",
-        bodyText: "📅 *FECHAS Y HORARIOS DISPONIBLES*\n\nSelecciona en el menú desplegable la opción que te quede más cómoda para participar del Webinar o la Reunión Presencial:",
+        headerText: isLider ? "Webinar & Citas de Líderes" : "Capacitación Colaboratium",
+        bodyText: isLider
+            ? "👑 *FECHAS Y HORARIOS PARA LÍDERES DE EQUIPO*\n\nElegí en el selector si preferís participar del Webinar Virtual para Líderes (Google Meet) o de la Reunión Ejecutiva Presencial en nuestras oficinas de Vicente López:"
+            : "📅 *FECHAS Y HORARIOS DISPONIBLES*\n\nSelecciona en el menú desplegable la opción que te quede más cómoda para participar del Webinar o la Reunión Presencial:",
         footerText: "Colaboratium • BCRA Nº 40.015",
-        buttonText: "Elegir Horario 📅",
+        buttonText: isLider ? "Elegir Horario Líder 📅" : "Elegir Horario 📅",
         sections
     };
 }
@@ -300,15 +347,18 @@ async function formatInteractiveCalendarList(codigoEmpresa = 'KRZMJI') {
 /**
  * Genera el texto limpio para WhatsApp con las opciones de calendario (SIN tablas markdown)
  */
-async function formatCalendarOptionsText(codigoEmpresa = 'KRZMJI') {
-    const slots = await getAvailableWebinarSlots(codigoEmpresa);
+async function formatCalendarOptionsText(codigoEmpresa = 'KRZMJI', category = 'asesores') {
+    const slots = await getAvailableWebinarSlots(codigoEmpresa, category);
     const virtualSlots = slots.filter(s => s.modalidad === 'VIRTUAL');
     const presencialSlots = slots.filter(s => s.modalidad === 'PRESENCIAL');
+    const isLider = category === 'lideres';
 
-    let msg = `📅 *FECHAS Y HORARIOS DISPONIBLES DE CAPACITACIÓN*\n\n`;
+    let msg = isLider
+        ? `👑 *FECHAS Y HORARIOS PARA LÍDERES DE EQUIPO*\n\n`
+        : `📅 *FECHAS Y HORARIOS DISPONIBLES DE CAPACITACIÓN*\n\n`;
 
     if (virtualSlots.length > 0) {
-        msg += `💻 *WEBINAR VIRTUAL (Vía Google Meet)*:\n`;
+        msg += isLider ? `💻 *WEBINAR VIRTUAL DE LÍDERES (Vía Google Meet)*:\n` : `💻 *WEBINAR VIRTUAL (Vía Google Meet)*:\n`;
         virtualSlots.forEach(s => {
             msg += `• *Opción ${s.id}:* ${s.fechaStr} (${s.horarioStr})\n`;
         });
@@ -316,7 +366,7 @@ async function formatCalendarOptionsText(codigoEmpresa = 'KRZMJI') {
     }
 
     if (presencialSlots.length > 0) {
-        msg += `🏢 *REUNIÓN PRESENCIAL (Oficinas Comerciales)*:\n`;
+        msg += isLider ? `🏢 *REUNIÓN EJECUTIVA PRESENCIAL (Oficinas Comerciales)*:\n` : `🏢 *REUNIÓN PRESENCIAL (Oficinas Comerciales)*:\n`;
         msg += `📍 *Av. del Libertador 264, 1° Piso Contrafrente, Vicente López*\n`;
         presencialSlots.forEach(s => {
             msg += `• *Opción ${s.id}:* ${s.fechaStr} (${s.horarioStr})\n`;
@@ -324,7 +374,7 @@ async function formatCalendarOptionsText(codigoEmpresa = 'KRZMJI') {
         msg += `\n`;
     }
 
-    msg += `👉 *¿Cuál opción te queda más cómoda?*\nResponde con el número de opción junto con tu *Nombre completo* y *Email* (ej. *1 Juan Ramón Valle damduff@gmail.com*) para reservarte el lugar.`;
+    msg += `👉 *¿Cuál opción te queda más cómoda?*\nResponde con el número de opción (ej. *1* o *2*) para reservarte el lugar.`;
     return msg;
 }
 
@@ -389,8 +439,8 @@ async function getSubscriberProfile(codigoEmpresa, contactId) {
 /**
  * Procesa la inscripción a un horario de capacitación
  */
-async function processBooking({ slotChoice, customerName, customerEmail, customerPhone, codigoEmpresa = 'KRZMJI' }) {
-    const slots = await getAvailableWebinarSlots(codigoEmpresa);
+async function processBooking({ slotChoice, customerName, customerEmail, customerPhone, codigoEmpresa = 'KRZMJI', category = 'all' }) {
+    const slots = await getAvailableWebinarSlots(codigoEmpresa, category);
 
     // Identificar slot por número o coincidencia
     let chosenSlot = null;
@@ -402,6 +452,10 @@ async function processBooking({ slotChoice, customerName, customerEmail, custome
         const text = (slotChoice || '').toLowerCase();
         if (text.includes('presencial')) {
             chosenSlot = slots.find(s => s.modalidad === 'PRESENCIAL');
+        } else if (text.includes('martes')) {
+            chosenSlot = slots.find(s => s.fechaStr.toLowerCase().includes('martes'));
+        } else if (text.includes('jueves')) {
+            chosenSlot = slots.find(s => s.fechaStr.toLowerCase().includes('jueves'));
         } else if (text.includes('lunes')) {
             chosenSlot = slots.find(s => s.fechaStr.toLowerCase().includes('lunes'));
         } else if (text.includes('miercoles') || text.includes('miércoles')) {
@@ -416,21 +470,23 @@ async function processBooking({ slotChoice, customerName, customerEmail, custome
     }
 
     const isVirtual = chosenSlot.modalidad === 'VIRTUAL';
-    const cleanPhone = (customerPhone || '').replace(/[^\d+]/g, '');
+    const cleanPhone = (customerPhone || '').replace(/\D/g, '');
+    const isLider = chosenSlot.categoria === 'LIDERES' || /lider|líder/i.test(chosenSlot.titulo || '') || category === 'lideres';
 
     // 1. Guardar o actualizar en Agenda CRM
     try {
         await db.crearContactoCRM(codigoEmpresa, {
-            nombre: customerName || 'Asesor Candidato',
+            nombre: customerName || (isLider ? 'Líder Candidato' : 'Asesor Candidato'),
             telefono: cleanPhone,
             email: customerEmail,
-            grupo: 'ASESORES',
+            grupo: isLider ? 'LIDERES' : 'ASESORES',
             metadata_extra: {
                 slot_id: chosenSlot.id,
                 titulo: chosenSlot.titulo,
                 fechaStr: chosenSlot.fechaStr,
                 horarioStr: chosenSlot.horarioStr,
                 modalidad: chosenSlot.modalidad,
+                categoria: isLider ? 'LIDERES' : 'ASESORES',
                 inscripcion: `Inscripto a ${chosenSlot.titulo} (${chosenSlot.fechaStr} ${chosenSlot.horarioStr})`
             }
         });
@@ -447,9 +503,9 @@ async function processBooking({ slotChoice, customerName, customerEmail, custome
             cleanPhone,
             customerName,
             'pending_auth',
-            `Inscripción a ${chosenSlot.modalidad}: ${chosenSlot.titulo} - ${chosenSlot.fechaStr} ${chosenSlot.horarioStr}`,
+            `Inscripción ${isLider ? 'Líder' : 'Asesor'} a ${chosenSlot.modalidad}: ${chosenSlot.titulo} - ${chosenSlot.fechaStr} ${chosenSlot.horarioStr}`,
             null,
-            'Equipo Admisiones'
+            isLider ? 'Equipo Líderes' : 'Equipo Admisiones'
         );
     } catch (e) {
         console.error('Error creando ticket de capacitación:', e.message);
@@ -464,30 +520,69 @@ async function processBooking({ slotChoice, customerName, customerEmail, custome
         fechaStr: chosenSlot.fechaStr,
         horarioStr: chosenSlot.horarioStr,
         meetLink: isVirtual ? chosenSlot.meetLink : null,
-        ubicacion: chosenSlot.ubicacion
+        ubicacion: chosenSlot.ubicacion,
+        isLider
     };
 
     // 3. Envío dual de emails
     await sendWebinarConfirmationToAdvisor(bookingDetails);
     await sendWebinarNotificationToCompany(bookingDetails);
 
+    // Registro de suceso en log de Google Colaboratium
+    try {
+        if (db && db.registrarAuditLog) {
+            await db.registrarAuditLog({
+                codigo_empresa: codigoEmpresa,
+                usuario_email: customerEmail,
+                usuario_nombre: customerName,
+                rol: isLider ? 'Lideres' : 'Asesores',
+                accion: isLider ? 'RESERVA_WEBINAR_LIDER' : 'RESERVA_CAPACITACION_ASESOR',
+                entidad: 'calendar_event',
+                entidad_id: String(chosenSlot.id),
+                detalles: `${chosenSlot.titulo} (${chosenSlot.fechaStr} ${chosenSlot.horarioStr}) - Modalidad: ${chosenSlot.modalidad} - Ticket #${ticketId}`,
+                google_scope: 'colaboratium@gmail.com'
+            });
+        }
+    } catch (logErr) {
+        console.error('Error registrando suceso en Google Colaboratium:', logErr.message);
+    }
+
     // 4. Mensaje de respuesta por WhatsApp
     let responseText = '';
-    if (isVirtual) {
-        responseText = `¡Excelente, *${customerName}*! 🎉 Tu lugar para el *Webinar Virtual de Capacitación* está confirmado.\n\n` +
-            `📅 *Fecha:* ${chosenSlot.fechaStr}\n` +
-            `⏰ *Horario:* ${chosenSlot.horarioStr}\n` +
-            `💻 *Acceso Google Meet:* ${chosenSlot.meetLink}\n\n` +
-            `📧 Te enviamos la confirmación con los accesos e invitación de calendario a *${customerEmail}*.\n` +
-            `Cualquier consulta adicional antes de la sesión, estamos a tu disposición por este medio. ¡Nos vemos en el Webinar!`;
+    if (isLider) {
+        if (isVirtual) {
+            responseText = `¡Excelente, Líder *${customerName}*! 👑 Tu lugar para el *Webinar Virtual de Líderes de Equipo* está confirmado.\n\n` +
+                `📅 *Fecha:* ${chosenSlot.fechaStr}\n` +
+                `⏰ *Horario:* ${chosenSlot.horarioStr}\n` +
+                `💻 *Acceso Google Meet:* ${chosenSlot.meetLink}\n\n` +
+                `📧 Te enviamos la confirmación con los accesos al panel jerárquico y detalles del 10% de bolsa a *${customerEmail}*.\n` +
+                `¡Nos vemos en el Webinar de Líderes!`;
+        } else {
+            responseText = `¡Excelente, Líder *${customerName}*! 👑 Tu *Reunión Ejecutiva Presencial* está confirmada.\n\n` +
+                `📅 *Fecha:* ${chosenSlot.fechaStr}\n` +
+                `⏰ *Horario:* ${chosenSlot.horarioStr}\n` +
+                `🏢 *Lugar:* Av. del Libertador 264, 1° Piso Contrafrente, Vicente López, Buenos Aires.\n` +
+                `📍 *Mapa:* https://maps.google.com/?q=Av.+del+Libertador+264,+Vicente+Lopez\n\n` +
+                `📧 Te enviamos la confirmación y datos de recepción a *${customerEmail}*.\n` +
+                `¡Te esperamos en nuestras oficinas comerciales!`;
+        }
     } else {
-        responseText = `¡Excelente, *${customerName}*! 🎉 Tu reunión presencial está confirmada.\n\n` +
-            `📅 *Fecha:* ${chosenSlot.fechaStr}\n` +
-            `⏰ *Horario:* ${chosenSlot.horarioStr}\n` +
-            `🏢 *Lugar:* Av. del Libertador 264, 1° Piso Contrafrente, Vicente López, Buenos Aires.\n` +
-            `📍 *Cómo llegar:* https://maps.google.com/?q=Av.+del+Libertador+264,+Vicente+Lopez\n\n` +
-            `📧 Te enviamos todos los detalles y datos de recepción a *${customerEmail}*.\n` +
-            `¡Te esperamos en nuestras oficinas comerciales!`;
+        if (isVirtual) {
+            responseText = `¡Excelente, *${customerName}*! 🎉 Tu lugar para el *Webinar Virtual de Capacitación* está confirmado.\n\n` +
+                `📅 *Fecha:* ${chosenSlot.fechaStr}\n` +
+                `⏰ *Horario:* ${chosenSlot.horarioStr}\n` +
+                `💻 *Acceso Google Meet:* ${chosenSlot.meetLink}\n\n` +
+                `📧 Te enviamos la confirmación con los accesos e invitación de calendario a *${customerEmail}*.\n` +
+                `Cualquier consulta adicional antes de la sesión, estamos a tu disposición por este medio. ¡Nos vemos en el Webinar!`;
+        } else {
+            responseText = `¡Excelente, *${customerName}*! 🎉 Tu reunión presencial está confirmada.\n\n` +
+                `📅 *Fecha:* ${chosenSlot.fechaStr}\n` +
+                `⏰ *Horario:* ${chosenSlot.horarioStr}\n` +
+                `🏢 *Lugar:* Av. del Libertador 264, 1° Piso Contrafrente, Vicente López, Buenos Aires.\n` +
+                `📍 *Cómo llegar:* https://maps.google.com/?q=Av.+del+Libertador+264,+Vicente+Lopez\n\n` +
+                `📧 Te enviamos todos los detalles y datos de recepción a *${customerEmail}*.\n` +
+                `¡Te esperamos en nuestras oficinas comerciales!`;
+        }
     }
 
     return {
