@@ -1613,6 +1613,91 @@ async function obtenerCampanaPorId(id) {
     return { ...r, archivos_adjuntos: adj || [], contactos_json: cont || [] };
 }
 
+/**
+ * Obtiene el contexto de cartera y jerarquía para un usuario (según su rol: Líder, Asesor, Soporte, Master)
+ */
+async function getUserPortfolioContext(clerkId, userId, userRoleName, codigoEmpresa) {
+    if (!pool) return { isMaster: true, role: 'master', allMyIds: [], myLeaderIds: [], myContactIds: [] };
+
+    let user = null;
+    if (clerkId) {
+        user = await obtenerUsuario(clerkId);
+    } else if (userId) {
+        const [uRows] = await pool.query(
+            'SELECT u.*, r.nombre as rol_nombre FROM users u LEFT JOIN roles r ON u.rol_id = r.id WHERE u.id = ?',
+            [userId]
+        );
+        user = uRows[0] || null;
+    }
+
+    const role = (userRoleName || user?.rol_nombre || '').toLowerCase();
+    const isMaster = role === 'master' || role === 'admin' || user?.email === 'colaboratium@gmail.com';
+    const isSoporte = role === 'soporte';
+    const isLider = role.includes('lider');
+    const isAsesor = role.includes('asesor');
+
+    const userIdentifiers = [];
+    if (userId) {
+        userIdentifiers.push(String(userId), Number(userId));
+    }
+    if (user?.id) {
+        userIdentifiers.push(String(user.id), Number(user.id));
+    }
+    if (user?.clerk_id) {
+        userIdentifiers.push(user.clerk_id);
+    }
+    if (clerkId) {
+        userIdentifiers.push(clerkId);
+    }
+
+    let myContactIds = [];
+    let myLeaderIds = [];
+
+    if (userId && !isNaN(Number(userId))) {
+        const [cMatch] = await pool.query('SELECT id, lider_id, asesor_id, rol_asignado FROM contactos WHERE id = ? AND codigo_empresa = ?', [Number(userId), codigoEmpresa]);
+        if (cMatch.length > 0) {
+            myContactIds.push(cMatch[0].id);
+            if (cMatch[0].lider_id) myLeaderIds.push(Number(cMatch[0].lider_id));
+        }
+    }
+
+    if (user?.email) {
+        const [matchingContacts] = await pool.query(
+            'SELECT id, lider_id, asesor_id FROM contactos WHERE codigo_empresa = ? AND LOWER(email) = ?',
+            [codigoEmpresa, user.email.toLowerCase().trim()]
+        );
+        matchingContacts.forEach(mc => {
+            myContactIds.push(mc.id);
+            if (mc.lider_id) myLeaderIds.push(Number(mc.lider_id));
+        });
+    }
+
+    if (user?.clerk_id) {
+        const [assignedContacts] = await pool.query(
+            'SELECT id, lider_id, asesor_id FROM contactos WHERE codigo_empresa = ? AND usuario_asignado_id = ?',
+            [codigoEmpresa, user.clerk_id]
+        );
+        assignedContacts.forEach(ac => {
+            if (!myContactIds.includes(ac.id)) myContactIds.push(ac.id);
+            if (ac.lider_id && !myLeaderIds.includes(Number(ac.lider_id))) myLeaderIds.push(Number(ac.lider_id));
+        });
+    }
+
+    const allMyIds = [...new Set([...userIdentifiers, ...myContactIds])];
+
+    return {
+        user,
+        role,
+        isMaster,
+        isSoporte,
+        isLider,
+        isAsesor,
+        myContactIds,
+        myLeaderIds,
+        allMyIds
+    };
+}
+
 module.exports = {
     initDB,
     upsertContacto,
@@ -1643,13 +1728,13 @@ module.exports = {
     crearCampanaCompleta,
     actualizarCampanaProgreso,
     obtenerCampanas,
+    obtenerCampanaPorId,
     crearFlujo,
     obtenerFlujos,
     obtenerFlujo,
     actualizarFlujo,
     eliminarFlujo,
     actualizarContactoFlujo,
-    // Nuevas funciones
     crearTicket,
     obtenerTickets,
     obtenerTicket,
@@ -1672,7 +1757,7 @@ module.exports = {
     asignarJerarquiaContacto,
     actualizarResolucionContacto,
     obtenerArbolDependencias,
-    // Plantillas y Medios
+    getUserPortfolioContext,
     crearPlantilla,
     obtenerPlantillas,
     obtenerPlantilla,
@@ -1681,9 +1766,10 @@ module.exports = {
     crearMedio,
     obtenerMedios,
     eliminarMedio,
-    obtenerCampanaPorId,
     registrarDesuscripcion,
     obtenerDesuscripciones,
     esEmailDesuscrito,
     get pool() { return pool; }
 };
+
+

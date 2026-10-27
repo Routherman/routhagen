@@ -149,9 +149,10 @@ async function handleAdvisorDirectQuery(dbContacto, cleanMessage, empresa, acces
                 console.error('Error creando ticket de reasignación:', tErr.message);
             }
 
-            // Derivar a humano líder y poner en PENDIENTE
+            // Derivar a humano líder y poner en PENDIENTE con resumen IA de lo solicitado
+            const summaryText = `Asesor ${dbContacto.nombre || cleanMessage.remitente} solicita asignación/precarga de inversor: ${datosStr}`;
+            await db.derivarContactoTeam(dbContacto.id, codigoEmpresa, 'Lideres', dbContacto.lider_id, 'Asesor Comercial', summaryText);
             await db.actualizarEstadoBot(dbContacto.id, 'HANDOFF');
-            await db.actualizarAsignacionContacto(dbContacto.id, 'Lideres');
 
             const reply = `He verificado en la base de datos y el inversor no figura asignado a tu cuenta. He generado el *Ticket de Reasignación de Inversor #${ticketId || ''}* y lo derivé directamente a tu Líder Comercial para su verificación y asignación. En breve se comunicarán contigo.`;
             const outMetaId = await sendWhatsAppMessage(cleanMessage.identificador.valor, reply, phoneId, accessToken);
@@ -190,8 +191,9 @@ async function handleAdvisorDirectQuery(dbContacto, cleanMessage, empresa, acces
             console.error('Error creando ticket comisiones:', tErr.message);
         }
 
+        const commSummary = `Asesor ${dbContacto.nombre || cleanMessage.remitente} reclama liquidación/pago de comisiones comerciales`;
+        await db.derivarContactoTeam(dbContacto.id, codigoEmpresa, 'Lideres', dbContacto.lider_id, 'Asesor Comercial', commSummary);
         await db.actualizarEstadoBot(dbContacto.id, 'HANDOFF');
-        await db.actualizarAsignacionContacto(dbContacto.id, 'Lideres');
 
         const reply = `He registrado tu consulta sobre liquidación de comisiones. He generado el *Ticket #${ticketId || ''}* derivándolo directamente a tu Líder Comercial para su seguimiento y revisión con Administración. En breve se comunicará contigo.`;
         const outMetaId = await sendWhatsAppMessage(cleanMessage.identificador.valor, reply, phoneId, accessToken);

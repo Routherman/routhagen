@@ -473,9 +473,21 @@ async function handleFlowEngine(dbContacto, cleanMessage, empresa, accessToken, 
                 const roleMatch = aiResponse.match(/\[ROLE:(.*?)\]/i);
                 if (roleMatch) {
                     const rolName = roleMatch[1].trim();
-                    await db.actualizarAsignacionContacto(dbContacto.id, rolName);
+                    let aiSummary = `Contacto solicita derivación al sector ${rolName}. Consulta: "${cleanMessage.contenido}"`;
+                    try {
+                        const { summarizeConversationWithAI } = require('./aiRouter');
+                        const historyRows = await db.obtenerHistorialMensajes(dbContacto.id, 8);
+                        if (historyRows && historyRows.length > 0) {
+                            const chatText = historyRows.map(m => `${m.direccion === 'SALIENTE' ? 'Bot' : 'Usuario'}: ${m.contenido}`).join('\n') + `\nUsuario: ${cleanMessage.contenido}`;
+                            aiSummary = await summarizeConversationWithAI(chatText, empresa.codigo || 'KRZMJI');
+                        }
+                    } catch (sumErr) {
+                        console.warn('Error generando resumen IA al derivar en flowEngine:', sumErr.message);
+                    }
+
+                    await db.derivarContactoTeam(dbContacto.id, empresa.codigo || 'KRZMJI', rolName, null, 'IA RAG Bot', aiSummary);
                     aiResponse = aiResponse.replace(/\[ROLE:.*?\]/ig, '').trim();
-                    console.log(`[Flow] RAG derivó a rol: ${rolName}`);
+                    console.log(`[Flow] RAG derivó a rol: ${rolName} con resumen IA: ${aiSummary}`);
                 }
 
                 if (aiResponse.includes('[HANDOFF]')) {

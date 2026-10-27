@@ -368,30 +368,85 @@ app.post('/api/messages/whatsapp/receive', async (req, res) => {
 app.get('/api/contacts/:empresa', async (req, res) => {
     try {
         const clerkId = req.query.clerkId;
+        const userId = req.query.userId || req.query.user_id;
+        const roleQuery = req.query.role || req.query.user_role;
         const onlyWithMessages = req.query.onlyWithMessages === 'true';
         let contacts = await db.obtenerContactos(req.params.empresa, onlyWithMessages);
         
-        if (clerkId) {
-            const user = await db.obtenerUsuario(clerkId);
-            if (user) {
-                const userRole = await db.pool.query('SELECT nombre FROM roles WHERE id = ?', [user.rol_id]).then(([rows]) => rows[0]?.nombre || '');
-                const isMaster = userRole.toLowerCase() === 'master';
-
-                contacts = contacts.filter(contact => {
-                    // Si está delegado a un usuario específico, solo lo ven ese usuario y el master
-                    if (contact.usuario_asignado_id) {
-                        return isMaster || contact.usuario_asignado_id === clerkId;
-                    }
-
-                    // Si no está delegado, lo ven el master y los del rol asignado (o todos si es General)
-                    if (isMaster) return true;
-                    
-                    const rolAsignado = (contact.rol_asignado || 'General').toLowerCase();
-                    if (rolAsignado === 'general') return true; // Todos pueden ver General si no está delegado
-                    
-                    return userRole.toLowerCase() === rolAsignado;
-                });
+        if (clerkId || userId || roleQuery) {
+            const ctx = await db.getUserPortfolioContext(clerkId, userId, roleQuery, req.params.empresa);
+            
+            if (ctx.isMaster) {
+                // Master ve todas las conversaciones
+                return res.json(contacts);
             }
+
+            if (ctx.isSoporte) {
+                // Soporte ve conversaciones asignadas a Soporte o General
+                contacts = contacts.filter(contact => {
+                    if (contact.usuario_asignado_id) {
+                        return ctx.allMyIds.includes(contact.usuario_asignado_id);
+                    }
+                    const rolAsignado = (contact.rol_asignado || 'General').toLowerCase();
+                    return rolAsignado === 'soporte' || rolAsignado === 'general';
+                });
+                return res.json(contacts);
+            }
+
+            if (ctx.isLider) {
+                // "lider podra ver solo las conversaciones de los asesores que pertenezcan a su equipo y las conversaciones que pertenezcan a los inversores dentro de su arbol"
+                const teamAdvisorIds = contacts
+                    .filter(c => {
+                        const isAdvisor = (c.grupo || '').toUpperCase() === 'ASESORES' || (c.rol_asignado || '').toLowerCase() === 'asesores';
+                        const belongsToMe = ctx.allMyIds.includes(c.lider_id) || ctx.allMyIds.includes(Number(c.lider_id));
+                        return isAdvisor && belongsToMe;
+                    })
+                    .map(c => c.id);
+
+                contacts = contacts.filter(c => {
+                    if (teamAdvisorIds.includes(c.id)) return true;
+
+                    const belongsToTree = ctx.allMyIds.includes(c.lider_id) || 
+                                          ctx.allMyIds.includes(Number(c.lider_id)) || 
+                                          teamAdvisorIds.includes(c.asesor_id) ||
+                                          teamAdvisorIds.includes(Number(c.asesor_id));
+
+                    if (belongsToTree) return true;
+
+                    if (ctx.allMyIds.includes(c.usuario_asignado_id) || ctx.allMyIds.includes(c.id)) return true;
+
+                    return false;
+                });
+                return res.json(contacts);
+            }
+
+            if (ctx.isAsesor) {
+                // "los asesores solo podran ver las conversaciones con su lider y con los inversores que pertenezcan a su cartera"
+                contacts = contacts.filter(c => {
+                    // Conversación con su líder
+                    if (ctx.myLeaderIds && ctx.myLeaderIds.includes(c.id)) return true;
+
+                    // Inversores dentro de su cartera comercial
+                    const isMyPortfolio = ctx.allMyIds.includes(c.asesor_id) || 
+                                          ctx.allMyIds.includes(Number(c.asesor_id)) || 
+                                          ctx.allMyIds.includes(c.usuario_asignado_id);
+
+                    if (isMyPortfolio) return true;
+
+                    return false;
+                });
+                return res.json(contacts);
+            }
+
+            // Fallback para otros roles específicos
+            contacts = contacts.filter(contact => {
+                if (contact.usuario_asignado_id) {
+                    return ctx.allMyIds.includes(contact.usuario_asignado_id);
+                }
+                const rolAsignado = (contact.rol_asignado || 'General').toLowerCase();
+                if (rolAsignado === 'general') return true;
+                return ctx.role === rolAsignado;
+            });
         }
 
         res.json(contacts);
@@ -1722,13 +1777,88 @@ app.get('/api/empresas/:codigo/tickets', async (req, res) => {
         let tickets = await db.obtenerTickets(req.params.codigo, req.query.status);
         const role = (req.query.role || req.query.user_role || '').toLowerCase();
         const userId = req.query.user_id;
-        if (role === 'soporte') {
+        const clerkId = req.query.clerkId || req.query.clerk_id;
+
+        const ctx = await db.getUserPortfolioContext(clerkId, userId, role, req.params.codigo);
+
+        if (ctx.isMaster) {
+            return res.json({ success: true, tickets });
+        }
+
+        if (ctx.isSoporte) {
             tickets = tickets.filter(t => 
                 (t.category || '').toLowerCase() === 'soporte' || 
                 (t.assigned_to_name || '').toLowerCase().includes('soporte') ||
-                (userId && t.assigned_to_user_id === userId)
+                (ctx.allMyIds.includes(t.assigned_to_user_id))
             );
+            return res.json({ success: true, tickets });
         }
+
+        // Obtener contactos para mapear jerarquía y cartera
+        const allContacts = await db.obtenerContactos(req.params.codigo, false);
+        const contactMap = new Map();
+        allContacts.forEach(c => contactMap.set(c.id, c));
+
+        if (ctx.isLider) {
+            // "lider podra ver solo los tickets de su equipo y de los inversores dentro de su arbol"
+            const teamAdvisorIds = allContacts
+                .filter(c => {
+                    const isAdvisor = (c.grupo || '').toUpperCase() === 'ASESORES' || (c.rol_asignado || '').toLowerCase() === 'asesores';
+                    const belongsToMe = ctx.allMyIds.includes(c.lider_id) || ctx.allMyIds.includes(Number(c.lider_id));
+                    return isAdvisor && belongsToMe;
+                })
+                .map(c => c.id);
+
+            tickets = tickets.filter(t => {
+                if (ctx.allMyIds.includes(t.assigned_to_user_id)) return true;
+                if (!t.contacto_id) {
+                    return (t.category || '').toLowerCase().includes('lider') || 
+                           (t.assigned_to_name || '').toLowerCase().includes('lider') ||
+                           (ctx.user?.first_name && t.customer_name?.toLowerCase().includes(ctx.user.first_name.toLowerCase()));
+                }
+                const c = contactMap.get(t.contacto_id);
+                if (!c) return false;
+
+                if (teamAdvisorIds.includes(c.id)) return true;
+
+                const belongsToTree = ctx.allMyIds.includes(c.lider_id) || 
+                                      ctx.allMyIds.includes(Number(c.lider_id)) || 
+                                      teamAdvisorIds.includes(c.asesor_id) ||
+                                      teamAdvisorIds.includes(Number(c.asesor_id));
+                if (belongsToTree) return true;
+
+                return false;
+            });
+
+            return res.json({ success: true, tickets });
+        }
+
+        if (ctx.isAsesor) {
+            // "los asesores solo podran ver los tickets con su lider y con los inversores que pertenezcan a su cartera"
+            tickets = tickets.filter(t => {
+                if (ctx.allMyIds.includes(t.assigned_to_user_id)) return true;
+                if (!t.contacto_id) {
+                    return (ctx.user?.first_name && t.customer_name?.toLowerCase().includes(ctx.user.first_name.toLowerCase())) ||
+                           (t.category || '').toLowerCase().includes('asesor');
+                }
+
+                const c = contactMap.get(t.contacto_id);
+                if (!c) return false;
+
+                if (ctx.myLeaderIds && ctx.myLeaderIds.includes(c.id)) return true;
+                if (ctx.allMyIds.includes(c.id)) return true;
+
+                const isMyPortfolio = ctx.allMyIds.includes(c.asesor_id) || 
+                                      ctx.allMyIds.includes(Number(c.asesor_id)) || 
+                                      ctx.allMyIds.includes(c.usuario_asignado_id);
+                if (isMyPortfolio) return true;
+
+                return false;
+            });
+
+            return res.json({ success: true, tickets });
+        }
+
         res.json({ success: true, tickets });
     } catch (error) {
         console.error('Error obteniendo tickets:', error);
@@ -2114,8 +2244,43 @@ app.post(['/api/empresas/:codigo/ai/simulate', '/empresas/:codigo/ai/simulate'],
 
 app.get(['/api/empresas/:codigo/crm/contacts', '/api/empresas/:codigo/crm/contactos'], async (req, res) => {
     try {
-        const { grupo, search } = req.query;
-        const contacts = await db.obtenerContactosCRM(req.params.codigo, grupo, search);
+        const { grupo, search, clerkId, userId, role } = req.query;
+        let contacts = await db.obtenerContactosCRM(req.params.codigo, grupo, search);
+        
+        if (clerkId || userId || role) {
+            const ctx = await db.getUserPortfolioContext(clerkId, userId, role, req.params.codigo);
+            if (!ctx.isMaster && !ctx.isSoporte) {
+                if (ctx.isLider) {
+                    const teamAdvisorIds = contacts
+                        .filter(c => {
+                            const isAdvisor = (c.grupo || '').toUpperCase() === 'ASESORES' || (c.rol_asignado || '').toLowerCase() === 'asesores';
+                            const belongsToMe = ctx.allMyIds.includes(c.lider_id) || ctx.allMyIds.includes(Number(c.lider_id));
+                            return isAdvisor && belongsToMe;
+                        })
+                        .map(c => c.id);
+
+                    contacts = contacts.filter(c => {
+                        if (teamAdvisorIds.includes(c.id)) return true;
+                        const belongsToTree = ctx.allMyIds.includes(c.lider_id) || 
+                                              ctx.allMyIds.includes(Number(c.lider_id)) || 
+                                              teamAdvisorIds.includes(c.asesor_id) ||
+                                              teamAdvisorIds.includes(Number(c.asesor_id));
+                        if (belongsToTree) return true;
+                        if (ctx.allMyIds.includes(c.usuario_asignado_id) || ctx.allMyIds.includes(c.id)) return true;
+                        return false;
+                    });
+                } else if (ctx.isAsesor) {
+                    contacts = contacts.filter(c => {
+                        if (ctx.myLeaderIds && ctx.myLeaderIds.includes(c.id)) return true;
+                        const isMyPortfolio = ctx.allMyIds.includes(c.asesor_id) || 
+                                              ctx.allMyIds.includes(Number(c.asesor_id)) || 
+                                              ctx.allMyIds.includes(c.usuario_asignado_id);
+                        return isMyPortfolio;
+                    });
+                }
+            }
+        }
+
         res.json({ success: true, contacts });
     } catch (error) {
         console.error('Error obteniendo contactos CRM:', error);
@@ -2162,8 +2327,23 @@ app.post('/api/empresas/:codigo/contacts/:id/assign-team', async (req, res) => {
         const codigoEmpresa = req.params.codigo;
         const contactId = req.params.id;
 
-        const fromSector = derivado_desde || updated_by?.role || updated_by?.name || 'Soporte';
-        const success = await db.derivarContactoTeam(contactId, codigoEmpresa, rol_asignado, usuario_asignado_id, fromSector, resumen_necesidad);
+        let fromSector = derivado_desde || updated_by?.role || updated_by?.name || 'Soporte';
+        let needSummary = resumen_necesidad;
+        if (!needSummary || needSummary.trim() === '') {
+            try {
+                const historyRows = await db.obtenerHistorialMensajes(contactId, 10);
+                if (historyRows && historyRows.length > 0) {
+                    const chatText = historyRows.map(m => `${m.direccion === 'SALIENTE' ? 'Bot/Operador' : 'Usuario'}: ${m.contenido}`).join('\n');
+                    const { summarizeConversationWithAI } = require('./aiRouter');
+                    needSummary = await summarizeConversationWithAI(chatText, codigoEmpresa);
+                }
+            } catch (sumErr) {
+                console.warn('Error auto-generando resumen en assign-team:', sumErr.message);
+            }
+        }
+        if (!needSummary) needSummary = 'Atención y seguimiento personalizado solicitado.';
+
+        const success = await db.derivarContactoTeam(contactId, codigoEmpresa, rol_asignado, usuario_asignado_id, fromSector, needSummary);
         if (success) {
             await db.registrarAuditLog({
                 codigo_empresa: codigoEmpresa,
@@ -2173,10 +2353,10 @@ app.post('/api/empresas/:codigo/contacts/:id/assign-team', async (req, res) => {
                 accion: 'contacto_derivado_team',
                 entidad: 'contacto',
                 entidad_id: contactId.toString(),
-                detalles: `Contacto derivado a Team: "${rol_asignado}" ${usuario_nombre ? `(Asignado a: ${usuario_nombre})` : ''} - Necesidad: ${resumen_necesidad || 'N/A'}`,
+                detalles: `Contacto derivado a Team: "${rol_asignado}" ${usuario_nombre ? `(Asignado a: ${usuario_nombre})` : ''} - Necesidad: ${needSummary}`,
                 google_scope: 'colaboratium@gmail.com'
             });
-            res.json({ success: true });
+            res.json({ success: true, resumen_necesidad: needSummary });
         } else {
             res.status(404).json({ success: false, error: 'Contacto no encontrado' });
         }
