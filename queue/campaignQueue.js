@@ -27,10 +27,24 @@ const campaignWorker = new Worker('outgoing-campaigns', async (job) => {
             const contacto = contacts[0];
             const telefono = contacto.telefono;
             
-            // Parámetros para variables de la plantilla (ej. {{1}} = Nombre)
+            // Parámetros para variables de la plantilla (ej. {{1}} = Nombre o variables de webinar)
             let parameters = [];
-            if (useContactName && contacto.nombre) {
-                parameters = [contacto.nombre];
+            if (templateName === 'reunion_informativa_asesores') {
+                let fechaStr = 'Jueves 29 de Octubre';
+                let horarioStr = '13:00 hs';
+                let meetUrl = 'https://meet.google.com/new';
+                try {
+                    const { getAvailableWebinarSlots } = require('../googleCalendarService');
+                    const slots = await getAvailableWebinarSlots(contacto.codigo_empresa || 'KRZMJI', 'asesores');
+                    if (slots && slots.length > 0) {
+                        fechaStr = slots[0].fechaStr || fechaStr;
+                        horarioStr = slots[0].horarioStr?.split(' a ')?.[0] || horarioStr;
+                        meetUrl = slots[0].meetLink || meetUrl;
+                    }
+                } catch (e) {}
+                parameters = [fechaStr, horarioStr, '40 min', meetUrl, 'https://colaboratium.com.ar/baja'];
+            } else if (useContactName || ['bienvenida_asesores_colaboratium', 'convocatoria_lideres_de_equipo', 'simulador_y_propuesta_inversores'].includes(templateName)) {
+                parameters = [contacto.nombre || 'Estimado/a'];
             }
 
             // Enviamos la plantilla con los parámetros

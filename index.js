@@ -559,21 +559,76 @@ app.post('/api/contacts/:id/template', async (req, res) => {
         let cv = empresa.cuentas_vinculadas;
         if (typeof cv === 'string') { try { cv = JSON.parse(cv); } catch(e){} }
         
-        const phoneId = cv?.whatsapp?.phone_id;
-        const accessToken = cv?.whatsapp?.access_token;
+        const phoneId = cv?.whatsapp?.phone_id || process.env.WHATSAPP_PHONE_ID || process.env.WAPP_PHONE_NUMBER_ID;
+        const accessToken = cv?.whatsapp?.access_token || process.env.WHATSAPP_ACCESS_TOKEN || process.env.WAPP_ACCESS_TOKEN;
 
         if (!phoneId || !accessToken) return res.status(400).json({ error: 'La empresa no tiene WhatsApp configurado' });
+
+        // Determinar parámetros requeridos según la plantilla y los datos del contacto
+        let params = req.body.parameters;
+        const contacto = contacts[0];
+        const contactName = contacto.nombre || 'Estimado/a';
+
+        if (!params || !Array.isArray(params) || params.length === 0) {
+            if (templateName === 'reunion_informativa_asesores') {
+                let fechaStr = 'Jueves 29 de Octubre';
+                let horarioStr = '13:00 hs';
+                let meetUrl = 'https://meet.google.com/new';
+                try {
+                    const { getAvailableWebinarSlots } = require('./googleCalendarService');
+                    const slots = await getAvailableWebinarSlots(codigoEmpresa, 'asesores');
+                    if (slots && slots.length > 0) {
+                        fechaStr = slots[0].fechaStr || fechaStr;
+                        horarioStr = slots[0].horarioStr?.split(' a ')?.[0] || horarioStr;
+                        meetUrl = slots[0].meetLink || meetUrl;
+                    }
+                } catch (e) {}
+
+                params = [
+                    fechaStr,
+                    horarioStr,
+                    '40 min',
+                    meetUrl,
+                    'https://colaboratium.com.ar/baja'
+                ];
+            } else if (['bienvenida_asesores_colaboratium', 'convocatoria_lideres_de_equipo', 'simulador_y_propuesta_inversores'].includes(templateName)) {
+                params = [contactName];
+            } else if (bodyText && bodyText.includes('{{1}}')) {
+                const matches = bodyText.match(/\{\{(\d+)\}\}/g) || [];
+                const count = new Set(matches).size;
+                if (count === 1) {
+                    params = [contactName];
+                } else if (count > 1) {
+                    params = [contactName];
+                    for (let i = 2; i <= count; i++) {
+                        params.push(`Dato ${i}`);
+                    }
+                } else {
+                    params = [];
+                }
+            } else {
+                params = [];
+            }
+        }
         
         // Enviar plantilla
-        const wamid = await sendWhatsAppTemplate(telefono, templateName, languageCode, phoneId, accessToken);
+        const wamid = await sendWhatsAppTemplate(telefono, templateName, languageCode, phoneId, accessToken, params);
         
-        // Guardar mensaje en base de datos con tipo 'template' (importante para la reactivación de IA)
-        await db.guardarMensaje(contactId, wamid, 'SALIENTE', 'template', bodyText || `[Plantilla: ${templateName}]`);
+        // Renderizar cuerpo del mensaje con sus variables reemplazadas para la base de datos
+        let renderedBody = bodyText || `[Plantilla: ${templateName}]`;
+        if (params && params.length > 0) {
+            params.forEach((p, idx) => {
+                renderedBody = renderedBody.replace(new RegExp(`\\{\\{${idx + 1}\\}\\}`, 'g'), p);
+            });
+        }
+        await db.guardarMensaje(contactId, wamid, 'SALIENTE', 'template', renderedBody);
 
         res.json({ success: true, messageId: wamid });
     } catch (error) {
-        console.error('❌ Error enviando plantilla:', error);
-        res.status(500).json({ error: 'No se pudo enviar la plantilla' });
+        console.error('❌ Error enviando plantilla:', error.response?.data || error.message);
+        const metaError = error.response?.data?.error;
+        const msg = metaError?.message || metaError?.error_data?.details || error.message || 'No se pudo enviar la plantilla';
+        res.status(500).json({ error: msg, details: metaError });
     }
 });
 

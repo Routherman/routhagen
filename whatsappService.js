@@ -229,10 +229,21 @@ async function sendWhatsAppTemplate(recipientId, templateName, languageCode, pho
         const errorData = error.response?.data?.error;
         const details = errorData?.error_data?.details || '';
         
-        // Auto-recuperación: si la plantilla en Meta no admite parámetros (espera 0) pero enviamos variables
-        if (errorData?.code === 132000 && Array.isArray(parameters) && parameters.length > 0 && details.includes('expected number of params (0)')) {
-            console.warn(`⚠️ [WhatsApp API] La plantilla '${templateName}' no acepta variables dinámicas (${details}). Reenviando automáticamente sin parámetros...`);
-            return await sendWhatsAppTemplate(recipientId, templateName, languageCode, phoneId, accessToken, []);
+        // Auto-recuperación ante desajuste de parámetros (Meta error code 132000)
+        if (errorData?.code === 132000) {
+            if (Array.isArray(parameters) && parameters.length > 0 && details.includes('expected number of params (0)')) {
+                console.warn(`⚠️ [WhatsApp API] La plantilla '${templateName}' no acepta variables dinámicas (${details}). Reenviando automáticamente sin parámetros...`);
+                return await sendWhatsAppTemplate(recipientId, templateName, languageCode, phoneId, accessToken, []);
+            }
+            if ((!parameters || parameters.length === 0) && details.includes('expected number of params (1)')) {
+                console.warn(`⚠️ [WhatsApp API] La plantilla '${templateName}' requiere 1 variable (${details}). Reenviando automáticamente con nombre por defecto...`);
+                return await sendWhatsAppTemplate(recipientId, templateName, languageCode, phoneId, accessToken, ['Estimado/a']);
+            }
+            if ((!parameters || parameters.length < 5) && details.includes('expected number of params (5)')) {
+                console.warn(`⚠️ [WhatsApp API] La plantilla '${templateName}' requiere 5 variables (${details}). Reenviando automáticamente con datos de webinar...`);
+                const fallbackParams = ['Jueves 29 de Octubre', '13:00 hs', '40 min', 'https://meet.google.com/new', 'https://colaboratium.com.ar/baja'];
+                return await sendWhatsAppTemplate(recipientId, templateName, languageCode, phoneId, accessToken, fallbackParams);
+            }
         }
 
         console.error('❌ Error enviando plantilla de WhatsApp:', error.response?.data || error.message);
