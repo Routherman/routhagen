@@ -84,9 +84,37 @@ async function summarizeDocument(text) {
     }
 }
 
+const fs = require('fs');
+
+/**
+ * Transcribe notas de voz y audios de WhatsApp usando Groq Whisper LPU
+ */
+async function transcribeAudioWithGroq(filePath, language = 'es') {
+    try {
+        if (!fs.existsSync(filePath)) {
+            console.error('❌ Archivo de audio no encontrado para transcribir:', filePath);
+            return '';
+        }
+        const fileStream = fs.createReadStream(filePath);
+        const transcription = await groq.audio.transcriptions.create({
+            file: fileStream,
+            model: 'whisper-large-v3',
+            language: language,
+            response_format: 'text'
+        });
+        const text = typeof transcription === 'string' ? transcription : (transcription?.text || '');
+        console.log(`🎙️ [WHISPER GROQ] Audio transcribido con éxito: "${text.trim()}"`);
+        return text.trim();
+    } catch (error) {
+        console.error('❌ Error transcribiendo audio con Groq Whisper:', error.message);
+        return '';
+    }
+}
+
 module.exports = {
     processMessageWithAI,
     summarizeDocument,
     queryOllama,
-    queryGroq
+    queryGroq,
+    transcribeAudioWithGroq
 };

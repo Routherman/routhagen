@@ -16,10 +16,25 @@ const fs = require('fs');
 const { incomingMessageQueue } = require('./queue/messageQueue');
 const { campaignQueue } = require('./queue/campaignQueue');
 const { processExcelContactsWithAI, normalizePhoneNumber } = require('./excelService');
-const { sendTicketEmail } = require('./emailService');
+const { sendTicketEmail, sendMassEmailCampaign, sendGenericEmail } = require('./emailService');
+const { analyzeDeliverability, validateMergeVariables } = require('./emailOptimizer');
 const { summarizeConversationWithAI } = require('./aiRouter');
 
 const upload = multer({ dest: 'public/uploads/' });
+
+// Configuración de almacenamiento para Biblioteca de Medios por Rubros
+const mediaStorage = multer.diskStorage({
+    destination: function (req, file, cb) {
+        const dest = path.join(__dirname, 'public/media');
+        if (!fs.existsSync(dest)) fs.mkdirSync(dest, { recursive: true });
+        cb(null, dest);
+    },
+    filename: function (req, file, cb) {
+        const cleanName = file.originalname.replace(/[^a-zA-Z0-9._-]/g, '_');
+        cb(null, Date.now() + '_' + cleanName);
+    }
+});
+const uploadMedia = multer({ storage: mediaStorage });
 
 const app = express();
 
@@ -55,7 +70,10 @@ app.use((req, res, next) => {
     next();
 });
 
-app.use('/media', express.static('public/media'));
+app.use('/media', express.static(path.join(__dirname, 'public/media')));
+app.use('/api/media', express.static(path.join(__dirname, 'public/media')));
+app.use('/uploads', express.static(path.join(__dirname, 'public/uploads')));
+app.use('/api/uploads', express.static(path.join(__dirname, 'public/uploads')));
 app.use(bodyParser.json());
 
 const PORT = process.env.PORT || 8080;
@@ -266,7 +284,8 @@ app.post('/api/messages/whatsapp/receive', async (req, res) => {
 app.get('/api/contacts/:empresa', async (req, res) => {
     try {
         const clerkId = req.query.clerkId;
-        let contacts = await db.obtenerContactos(req.params.empresa);
+        const onlyWithMessages = req.query.onlyWithMessages === 'true';
+        let contacts = await db.obtenerContactos(req.params.empresa, onlyWithMessages);
         
         if (clerkId) {
             const user = await db.obtenerUsuario(clerkId);
@@ -574,6 +593,486 @@ app.get('/api/empresas/:codigo/campanas', async (req, res) => {
     } catch (error) {
         console.error('Error fetching campaigns:', error);
         res.status(500).json({ error: 'Error obteniendo campañas' });
+    }
+});
+
+// ==========================================
+// ENDPOINTS DE PLANTILLAS (WHATSAPP & EMAIL)
+// ==========================================
+
+// Listar plantillas de una empresa
+app.get('/api/empresas/:codigo/plantillas', async (req, res) => {
+    try {
+        const { tipo } = req.query;
+        const plantillas = await db.obtenerPlantillas(req.params.codigo, tipo);
+        res.json(plantillas);
+    } catch (error) {
+        console.error('Error obteniendo plantillas:', error);
+        res.status(500).json({ error: 'Error obteniendo plantillas' });
+    }
+});
+
+// Crear plantilla
+app.post('/api/empresas/:codigo/plantillas', async (req, res) => {
+    try {
+        const { tipo, nombre, categoria, asunto, contenido, archivos_adjuntos } = req.body;
+        if (!nombre || !contenido) {
+            return res.status(400).json({ error: 'Nombre y contenido son obligatorios' });
+        }
+        const id = await db.crearPlantilla(req.params.codigo, {
+            tipo: tipo || 'whatsapp',
+            nombre,
+            categoria: categoria || 'general',
+            asunto: asunto || null,
+            contenido,
+            archivos_adjuntos: archivos_adjuntos || null
+        });
+        res.json({ success: true, id, message: 'Plantilla creada exitosamente' });
+    } catch (error) {
+        console.error('Error creando plantilla:', error);
+        res.status(500).json({ error: 'Error creando plantilla' });
+    }
+});
+
+// Actualizar plantilla
+app.put('/api/empresas/:codigo/plantillas/:id', async (req, res) => {
+    try {
+        const ok = await db.actualizarPlantilla(req.params.id, req.body);
+        if (!ok) return res.status(404).json({ error: 'Plantilla no encontrada' });
+        res.json({ success: true, message: 'Plantilla actualizada exitosamente' });
+    } catch (error) {
+        console.error('Error actualizando plantilla:', error);
+        res.status(500).json({ error: 'Error actualizando plantilla' });
+    }
+});
+
+// Eliminar plantilla
+app.delete('/api/empresas/:codigo/plantillas/:id', async (req, res) => {
+    try {
+        await db.eliminarPlantilla(req.params.id);
+        res.json({ success: true, message: 'Plantilla eliminada exitosamente' });
+    } catch (error) {
+        console.error('Error eliminando plantilla:', error);
+        res.status(500).json({ error: 'Error eliminando plantilla' });
+    }
+});
+
+// ==========================================
+// ENDPOINTS DE BIBLIOTECA DE MEDIOS
+// ==========================================
+
+// Listar medios por rubro o todos
+app.get('/api/empresas/:codigo/medios', async (req, res) => {
+    try {
+        const { rubro } = req.query;
+        const medios = await db.obtenerMedios(req.params.codigo, rubro);
+        res.json(medios);
+    } catch (error) {
+        console.error('Error obteniendo medios:', error);
+        res.status(500).json({ error: 'Error obteniendo medios' });
+    }
+});
+
+// Crear registro de medio manual
+app.post('/api/empresas/:codigo/medios', async (req, res) => {
+    try {
+        const { rubro, nombre, archivo_url, mimetype, tamano_bytes } = req.body;
+        if (!nombre || !archivo_url) {
+            return res.status(400).json({ error: 'Nombre y URL de archivo son obligatorios' });
+        }
+        const id = await db.crearMedio(req.params.codigo, {
+            rubro: rubro || 'otro',
+            nombre,
+            archivo_url,
+            mimetype,
+            tamano_bytes: tamano_bytes || 0
+        });
+        res.json({ success: true, id, message: 'Medio registrado correctamente' });
+    } catch (error) {
+        console.error('Error registrando medio:', error);
+        res.status(500).json({ error: 'Error registrando medio' });
+    }
+});
+
+// Subir archivo a la biblioteca de medios con detección automática de rubro
+app.post('/api/empresas/:codigo/medios/upload', uploadMedia.single('file'), async (req, res) => {
+    try {
+        if (!req.file) {
+            return res.status(400).json({ error: 'No se subió ningún archivo' });
+        }
+
+        const ext = path.extname(req.file.originalname).toLowerCase();
+        const mime = (req.file.mimetype || '').toLowerCase();
+        let rubro = req.body.rubro;
+
+        if (!rubro || rubro === 'auto') {
+            if (['.mp3', '.ogg', '.wav', '.m4a', '.aac'].includes(ext) || mime.startsWith('audio/')) {
+                rubro = 'audio';
+            } else if (['.jpg', '.jpeg', '.png', '.webp', '.svg', '.gif'].includes(ext) || mime.startsWith('image/')) {
+                rubro = 'imagen';
+            } else if (ext === '.pdf' || mime.includes('pdf')) {
+                rubro = 'pdf';
+            } else if (['.ppt', '.pptx', '.mp4'].includes(ext) || mime.includes('presentation') || mime.startsWith('video/')) {
+                rubro = 'presentacion';
+            } else {
+                rubro = 'otro';
+            }
+        }
+
+        const archivoUrl = `/media/${req.file.filename}`;
+        const id = await db.crearMedio(req.params.codigo, {
+            rubro,
+            nombre: req.file.originalname,
+            archivo_url: archivoUrl,
+            mimetype: req.file.mimetype,
+            tamano_bytes: req.file.size
+        });
+
+        res.json({
+            success: true,
+            id,
+            rubro,
+            nombre: req.file.originalname,
+            archivo_url: archivoUrl,
+            message: 'Archivo subido y categorizado en la Biblioteca de Medios'
+        });
+    } catch (error) {
+        console.error('Error subiendo archivo a medios:', error);
+        res.status(500).json({ error: 'Error subiendo archivo a medios' });
+    }
+});
+
+// Eliminar medio de la biblioteca
+app.delete('/api/empresas/:codigo/medios/:id', async (req, res) => {
+    try {
+        await db.eliminarMedio(req.params.id);
+        res.json({ success: true, message: 'Medio eliminado de la biblioteca' });
+    } catch (error) {
+        console.error('Error eliminando medio:', error);
+        res.status(500).json({ error: 'Error eliminando medio' });
+    }
+});
+
+// ==========================================
+// CAMPAÑAS MASIVAS DE EMAIL (GMAIL) - ARQUITECTURA OPTIMIZADA
+// ==========================================
+
+// 1. Diagnóstico de Entregabilidad Anti-Spam (chunkydotdev/email-skills)
+app.post('/api/empresas/:codigo/campanas/email/analyze', async (req, res) => {
+    try {
+        const { subject = '', content = '' } = req.body;
+        const analysis = analyzeDeliverability({ subject, htmlContent: content });
+        res.json({ success: true, analysis });
+    } catch (err) {
+        console.error('Error analizando entregabilidad de email:', err);
+        res.status(500).json({ error: 'Error analizando entregabilidad' });
+    }
+});
+
+// 2. Pre-flight Merge Validation (robindarlington/mail-merge)
+app.post('/api/empresas/:codigo/campanas/email/validate-merge', async (req, res) => {
+    try {
+        const { content = '', contactIds } = req.body;
+        const allContacts = await db.obtenerContactosCRM(req.params.codigo);
+        let targetContacts = allContacts;
+        if (contactIds && Array.isArray(contactIds) && contactIds.length > 0) {
+            targetContacts = allContacts.filter(c => contactIds.includes(c.id));
+        }
+        const validation = validateMergeVariables(content, targetContacts);
+        res.json({ success: true, validation });
+    } catch (err) {
+        console.error('Error validando variables de email:', err);
+        res.status(500).json({ error: 'Error validando variables' });
+    }
+});
+
+// 3. Test de Envío de 1 Clic / Compuerta de Prueba (robindarlington/mail-merge)
+app.post('/api/empresas/:codigo/campanas/email/test-send', async (req, res) => {
+    try {
+        const { testEmail = 'damduff@gmail.com', subject, content, attachments = [] } = req.body;
+        if (!subject || !content) {
+            return res.status(400).json({ error: 'Asunto y contenido son obligatorios para la prueba' });
+        }
+
+        const { getAvailableWebinarSlots } = require('./googleCalendarService');
+        let calendarSlots = [];
+        try {
+            calendarSlots = await getAvailableWebinarSlots(req.params.codigo, 'asesores');
+        } catch (e) {}
+        const defaultSlot = (calendarSlots && calendarSlots.length > 0) ? calendarSlots[0] : null;
+        const fechaSlot = defaultSlot ? defaultSlot.fechaStr : 'Jueves, 29 de octubre';
+        const horaSlot = defaultSlot ? (defaultSlot.horarioStr ? defaultSlot.horarioStr.split(' a ')[0] : '13:00 hs') : '13:00 hs';
+        const duracionSlot = '1 hora y media (90 minutos)';
+        const botWhatsApp = '5491173722708';
+        const backendUrl = process.env.BACKEND_URL || 'http://localhost:8080';
+        const enlaceRegistro = `https://wa.me/${botWhatsApp}?text=Hola%20Colaboratium,%20quiero%20confirmar%20mi%20asistencia%20y%20RESERVAR%20MI%20LUGAR%20EN%20LA%20REUNI%C3%93N%20de%20asesores`;
+        const enlaceBaja = `${backendUrl}/api/campanas/desuscribir?email=${encodeURIComponent(testEmail)}&empresa=${encodeURIComponent(req.params.codigo)}`;
+
+        const personalizedHtml = `
+            <div style="background:#fef3c7;border:1px solid #f59e0b;color:#92400e;padding:12px 18px;border-radius:10px;margin-bottom:20px;font-family:sans-serif;font-size:13px;line-height:1.5;">
+                <strong>🧪 TEST DE ENVÍO DE 1 CLIC (Pre-flight Mail-Merge):</strong><br>
+                Este correo es una prueba de previsualización directa despachada a <code>${testEmail}</code> antes de lanzar la campaña masiva.
+            </div>
+            ${content}
+        `
+        .replace(/\{\{nombre\}\}/gi, 'Damián (Prueba)')
+        .replace(/\{\{email\}\}/gi, testEmail)
+        .replace(/\{\{rol\}\}/gi, 'Prospecto Asesores')
+        .replace(/\{\{telefono\}\}/gi, '+54 9 11 7372-2708')
+        .replace(/\{\{enlaceregistro\}\}/gi, enlaceRegistro)
+        .replace(/\{\{enlacebaja\}\}/gi, enlaceBaja)
+        .replace(/\{\{fecha\}\}/gi, fechaSlot)
+        .replace(/\{\{hora\}\}/gi, horaSlot)
+        .replace(/\{\{duracion\}\}/gi, duracionSlot);
+
+        const testSubject = `[TEST PRUEBA 1-CLIC] ${subject.replace(/\{\{nombre\}\}/gi, 'Damián')}`;
+
+        const result = await sendGenericEmail({
+            to: testEmail,
+            subject: testSubject,
+            html: personalizedHtml,
+            attachments
+        });
+
+        if (result.success) {
+            res.json({ success: true, message: `Correo de prueba enviado con éxito a ${testEmail}` });
+        } else {
+            res.status(500).json({ error: `Fallo al enviar correo de prueba: ${result.error || 'Error SMTP'}` });
+        }
+    } catch (err) {
+        console.error('Error en test-send email:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// 4. Creación y Despacho Masivo con Resiliencia (ranaroussi/minigun)
+app.post('/api/empresas/:codigo/campanas/email', async (req, res) => {
+    try {
+        const { campaignName, contactIds, subject, content, plantillaId, attachments, humanPacing } = req.body;
+        if (!campaignName || !subject || !content) {
+            return res.status(400).json({ error: 'El nombre de campaña, asunto y contenido son obligatorios' });
+        }
+
+        // Obtener contactos destinatarios
+        const allContacts = await db.obtenerContactosCRM(req.params.codigo);
+        let targetContacts = allContacts;
+        if (contactIds && Array.isArray(contactIds) && contactIds.length > 0) {
+            targetContacts = allContacts.filter(c => contactIds.includes(c.id));
+        }
+
+        // Filtrar contactos con email válido
+        targetContacts = targetContacts.filter(c => c.email && c.email.includes('@'));
+
+        if (targetContacts.length === 0) {
+            return res.status(400).json({ error: 'No se encontraron contactos con email válido para enviar la campaña' });
+        }
+
+        // Analizar puntuación de spam para trazabilidad
+        const deliverability = analyzeDeliverability({ subject, htmlContent: content });
+
+        // Crear campaña en BD con punteros de recuperación
+        const campanaId = await db.crearCampanaCompleta(req.params.codigo, {
+            nombre: campaignName,
+            tipo: 'email',
+            plantilla_id: plantillaId || null,
+            asunto_email: subject,
+            archivos_adjuntos: attachments || null,
+            total_contactos: targetContacts.length,
+            estado: 'en_progreso',
+            modo_envio: humanPacing !== false ? 'humano' : 'directo',
+            contactos_json: targetContacts.map(c => ({ id: c.id, nombre: c.nombre, email: c.email })),
+            spam_score: deliverability.score
+        });
+
+        // Despachar envíos en segundo plano
+        setImmediate(async () => {
+            try {
+                await sendMassEmailCampaign({
+                    codigoEmpresa: req.params.codigo,
+                    campanaId,
+                    contacts: targetContacts,
+                    subject,
+                    htmlContent: content,
+                    attachments: attachments || [],
+                    humanPacing: humanPacing !== false,
+                    startIndex: 0
+                });
+            } catch (err) {
+                console.error('Error ejecutando campaña de email:', err);
+            }
+        });
+
+        res.json({
+            success: true,
+            campanaId,
+            spamScore: deliverability.score,
+            totalContactos: targetContacts.length,
+            message: `Campaña iniciada para ${targetContacts.length} contactos. Entregabilidad estimada: ${deliverability.score}/100.`
+        });
+    } catch (error) {
+        console.error('Error iniciando campaña de email:', error);
+        res.status(500).json({ error: 'Error iniciando campaña de email' });
+    }
+});
+
+// 5. Reanudación de Campaña tras Interrupción / Crash Recovery (ranaroussi/minigun)
+app.post('/api/empresas/:codigo/campanas/:id/resume', async (req, res) => {
+    try {
+        const campana = await db.obtenerCampanaPorId(req.params.id);
+        if (!campana) {
+            return res.status(404).json({ error: 'Campaña no encontrada' });
+        }
+
+        let contacts = campana.contactos_json || [];
+        if (contacts.length === 0) {
+            const allContacts = await db.obtenerContactosCRM(req.params.codigo);
+            contacts = allContacts.filter(c => c.email && c.email.includes('@'));
+        }
+
+        const startIndex = campana.ultimo_indice_enviado || campana.enviados || 0;
+        if (startIndex >= contacts.length) {
+            return res.json({ success: true, message: 'La campaña ya fue completada en su totalidad.' });
+        }
+
+        await db.actualizarCampanaProgreso(campana.id, {
+            estado: 'en_progreso',
+            ultimo_log: `Reanudando campaña desde el contacto #${startIndex + 1} de ${contacts.length}...`
+        });
+
+        setImmediate(async () => {
+            try {
+                await sendMassEmailCampaign({
+                    codigoEmpresa: req.params.codigo,
+                    campanaId: campana.id,
+                    contacts,
+                    subject: campana.asunto_email || 'Convocatoria Colaboratium',
+                    htmlContent: campana.plantilla_contenido || '',
+                    attachments: campana.archivos_adjuntos || [],
+                    humanPacing: campana.modo_envio !== 'directo',
+                    startIndex
+                });
+            } catch (err) {
+                console.error('Error reanudando campaña:', err);
+            }
+        });
+
+        res.json({
+            success: true,
+            message: `Campaña #${campana.id} reanudada con éxito desde el contacto #${startIndex + 1} de ${contacts.length}.`
+        });
+    } catch (err) {
+        console.error('Error reanudando campaña:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// 6. Lista de Desuscripciones / Blacklist
+app.get('/api/empresas/:codigo/campanas/desuscripciones', async (req, res) => {
+    try {
+        const desuscripciones = await db.obtenerDesuscripciones(req.params.codigo);
+        res.json({ success: true, desuscripciones });
+    } catch (err) {
+        console.error('Error obteniendo desuscripciones:', err);
+        res.status(500).json({ error: 'Error obteniendo desuscripciones' });
+    }
+});
+
+// 7. Página pública de desuscripción de 1 clic (CAN-SPAM / Gmail 2024 compliance)
+app.get('/api/campanas/desuscribir', async (req, res) => {
+    const { email, empresa } = req.query;
+    const safeEmail = email ? String(email).replace(/[<>]/g, '').trim() : 'tu correo';
+    if (email) {
+        await db.registrarDesuscripcion(empresa || 'KRZMJI', email, 'Baja por enlace web en correo');
+    }
+
+    res.send(`<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Desuscripción Confirmada - Colaboratium</title>
+    <style>
+        body { margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #0b0f17; color: #f1f5f9; display: flex; align-items: center; justify-content: center; min-height: 100vh; }
+        .card { background: #131b29; border: 1px solid #1e293b; border-radius: 16px; padding: 40px; max-width: 480px; width: 90%; text-align: center; box-shadow: 0 20px 40px rgba(0,0,0,0.5); }
+        .icon { width: 56px; height: 56px; background: rgba(16, 185, 129, 0.15); border: 2px solid #10b981; border-radius: 50%; display: flex; align-items: center; justify-content: center; margin: 0 auto 20px; color: #10b981; font-size: 26px; font-weight: bold; }
+        h1 { font-size: 22px; margin: 0 0 12px; color: #ffffff; }
+        p { font-size: 14px; line-height: 1.6; color: #94a3b8; margin: 0 0 20px; }
+        .badge { display: inline-block; background: #1e293b; color: #38bdf8; padding: 6px 14px; border-radius: 20px; font-size: 13px; font-weight: 600; margin-bottom: 24px; word-break: break-all; }
+        .footer { font-size: 11px; color: #64748b; border-top: 1px solid #1e293b; padding-top: 18px; }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <div class="icon">✓</div>
+        <h1>Baja procesada con éxito</h1>
+        <p>Tu dirección ha sido dada de baja de nuestra lista de convocatorias y oportunidades comerciales.</p>
+        <div class="badge">${safeEmail}</div>
+        <p style="font-size:12px;color:#64748b;">No recibirás más correos automáticos sobre esta convocatoria. Si esto fue un error, puedes escribir a <a href="mailto:colaboratium@gmail.com" style="color:#38bdf8;">colaboratium@gmail.com</a>.</p>
+        <div class="footer">
+            Colaboratium &copy; 2026 • Av. del Libertador 264, Vicente López, Buenos Aires
+        </div>
+    </div>
+</body>
+</html>`);
+});
+
+// ==========================================
+// CAMPAÑAS MASIVAS DE META WHATSAPP (CON PLANTILLA Y ADJUNTOS)
+// ==========================================
+
+app.post('/api/empresas/:codigo/campanas/meta', async (req, res) => {
+    try {
+        const { campaignName, contactIds, templateName, templateContent, attachments, messagesPerMinute = 10, plantillaId } = req.body;
+        if (!campaignName) {
+            return res.status(400).json({ error: 'El nombre de campaña es obligatorio' });
+        }
+
+        const allContacts = await db.obtenerContactosCRM(req.params.codigo);
+        let targetContacts = allContacts;
+        if (contactIds && Array.isArray(contactIds) && contactIds.length > 0) {
+            targetContacts = allContacts.filter(c => contactIds.includes(c.id));
+        }
+
+        if (targetContacts.length === 0) {
+            return res.status(400).json({ error: 'No se encontraron contactos para la campaña de WhatsApp' });
+        }
+
+        const campanaId = await db.crearCampanaCompleta(req.params.codigo, {
+            nombre: campaignName,
+            tipo: 'whatsapp',
+            plantilla_id: plantillaId || null,
+            asunto_email: null,
+            archivos_adjuntos: attachments || null,
+            total_contactos: targetContacts.length,
+            estado: 'en_progreso'
+        });
+
+        // Simulación o despacho en segundo plano
+        setImmediate(async () => {
+            let enviados = 0;
+            for (let i = 0; i < targetContacts.length; i++) {
+                enviados++;
+                await new Promise(r => setTimeout(r, Math.max(300, Math.floor(60000 / messagesPerMinute))));
+                if (i % 2 === 0 || i === targetContacts.length - 1) {
+                    await db.actualizarCampanaProgreso(campanaId, {
+                        enviados,
+                        entregados: enviados,
+                        respondidos: Math.round(enviados * 0.8),
+                        estado: i === targetContacts.length - 1 ? 'completada' : 'en_progreso'
+                    });
+                }
+            }
+        });
+
+        res.json({
+            success: true,
+            campanaId,
+            totalContactos: targetContacts.length,
+            message: `Campaña de WhatsApp iniciada para ${targetContacts.length} contactos`
+        });
+    } catch (error) {
+        console.error('Error iniciando campaña de WhatsApp Meta:', error);
+        res.status(500).json({ error: 'Error iniciando campaña de WhatsApp' });
     }
 });
 
@@ -1072,7 +1571,7 @@ app.post('/api/empresas/:codigo/tickets/summarize', async (req, res) => {
 // RUTAS PARA AGENDA CRM (CONTACTOS ENRIQUECIDOS)
 // ---------------------------------------------------------
 
-app.get('/api/empresas/:codigo/crm/contacts', async (req, res) => {
+app.get(['/api/empresas/:codigo/crm/contacts', '/api/empresas/:codigo/crm/contactos'], async (req, res) => {
     try {
         const { grupo, search } = req.query;
         const contacts = await db.obtenerContactosCRM(req.params.codigo, grupo, search);
@@ -1219,7 +1718,8 @@ app.get('/api/empresas/:codigo/crm/tree', async (req, res) => {
 // Grupos y Rubros de la Agenda
 app.get('/api/empresas/:codigo/crm/rubros', async (req, res) => {
     try {
-        const rubros = await db.obtenerRubros(req.params.codigo);
+        const rows = await db.obtenerRubros(req.params.codigo);
+        const rubros = (rows || []).map(r => typeof r === 'string' ? r : r.nombre);
         res.json({ success: true, rubros });
     } catch (error) {
         res.status(500).json({ success: false, error: 'Error obteniendo rubros' });

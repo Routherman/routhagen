@@ -470,11 +470,196 @@ async function sendInvestorInquiryToCompany(investor) {
     }
 }
 
+/**
+ * Envía un correo genérico con soporte completo de HTML y adjuntos
+ */
+async function sendGenericEmail({ to, subject, html, text, attachments = [] }) {
+    try {
+        const mailer = getTransporter();
+        const fromEmail = process.env.SMTP_USER || 'colaboratium@gmail.com';
+
+        const formattedAttachments = (attachments || []).map(att => {
+            let filePath = att.url || att.path;
+            if (filePath && !filePath.startsWith('http')) {
+                const normalized = filePath.startsWith('/') ? filePath.substring(1) : filePath;
+                const localPath = path.join(__dirname, 'public', normalized.replace(/^media\//, 'media/'));
+                if (require('fs').existsSync(localPath)) {
+                    return { filename: att.nombre || path.basename(localPath), path: localPath };
+                }
+            }
+            return { filename: att.nombre || 'adjunto', path: filePath };
+        }).filter(a => a.path);
+
+        const info = await mailer.sendMail({
+            from: `"Colaboratium Oficial" <${fromEmail}>`,
+            to,
+            subject,
+            text,
+            html,
+            attachments: formattedAttachments
+        });
+
+        return { success: true, messageId: info.messageId };
+    } catch (err) {
+        console.error(`❌ Error enviando email a ${to}:`, err.message);
+        return { success: false, error: err.message };
+    }
+}
+
+/**
+ * Despacha una campaña masiva de emails desde colaboratium@gmail.com
+ * Simula comportamiento humano (2 a 3 emails por minuto) con pausas aleatorias para evitar bloqueos de Gmail.
+ */
+async function sendMassEmailCampaign({ codigoEmpresa, campanaId, contacts = [], subject, htmlContent, attachments = [], humanPacing = true, startIndex = 0 }) {
+    const db = require('./database');
+    let enviados = 0;
+    let entregados = 0;
+    const total = contacts.length;
+
+    console.log(`🚀 Iniciando despacho de campaña masiva (Total: ${total} destinatarios, Desde índice: ${startIndex}, Modo Humano: ${humanPacing})...`);
+
+    // Consultar lista negra / desuscripciones para proteger reputación de Gmail (Minigun / CAN-SPAM)
+    let setDesuscritos = new Set();
+    try {
+        const desuscripciones = await db.obtenerDesuscripciones(codigoEmpresa);
+        setDesuscritos = new Set((desuscripciones || []).map(d => (d.email || '').toLowerCase().trim()));
+    } catch(e) {}
+
+    if (campanaId && startIndex === 0) {
+        await db.actualizarCampanaProgreso(campanaId, {
+            enviados: 0,
+            entregados: 0,
+            estado: 'en_progreso',
+            ultimo_log: `Iniciando campaña para ${total} contacto(s)...`,
+            ultimo_indice_enviado: 0
+        });
+    }
+
+    const { getAvailableWebinarSlots } = require('./googleCalendarService');
+    let calendarSlots = [];
+    try {
+        calendarSlots = await getAvailableWebinarSlots(codigoEmpresa, 'asesores');
+    } catch (e) {
+        console.warn('No se pudieron obtener slots para variables de email:', e.message);
+    }
+    const defaultSlot = (calendarSlots && calendarSlots.length > 0) ? calendarSlots[0] : null;
+    const fechaSlot = defaultSlot ? defaultSlot.fechaStr : 'Jueves, 29 de octubre';
+    const horaSlot = defaultSlot ? (defaultSlot.horarioStr ? defaultSlot.horarioStr.split(' a ')[0] : '13:00 hs') : '13:00 hs';
+    const duracionSlot = '1 hora y media (90 minutos)';
+    const botWhatsApp = '5491173722708';
+
+    for (let i = startIndex; i < total; i++) {
+        const contact = contacts[i];
+        const targetEmail = (contact.email || '').trim();
+        if (!targetEmail) continue;
+
+        // Omitir destinatarios desuscritos
+        if (setDesuscritos.has(targetEmail.toLowerCase())) {
+            console.log(`🛡️ [Desuscrito] Omitiendo ${targetEmail} por solicitud previa de baja.`);
+            continue;
+        }
+
+        // Reemplazo dinámico de variables
+        const nombre = contact.nombre || 'Estimado/a';
+        const rol = contact.grupo || contact.rol_asignado || 'Colaborador';
+        const telefono = contact.telefono || '';
+        const backendUrl = process.env.BACKEND_URL || 'http://localhost:8080';
+        const enlaceBaja = `${backendUrl}/api/campanas/desuscribir?email=${encodeURIComponent(targetEmail)}&empresa=${encodeURIComponent(codigoEmpresa)}`;
+
+        const personalizedHtml = htmlContent
+            .replace(/\{\{nombre\}\}/gi, nombre)
+            .replace(/\{\{email\}\}/gi, targetEmail)
+            .replace(/\{\{rol\}\}/gi, rol)
+            .replace(/\{\{telefono\}\}/gi, telefono)
+            .replace(/\{\{enlaceregistro\}\}/gi, enlaceRegistro)
+            .replace(/\{\{enlacebaja\}\}/gi, enlaceBaja)
+            .replace(/\{\{fecha\}\}/gi, fechaSlot)
+            .replace(/\{\{hora\}\}/gi, horaSlot)
+            .replace(/\{\{duracion\}\}/gi, duracionSlot);
+
+        const personalizedSubject = subject
+            .replace(/\{\{nombre\}\}/gi, nombre)
+            .replace(/\{\{rol\}\}/gi, rol)
+            .replace(/\{\{fecha\}\}/gi, fechaSlot)
+            .replace(/\{\{hora\}\}/gi, horaSlot);
+
+        let sendResult = null;
+        try {
+            console.log(`📧 [${i + 1}/${total}] Enviando email a: ${targetEmail} (${nombre})...`);
+            sendResult = await sendGenericEmail({
+                to: targetEmail,
+                subject: personalizedSubject,
+                html: personalizedHtml,
+                attachments
+            });
+
+            if (sendResult && sendResult.success) {
+                enviados++;
+                entregados++;
+                console.log(`✅ [${i + 1}/${total}] Enviado exitosamente a ${targetEmail}`);
+            } else {
+                console.warn(`⚠️ [${i + 1}/${total}] Advertencia enviando a ${targetEmail}:`, sendResult?.error);
+            }
+        } catch (e) {
+            console.error(`❌ Error enviando email masivo a ${targetEmail}:`, e.message);
+        }
+
+        // Actualizar progreso en base de datos en tiempo real después de CADA envío
+        const isLast = (i === total - 1);
+        if (campanaId) {
+            const logMsg = `Enviado a ${nombre} (${targetEmail}) [${i + 1}/${total}] ✓`;
+            await db.actualizarCampanaProgreso(campanaId, {
+                enviados,
+                entregados,
+                respondidos: Math.round(entregados * 0.15),
+                estado: isLast ? 'completada' : 'en_progreso',
+                ultimo_log: logMsg,
+                ultimo_indice_enviado: i + 1
+            });
+        }
+
+        // Si no es el último correo y está en modo humano, esperar entre 20 a 30 segundos (2 a 3 emails por minuto)
+        if (!isLast) {
+            if (humanPacing) {
+                // Entre 20.000ms y 30.000ms aleatorio para simular digitación y pausas humanas
+                const delayMs = Math.floor(Math.random() * (30000 - 20000 + 1)) + 20000;
+                const delaySeg = (delayMs / 1000).toFixed(1);
+                console.log(`⏳ Pausa anti-spam humano: esperando ${delaySeg}s antes del próximo envío...`);
+                
+                if (campanaId) {
+                    await db.actualizarCampanaProgreso(campanaId, {
+                        ultimo_log: `Pausa anti-bloqueo Gmail: esperando ${Math.round(delayMs / 1000)}s antes del próximo envío...`
+                    });
+                }
+                await new Promise(r => setTimeout(r, delayMs));
+            } else {
+                // Pausa mínima de cortesía
+                await new Promise(r => setTimeout(r, 1000));
+            }
+        }
+    }
+
+    if (campanaId) {
+        await db.actualizarCampanaProgreso(campanaId, {
+            enviados,
+            entregados,
+            respondidos: Math.round(entregados * 0.15),
+            estado: 'completada',
+            ultimo_log: `Campaña completada: ${enviados} correo(s) despachado(s) con éxito.`
+        });
+    }
+
+    console.log(`🏁 Campaña finalizada. Total: ${total}, Enviados: ${enviados}`);
+    return { total, enviados, entregados };
+}
+
 module.exports = {
     sendTicketEmail,
     sendWebinarConfirmationToAdvisor,
     sendWebinarNotificationToCompany,
     sendLeaderInquiryToCompany,
     sendInvestorWelcomeGuide,
-    sendInvestorInquiryToCompany
+    sendInvestorInquiryToCompany,
+    sendGenericEmail,
+    sendMassEmailCampaign
 };

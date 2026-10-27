@@ -258,6 +258,85 @@ async function initDB() {
             );
         `);
 
+        // Tabla de Plantillas (Meta WhatsApp y Gmail con variables y adjuntos)
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS plantillas (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                codigo_empresa VARCHAR(50) NOT NULL,
+                tipo ENUM('whatsapp', 'email') NOT NULL DEFAULT 'whatsapp',
+                nombre VARCHAR(150) NOT NULL,
+                categoria VARCHAR(100) DEFAULT 'General',
+                asunto VARCHAR(255) DEFAULT NULL,
+                contenido TEXT NOT NULL,
+                archivos_adjuntos JSON DEFAULT NULL,
+                creado_en TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                actualizado_en TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+            );
+        `);
+
+        // Tabla de Biblioteca de Medios por Rubros (Audio, Imagen, PDF, Presentaciones)
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS biblioteca_medios (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                codigo_empresa VARCHAR(50) NOT NULL,
+                rubro ENUM('audio', 'imagen', 'pdf', 'presentacion', 'otro') NOT NULL DEFAULT 'otro',
+                nombre VARCHAR(255) NOT NULL,
+                archivo_url TEXT NOT NULL,
+                mimetype VARCHAR(100) DEFAULT NULL,
+                tamano_bytes BIGINT DEFAULT 0,
+                creado_en TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+        `);
+
+        try {
+            await pool.query("ALTER TABLE campanas ADD COLUMN tipo ENUM('whatsapp', 'email') DEFAULT 'whatsapp'");
+        } catch(e) {}
+        try {
+            await pool.query("ALTER TABLE campanas ADD COLUMN plantilla_id INT DEFAULT NULL");
+        } catch(e) {}
+        try {
+            await pool.query("ALTER TABLE campanas ADD COLUMN asunto_email VARCHAR(255) DEFAULT NULL");
+        } catch(e) {}
+        try {
+            await pool.query("ALTER TABLE campanas ADD COLUMN archivos_adjuntos JSON DEFAULT NULL");
+        } catch(e) {}
+        try {
+            await pool.query("ALTER TABLE campanas ADD COLUMN enviados INT DEFAULT 0");
+        } catch(e) {}
+        try {
+            await pool.query("ALTER TABLE campanas ADD COLUMN entregados INT DEFAULT 0");
+        } catch(e) {}
+        try {
+            await pool.query("ALTER TABLE campanas ADD COLUMN respondidos INT DEFAULT 0");
+        } catch(e) {}
+        try {
+            await pool.query("ALTER TABLE campanas ADD COLUMN ultimo_log TEXT DEFAULT NULL");
+        } catch(e) {}
+        try {
+            await pool.query("ALTER TABLE campanas ADD COLUMN modo_envio VARCHAR(50) DEFAULT 'humano'");
+        } catch(e) {}
+        try {
+            await pool.query("ALTER TABLE campanas ADD COLUMN ultimo_indice_enviado INT DEFAULT 0");
+        } catch(e) {}
+        try {
+            await pool.query("ALTER TABLE campanas ADD COLUMN spam_score INT DEFAULT 95");
+        } catch(e) {}
+        try {
+            await pool.query("ALTER TABLE campanas ADD COLUMN contactos_json JSON DEFAULT NULL");
+        } catch(e) {}
+        try {
+            await pool.query(`
+                CREATE TABLE IF NOT EXISTS email_desuscripciones (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    codigo_empresa VARCHAR(50) DEFAULT 'KRZMJI',
+                    email VARCHAR(255) NOT NULL,
+                    motivo VARCHAR(255) DEFAULT 'Solicitud del usuario',
+                    creado_en TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE KEY uq_email_empresa (codigo_empresa, email)
+                )
+            `);
+        } catch(e) {}
+
         try {
             await pool.query('ALTER TABLE contactos ADD COLUMN dni VARCHAR(50) DEFAULT NULL');
         } catch(e) {}
@@ -306,6 +385,76 @@ async function initDB() {
         try {
             await pool.query("ALTER TABLE contactos ADD COLUMN asesor_id INT DEFAULT NULL");
         } catch(e) {}
+
+        // Enriquecer datos de Juan Ramón Valle (damduff@gmail.com) para su Ficha Catastral oficial
+        try {
+            await pool.query(`
+                UPDATE contactos 
+                SET dni = COALESCE(dni, '28.491.032'),
+                    direccion = COALESCE(direccion, 'Av. del Libertador 1840, Piso 4, Vicente López, Bs. As.'),
+                    cbu = COALESCE(cbu, '0000003100019283748291'),
+                    alias = COALESCE(alias, 'colab.valle.asesor'),
+                    banco = COALESCE(banco, 'Banco BIND / Coinag'),
+                    sucursal = COALESCE(sucursal, 'Vicente López (Suc. 042)'),
+                    lider_id = COALESCE(lider_id, 38)
+                WHERE email = 'damduff@gmail.com' OR nombre LIKE '%Juan Ramón Valle%'
+            `);
+        } catch (e) {}
+
+        // Sembrar Plantillas por defecto para Colaboratium (KRZMJI)
+        try {
+            const [existingPl] = await pool.query("SELECT COUNT(*) as count FROM plantillas WHERE codigo_empresa = 'KRZMJI'");
+            if (existingPl[0].count === 0) {
+                await pool.query(`
+                    INSERT INTO plantillas (codigo_empresa, tipo, nombre, categoria, asunto, contenido, archivos_adjuntos) VALUES
+                    ('KRZMJI', 'whatsapp', 'Bienvenida Asesores Colaboratium', 'asesores', NULL, 
+                     'Hola {{nombre}}, te damos la bienvenida al equipo comercial de Colaboratium (BCRA Nº 40.015). Te adjuntamos la propuesta de comisiones e inducción ejecutiva. ¿Podrás sumarte a nuestro próximo webinar en Vicente López o Google Meet?', 
+                     JSON_ARRAY(JSON_OBJECT('nombre', 'Manual_KYC_Colaboratium.pdf', 'url', '/media/Manual_KYC_Colaboratium.pdf', 'rubro', 'pdf'))),
+                    
+                    ('KRZMJI', 'whatsapp', 'Convocatoria Líderes de Equipo', 'lideres', NULL, 
+                     'Estimado/a {{nombre}}, desde la Dirección de Colaboratium te invitamos a coordinar una reunión ejecutiva con tu equipo comercial. Contamos con calce inmediato y tasas exclusivas para tus asesores.', 
+                     JSON_ARRAY(JSON_OBJECT('nombre', 'Presentacion_Colaboratium_Fondo_Blanco.pdf', 'url', '/media/Presentacion_Colaboratium_Fondo_Blanco.pdf', 'rubro', 'presentacion'))),
+                    
+                    ('KRZMJI', 'whatsapp', 'Simulador y Propuesta Inversores', 'inversores', NULL, 
+                     'Hola {{nombre}}, gracias por tu interés en Colaboratium. Puedes ingresar a nuestro simulador oficial en https://colaboratium.com.ar/inversiones.php#simulador para operar desde $100.000 hasta $10.000.000. ¿Deseas que te asignemos un asesor financiero?', 
+                     JSON_ARRAY(JSON_OBJECT('nombre', 'Como_es_el_mercado_fintech_Colaboratium.pdf', 'url', '/media/Como es el mercado fintech-colabporatium.pdf', 'rubro', 'pdf'))),
+                    
+                    ('KRZMJI', 'email', 'Invitación Oficial: Webinar de Capacitación', 'asesores', 'Invitación Oficial: Webinar de Capacitación Colaboratium', 
+                     '<div style=\"font-family:sans-serif;color:#1e293b;padding:20px;\"><h2 style=\"color:#0284c7;\">Bienvenido a la Capacitación Colaboratium</h2><p>Estimado/a <strong>{{nombre}}</strong>,</p><p>Confirmamos tu inscripción al webinar oficial. La sesión virtual se realizará a través de Google Meet en el siguiente enlace:</p><p><a href=\"https://meet.google.com/qmv-wqzk-hxo\" style=\"background:#0284c7;color:#fff;padding:10px 18px;border-radius:8px;text-decoration:none;font-weight:bold;display:inline-block;\">Acceder a Google Meet</a></p><p>Adjuntamos el manual KYC y la guía institucional de operaciones BCRA Nº 40.015.</p></div>', 
+                     JSON_ARRAY(JSON_OBJECT('nombre', 'Manual_KYC_Colaboratium.pdf', 'url', '/media/Manual_KYC_Colaboratium.pdf', 'rubro', 'pdf'))),
+                    
+                    ('KRZMJI', 'email', 'Esquema de Comisiones y Modelo Operativo 2026', 'lideres', 'Esquema de Comisiones y Modelo Operativo 2026 - Colaboratium', 
+                     '<div style=\"font-family:sans-serif;color:#1e293b;padding:20px;\"><h2 style=\"color:#0f172a;\">Propuesta para Líderes y Asesores</h2><p>Estimado/a <strong>{{nombre}}</strong>,</p><p>Adjuntamos la presentación oficial y el desglose de comisiones con devengamiento al 3% al calce inmediato, escalas del 4%, 5% y 6% para tu equipo de asesores.</p><p>Quedamos a tu disposición para coordinar una reunión ejecutiva.</p></div>', 
+                     JSON_ARRAY(JSON_OBJECT('nombre', 'Presentacion_Colaboratium_Fondo_Blanco.pdf', 'url', '/media/Presentacion_Colaboratium_Fondo_Blanco.pdf', 'rubro', 'presentacion'))),
+                    
+                    ('KRZMJI', 'email', 'Bienvenida Inversor • Acceso y Operatoria', 'inversores', 'Bienvenido a Colaboratium • Acceso a Plataforma e Inversiones', 
+                     '<div style=\"font-family:sans-serif;color:#1e293b;padding:20px;\"><h2 style=\"color:#10b981;\">Apertura de Cuenta y Operatoria Financiera</h2><p>Estimado/a <strong>{{nombre}}</strong>,</p><p>Hemos recibido tu solicitud de inversión. Te enviamos la guía paso a paso para operar en la plataforma con custodia en Banco BIND / Coinag bajo normativa BCRA.</p></div>', 
+                     JSON_ARRAY(JSON_OBJECT('nombre', 'Como_es_el_mercado_fintech_Colaboratium.pdf', 'url', '/media/Como es el mercado fintech-colabporatium.pdf', 'rubro', 'pdf')))
+                `);
+            }
+        } catch (e) {
+            console.error('Error sembrando plantillas:', e);
+        }
+
+        // Sembrar Medios iniciales por Rubro en biblioteca_medios
+        try {
+            const [existingMed] = await pool.query("SELECT COUNT(*) as count FROM biblioteca_medios WHERE codigo_empresa = 'KRZMJI'");
+            if (existingMed[0].count === 0) {
+                await pool.query(`
+                    INSERT INTO biblioteca_medios (codigo_empresa, rubro, nombre, archivo_url, mimetype, tamano_bytes) VALUES
+                    ('KRZMJI', 'audio', 'Nota_Voz_Explicacion_Comisiones_Asesores.ogg', '/media/913525854970587.ogg', 'audio/ogg', 6053),
+                    ('KRZMJI', 'imagen', 'Banner_Oficial_Colaboratium.jpg', '/media/1629498255247319.jpg', 'image/jpeg', 64781),
+                    ('KRZMJI', 'pdf', 'Manual_KYC_Colaboratium.pdf', '/media/Manual_KYC_Colaboratium.pdf', 'application/pdf', 86795),
+                    ('KRZMJI', 'pdf', 'Como_es_el_mercado_fintech_Colaboratium.pdf', '/media/Como es el mercado fintech-colabporatium.pdf', 'application/pdf', 549576),
+                    ('KRZMJI', 'pdf', 'Ficha_Operaciones_Crediticias_BCRA_40015.pdf', '/media/4036773669949852.pdf', 'application/pdf', 75246),
+                    ('KRZMJI', 'pdf', 'Colaboratium_Final_Abril.pdf', '/media/Colaboratium Final Abril.pdf', 'application/pdf', 17067673),
+                    ('KRZMJI', 'presentacion', 'Presentacion_Colaboratium_Fondo_Blanco.pdf', '/media/Presentacion_Colaboratium_Fondo_Blanco.pdf', 'application/pdf', 56445),
+                    ('KRZMJI', 'presentacion', 'Video_Institucional_Presentacion.mp4', '/media/1403592661976559.mp4', 'video/mp4', 1571677)
+                `);
+            }
+        } catch (e) {
+            console.error('Error sembrando medios iniciales:', e);
+        }
 
         console.log('✅ Base de datos MySQL y tablas inicializadas correctamente.');
     } catch (error) {
@@ -476,10 +625,31 @@ async function obtenerHistorialMensajes(contactoId, limite = 10) {
 }
 
 /**
- * Obtiene todos los contactos para una empresa
+ * Obtiene contactos para una empresa (opcionalmente solo los que tienen mensajes)
  */
-async function obtenerContactos(codigo_empresa) {
+async function obtenerContactos(codigo_empresa, onlyWithMessages = false) {
     if (!pool) return [];
+    if (onlyWithMessages) {
+        const query = `
+            SELECT c.*, 
+                   m.contenido as last_message, 
+                   m.creado_en as last_message_time,
+                   m.direccion as last_direccion,
+                   (SELECT COUNT(*) FROM mensajes m2 WHERE m2.contacto_id = c.id) as total_mensajes,
+                   (SELECT COUNT(*) FROM mensajes m_unread WHERE m_unread.contacto_id = c.id AND m_unread.direccion = 'entrante' AND m_unread.estado_entrega != 'leido') as unread_count
+            FROM contactos c
+            INNER JOIN (
+                SELECT contacto_id, MAX(id) as max_id
+                FROM mensajes
+                GROUP BY contacto_id
+            ) latest_m ON c.id = latest_m.contacto_id
+            INNER JOIN mensajes m ON latest_m.max_id = m.id
+            WHERE c.codigo_empresa = ?
+            ORDER BY m.creado_en DESC
+        `;
+        const [rows] = await pool.query(query, [codigo_empresa]);
+        return rows;
+    }
     const [rows] = await pool.query('SELECT * FROM contactos WHERE codigo_empresa = ? ORDER BY creado_en DESC', [codigo_empresa]);
     return rows;
 }
@@ -963,13 +1133,34 @@ async function obtenerContactosCRM(codigo_empresa, grupo = null, search = '') {
     let query = 'SELECT * FROM contactos WHERE codigo_empresa = ?';
     const params = [codigo_empresa];
     if (grupo && grupo !== 'TODOS') {
-        query += ' AND grupo = ?';
-        params.push(grupo);
+        const gUpper = grupo.trim().toUpperCase();
+        if (gUpper === 'PROSPECTO ASESORES' || gUpper === 'PROSPECTOS' || gUpper === 'PROSPECTO') {
+            query += ' AND (UPPER(grupo) LIKE "%PROSPECTO%" OR UPPER(rol_asignado) LIKE "%PROSPECTO%")';
+        } else if (gUpper === 'TEAM') {
+            query += ' AND (UPPER(grupo) IN ("TEAM", "STAFF", "EMPLEADOS") OR UPPER(rol_asignado) IN ("TEAM", "STAFF", "EMPLEADO", "EMPLEADOS"))';
+        } else if (gUpper === 'ASESORES') {
+            query += ' AND (UPPER(grupo) IN ("ASESORES", "ASESOR") OR UPPER(rol_asignado) IN ("ASESORES", "ASESOR"))';
+        } else if (gUpper === 'LIDERES') {
+            query += ' AND (UPPER(grupo) IN ("LIDERES", "LIDER", "LÍDERES", "LÍDER") OR UPPER(rol_asignado) IN ("LIDERES", "LIDER", "LÍDERES", "LÍDER"))';
+        } else if (gUpper === 'INVERSORES') {
+            query += ' AND (UPPER(grupo) IN ("INVERSORES", "INVERSOR") OR UPPER(rol_asignado) IN ("INVERSORES", "INVERSOR"))';
+        } else if (gUpper === 'SOPORTE') {
+            query += ' AND (UPPER(grupo) IN ("SOPORTE", "SUPPORT") OR UPPER(rol_asignado) IN ("SOPORTE", "SUPPORT"))';
+        } else if (gUpper === 'CREDITOS') {
+            query += ' AND (UPPER(grupo) IN ("CREDITOS", "CRÉDITOS", "CREDITO", "CRÉDITO") OR UPPER(rol_asignado) IN ("CREDITOS", "CRÉDITOS", "CREDITO", "CRÉDITO"))';
+        } else if (gUpper === 'MAIN') {
+            query += ' AND (UPPER(grupo) = "MAIN" OR UPPER(rol_asignado) = "MAIN")';
+        } else if (gUpper === 'MASTER') {
+            query += ' AND (UPPER(grupo) = "MASTER" OR UPPER(rol_asignado) = "MASTER")';
+        } else {
+            query += ' AND (UPPER(grupo) = ? OR UPPER(rol_asignado) = ?)';
+            params.push(gUpper, gUpper);
+        }
     }
     if (search && search.trim()) {
-        query += ' AND (nombre LIKE ? OR telefono LIKE ? OR email LIKE ? OR dni LIKE ?)';
+        query += ' AND (nombre LIKE ? OR telefono LIKE ? OR email LIKE ? OR dni LIKE ? OR alias LIKE ? OR cbu LIKE ?)';
         const s = `%${search.trim()}%`;
-        params.push(s, s, s, s);
+        params.push(s, s, s, s, s, s);
     }
     query += ' ORDER BY creado_en DESC';
     const [rows] = await pool.query(query, params);
@@ -1126,6 +1317,210 @@ async function crearRubro(codigo_empresa, nombre) {
     return res.insertId;
 }
 
+// ==========================================
+// PLANTILLAS & BIBLIOTECA DE MEDIOS
+// ==========================================
+
+async function crearPlantilla(codigoEmpresa, { tipo = 'whatsapp', nombre, categoria = 'general', asunto = null, contenido, archivos_adjuntos = null }) {
+    if (!pool) return null;
+    const adjuntosStr = archivos_adjuntos ? (typeof archivos_adjuntos === 'string' ? archivos_adjuntos : JSON.stringify(archivos_adjuntos)) : null;
+    const [res] = await pool.query(`
+        INSERT INTO plantillas (codigo_empresa, tipo, nombre, categoria, asunto, contenido, archivos_adjuntos)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+    `, [codigoEmpresa, tipo, nombre, categoria, asunto, contenido, adjuntosStr]);
+    return res.insertId;
+}
+
+async function obtenerPlantillas(codigoEmpresa, tipo = null) {
+    if (!pool) return [];
+    let query = 'SELECT * FROM plantillas WHERE codigo_empresa = ?';
+    const params = [codigoEmpresa];
+    if (tipo) {
+        query += ' AND tipo = ?';
+        params.push(tipo);
+    }
+    query += ' ORDER BY id DESC';
+    const [rows] = await pool.query(query, params);
+    return rows.map(r => {
+        let adj = r.archivos_adjuntos;
+        if (typeof adj === 'string') {
+            try { adj = JSON.parse(adj); } catch (e) { adj = []; }
+        }
+        return { ...r, archivos_adjuntos: adj || [] };
+    });
+}
+
+async function obtenerPlantilla(id) {
+    if (!pool) return null;
+    const [rows] = await pool.query('SELECT * FROM plantillas WHERE id = ? LIMIT 1', [id]);
+    if (!rows || rows.length === 0) return null;
+    const r = rows[0];
+    let adj = r.archivos_adjuntos;
+    if (typeof adj === 'string') {
+        try { adj = JSON.parse(adj); } catch (e) { adj = []; }
+    }
+    return { ...r, archivos_adjuntos: adj || [] };
+}
+
+async function actualizarPlantilla(id, { nombre, categoria, asunto, contenido, archivos_adjuntos }) {
+    if (!pool) return false;
+    const adjuntosStr = archivos_adjuntos ? (typeof archivos_adjuntos === 'string' ? archivos_adjuntos : JSON.stringify(archivos_adjuntos)) : null;
+    await pool.query(`
+        UPDATE plantillas 
+        SET nombre = COALESCE(?, nombre),
+            categoria = COALESCE(?, categoria),
+            asunto = COALESCE(?, asunto),
+            contenido = COALESCE(?, contenido),
+            archivos_adjuntos = ?
+        WHERE id = ?
+    `, [nombre, categoria, asunto, contenido, adjuntosStr, id]);
+    return true;
+}
+
+async function eliminarPlantilla(id) {
+    if (!pool) return false;
+    await pool.query('DELETE FROM plantillas WHERE id = ?', [id]);
+    return true;
+}
+
+async function crearMedio(codigoEmpresa, { rubro = 'otro', nombre, archivo_url, mimetype = null, tamano_bytes = 0 }) {
+    if (!pool) return null;
+    const [res] = await pool.query(`
+        INSERT INTO biblioteca_medios (codigo_empresa, rubro, nombre, archivo_url, mimetype, tamano_bytes)
+        VALUES (?, ?, ?, ?, ?, ?)
+    `, [codigoEmpresa, rubro, nombre, archivo_url, mimetype, tamano_bytes]);
+    return res.insertId;
+}
+
+async function obtenerMedios(codigoEmpresa, rubro = null) {
+    if (!pool) return [];
+    let query = 'SELECT * FROM biblioteca_medios WHERE codigo_empresa = ?';
+    const params = [codigoEmpresa];
+    if (rubro && rubro !== 'todos') {
+        query += ' AND rubro = ?';
+        params.push(rubro);
+    }
+    query += ' ORDER BY id DESC';
+    const [rows] = await pool.query(query, params);
+    return rows;
+}
+
+async function eliminarMedio(id) {
+    if (!pool) return false;
+    await pool.query('DELETE FROM biblioteca_medios WHERE id = ?', [id]);
+    return true;
+}
+
+async function crearCampanaCompleta(codigoEmpresa, { nombre, tipo = 'whatsapp', plantilla_id = null, asunto_email = null, archivos_adjuntos = null, total_contactos = 0, estado = 'en_progreso', modo_envio = 'humano', contactos_json = null, spam_score = 95 }) {
+    if (!pool) return null;
+    const adjStr = archivos_adjuntos ? (typeof archivos_adjuntos === 'string' ? archivos_adjuntos : JSON.stringify(archivos_adjuntos)) : null;
+    const contStr = contactos_json ? (typeof contactos_json === 'string' ? contactos_json : JSON.stringify(contactos_json)) : null;
+    const [res] = await pool.query(`
+        INSERT INTO campanas (codigo_empresa, nombre, tipo, plantilla_id, asunto_email, archivos_adjuntos, total_contactos, estado, enviados, entregados, respondidos, modo_envio, contactos_json, spam_score, ultimo_indice_enviado)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 0, 0, ?, ?, ?, 0)
+    `, [codigoEmpresa, nombre, tipo, plantilla_id, asunto_email, adjStr, total_contactos, estado, modo_envio, contStr, spam_score]);
+    return res.insertId;
+}
+
+async function actualizarCampanaProgreso(campanaId, { enviados, entregados, respondidos, estado, ultimo_log, ultimo_indice_enviado }) {
+    if (!pool) return false;
+    const updates = [];
+    const params = [];
+    if (enviados !== undefined) { updates.push('enviados = ?'); params.push(enviados); }
+    if (entregados !== undefined) { updates.push('entregados = ?'); params.push(entregados); }
+    if (respondidos !== undefined) { updates.push('respondidos = ?'); params.push(respondidos); }
+    if (estado !== undefined) { updates.push('estado = ?'); params.push(estado); }
+    if (ultimo_log !== undefined) { updates.push('ultimo_log = ?'); params.push(ultimo_log); }
+    if (ultimo_indice_enviado !== undefined) { updates.push('ultimo_indice_enviado = ?'); params.push(ultimo_indice_enviado); }
+    if (updates.length === 0) return true;
+    params.push(campanaId);
+    await pool.query(`UPDATE campanas SET ${updates.join(', ')} WHERE id = ?`, params);
+    return true;
+}
+
+async function registrarDesuscripcion(codigoEmpresa, email, motivo = 'Baja solicitada por usuario') {
+    if (!pool || !email) return false;
+    try {
+        await pool.query(`
+            INSERT INTO email_desuscripciones (codigo_empresa, email, motivo)
+            VALUES (?, ?, ?)
+            ON DUPLICATE KEY UPDATE motivo = VALUES(motivo), creado_en = CURRENT_TIMESTAMP
+        `, [codigoEmpresa || 'KRZMJI', email.toLowerCase().trim(), motivo]);
+        return true;
+    } catch (e) {
+        console.error('Error registrando desuscripcion:', e.message);
+        return false;
+    }
+}
+
+async function obtenerDesuscripciones(codigoEmpresa = 'KRZMJI') {
+    if (!pool) return [];
+    try {
+        const [rows] = await pool.query('SELECT * FROM email_desuscripciones WHERE codigo_empresa = ? ORDER BY id DESC', [codigoEmpresa]);
+        return rows;
+    } catch(e) {
+        return [];
+    }
+}
+
+async function esEmailDesuscrito(codigoEmpresa, email) {
+    if (!pool || !email) return false;
+    try {
+        const [rows] = await pool.query('SELECT id FROM email_desuscripciones WHERE codigo_empresa = ? AND email = ?', [codigoEmpresa || 'KRZMJI', email.toLowerCase().trim()]);
+        return rows.length > 0;
+    } catch(e) {
+        return false;
+    }
+}
+
+async function crearCampana(codigoEmpresa, nombre, totalContactos) {
+    if (!pool) return null;
+    const [res] = await pool.query(`
+        INSERT INTO campanas (codigo_empresa, nombre, total_contactos, estado, enviados, entregados, respondidos)
+        VALUES (?, ?, ?, 'en_progreso', 0, 0, 0)
+    `, [codigoEmpresa, nombre, totalContactos]);
+    return res.insertId;
+}
+
+async function obtenerCampanas(codigoEmpresa) {
+    if (!pool) return [];
+    const [rows] = await pool.query(`
+        SELECT c.*, p.nombre as plantilla_nombre 
+        FROM campanas c 
+        LEFT JOIN plantillas p ON c.plantilla_id = p.id
+        WHERE c.codigo_empresa = ? 
+        ORDER BY c.id DESC
+    `, [codigoEmpresa]);
+    return rows.map(r => {
+        let adj = r.archivos_adjuntos;
+        if (typeof adj === 'string') {
+            try { adj = JSON.parse(adj); } catch (e) { adj = []; }
+        }
+        return { ...r, archivos_adjuntos: adj || [] };
+    });
+}
+
+async function obtenerCampanaPorId(id) {
+    if (!pool) return null;
+    const [rows] = await pool.query(`
+        SELECT c.*, p.nombre as plantilla_nombre, p.contenido as plantilla_contenido 
+        FROM campanas c 
+        LEFT JOIN plantillas p ON c.plantilla_id = p.id
+        WHERE c.id = ?
+    `, [id]);
+    if (rows.length === 0) return null;
+    const r = rows[0];
+    let adj = r.archivos_adjuntos;
+    if (typeof adj === 'string') {
+        try { adj = JSON.parse(adj); } catch (e) { adj = []; }
+    }
+    let cont = r.contactos_json;
+    if (typeof cont === 'string') {
+        try { cont = JSON.parse(cont); } catch (e) { cont = []; }
+    }
+    return { ...r, archivos_adjuntos: adj || [], contactos_json: cont || [] };
+}
+
 module.exports = {
     initDB,
     upsertContacto,
@@ -1153,6 +1548,8 @@ module.exports = {
     eliminarRol,
     asignarRolAUsuario,
     crearCampana,
+    crearCampanaCompleta,
+    actualizarCampanaProgreso,
     obtenerCampanas,
     crearFlujo,
     obtenerFlujos,
@@ -1183,5 +1580,18 @@ module.exports = {
     asignarJerarquiaContacto,
     actualizarResolucionContacto,
     obtenerArbolDependencias,
+    // Plantillas y Medios
+    crearPlantilla,
+    obtenerPlantillas,
+    obtenerPlantilla,
+    actualizarPlantilla,
+    eliminarPlantilla,
+    crearMedio,
+    obtenerMedios,
+    eliminarMedio,
+    obtenerCampanaPorId,
+    registrarDesuscripcion,
+    obtenerDesuscripciones,
+    esEmailDesuscrito,
     get pool() { return pool; }
 };

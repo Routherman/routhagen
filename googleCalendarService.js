@@ -99,6 +99,10 @@ async function getAvailableWebinarSlots(codigoEmpresa = 'KRZMJI', category = 'al
                     const summary = (ev.summary || '').toLowerCase();
                     const isRelevant = summary.includes('webinar') || summary.includes('capacitacion') || summary.includes('asesor') || summary.includes('lider') || summary.includes('líder') || summary.includes('presencial');
                     if (isRelevant) {
+                        // Descartar eventos pasados (anteriores a hoy)
+                        const eventEndDate = new Date(ev.end || ev.start);
+                        if (eventEndDate < new Date(Date.now() - 24 * 3600 * 1000)) continue;
+
                         const isLider = /lider|líder/i.test(summary);
                         if (category === 'lideres' && !isLider) continue;
                         if (category === 'asesores' && isLider) continue;
@@ -192,7 +196,8 @@ async function getAvailableWebinarSlots(codigoEmpresa = 'KRZMJI', category = 'al
                         t.id as ticket_id, t.status as ticket_status, t.summary as ticket_summary
                  FROM contactos c
                  LEFT JOIN tickets t ON (t.contacto_id = c.id OR t.customer_number = c.telefono)
-                 WHERE c.codigo_empresa = ? AND (c.grupo = 'ASESORES' OR c.grupo = 'LIDERES' OR c.metadata_extra IS NOT NULL)
+                 WHERE c.codigo_empresa = ? 
+                   AND (c.metadata_extra LIKE '%slot_id%' OR c.metadata_extra LIKE '%inscripcion%')
                  ORDER BY c.creado_en DESC`,
                 [codigoEmpresa]
             );
@@ -249,23 +254,29 @@ async function getAvailableWebinarSlots(codigoEmpresa = 'KRZMJI', category = 'al
             }
 
             // Distribuir inscriptos en sus respectivos turnos de manera unívoca
+            // SOLO se inscriben contactos con fecha y horario confirmados (slot_id explícito o inscripción válida)
             rawSlots.forEach(s => {
                 s.subscribers = uniqueContacts.filter(c => {
+                    // Si es un prospecto sin fecha confirmada, NO se inscribe a ningún slot
+                    if (c.grupo === 'PROSPECTO ASESORES' && !c.slot_id) {
+                        return false;
+                    }
+
                     if (c.slot_id) {
                         return Number(c.slot_id) === Number(s.id);
                     }
-                    if (c.inscripcion_str) {
+                    if (c.inscripcion_str && c.inscripcion_str.toLowerCase().includes('inscripto')) {
                         const cleanStr = normalizeStr(c.inscripcion_str);
                         const cleanFecha = normalizeStr(s.fechaStr);
                         const cleanHora = normalizeStr(s.horarioStr).split(' a ')[0];
 
                         // Coincidencia exacta de fecha y hora
-                        if (cleanStr.includes(cleanFecha) && (cleanStr.includes(cleanHora) || s.id === 1)) {
+                        if (cleanStr.includes(cleanFecha) && cleanStr.includes(cleanHora)) {
                             return true;
                         }
 
-                        // Coincidencia por modalidad presencial
-                        if (s.modalidad === 'PRESENCIAL' && cleanStr.includes('presencial')) {
+                        // Coincidencia por modalidad presencial con fecha
+                        if (s.modalidad === 'PRESENCIAL' && cleanStr.includes('presencial') && cleanStr.includes(cleanFecha)) {
                             return true;
                         }
                     }
@@ -274,16 +285,7 @@ async function getAvailableWebinarSlots(codigoEmpresa = 'KRZMJI', category = 'al
                 s.inscriptosCount = s.subscribers.length;
                 s.cuposDisponibles = Math.max(0, (s.cupos || 25) - s.inscriptosCount);
             });
-
-            // Si hay contactos asesores no emparejados, asignarlos únicamente al primer turno
-            const unassigned = uniqueContacts.filter(c => !rawSlots.some(s => s.subscribers.some(sub => sub.id === c.id)));
-            if (unassigned.length > 0 && rawSlots.length > 0) {
-                unassigned.forEach(u => {
-                    rawSlots[0].subscribers.push(u);
-                });
-                rawSlots[0].inscriptosCount = rawSlots[0].subscribers.length;
-                rawSlots[0].cuposDisponibles = Math.max(0, (rawSlots[0].cupos || 25) - rawSlots[0].inscriptosCount);
-            }
+            // NOTA: Los contactos sin turno confirmado quedan como pendientes y NO se asignan a ningún slot automático.
         } catch (err) {
             console.error('Error enriqueciendo slots con inscriptos:', err.message);
         }

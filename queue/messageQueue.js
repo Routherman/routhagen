@@ -1,10 +1,11 @@
 require('dotenv').config();
 const { Queue, Worker } = require('bullmq');
-const db = require('../database');
-const { processMessageWithAI } = require('../groqService');
+const path = require('path');
+const { processMessageWithAI, transcribeAudioWithGroq } = require('../groqService');
 const { sendWhatsAppMessage, downloadWhatsAppMedia } = require('../whatsappService');
 const { handleFlowEngine } = require('../flowEngine');
 const connection = require('./redisClient');
+const db = require('../database');
 
 // Crear la cola de mensajes entrantes
 const incomingMessageQueue = new Queue('incoming-messages', { 
@@ -29,9 +30,21 @@ const incomingMessageWorker = new Worker('incoming-messages', async (job) => {
         if (cleanMessage.id_media && accessToken) {
             const localUrl = await downloadWhatsAppMedia(cleanMessage.id_media, accessToken);
             if (localUrl) {
+                // Si es un audio o nota de voz, transcribir con Whisper Groq para que la IA y flujos lo entiendan
+                let transcription = '';
+                if (cleanMessage.tipo_mensaje === 'audio') {
+                    const localPath = path.join(__dirname, '..', 'public', localUrl.replace(/^\//, ''));
+                    transcription = await transcribeAudioWithGroq(localPath);
+                    if (transcription) {
+                        cleanMessage.contenido = transcription;
+                        console.log(`🎙️ [VOICE NOTE] Nota de voz de ${cleanMessage.remitente} transcribida: "${transcription}"`);
+                    }
+                }
+
                 contenidoFinal = JSON.stringify({
                     url: localUrl,
-                    caption: cleanMessage.contenido || ''
+                    caption: cleanMessage.contenido || '',
+                    transcription: transcription || ''
                 });
             }
         }
