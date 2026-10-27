@@ -256,14 +256,27 @@ async function handleFlowEngine(dbContacto, cleanMessage, empresa, accessToken, 
                         }
                     }
 
+                    // Si el líder eligió un turno pero todavía no tenemos su email
+                    if (slotChoice && !detectedEmail) {
+                        const { getAvailableWebinarSlots } = require('./googleCalendarService');
+                        const slots = await getAvailableWebinarSlots(codigoEmpresa, 'lideres');
+                        const chosen = slots.find(s => s.id === parseInt(slotChoice, 10)) || slots[0];
+
+                        const promptForEmail = `¡Excelente elección, Líder! 👑 Reservaste tu turno para:\n*${chosen.titulo}*\n🗓️ ${chosen.fechaStr} (${chosen.horarioStr})\n\n👉 Para emitir tu invitación formal y enviarte el acceso a Google Meet o datos de recepción ejecutiva, por favor respóndeme con tu *Nombre completo*, tu *Correo electrónico* y cuántos asesores integran tu equipo:`;
+
+                        const outMetaId = await sendWhatsAppMessage(cleanMessage.identificador.valor, promptForEmail, phoneId, accessToken);
+                        await db.guardarMensaje(dbContacto.id, outMetaId, 'SALIENTE', 'text', promptForEmail);
+                        return true; // Espera el siguiente mensaje con los datos
+                    }
+
                     // Si ya habíamos registrado sus datos (email ya existe en BD) y no eligió slot, puede estar haciendo una consulta:
                     const alreadyCaptured = !!dbContacto.email && !emailMatch;
                     if (alreadyCaptured) {
                         console.log(`[Flow] Líder con datos ya registrados realizó consulta adicional. Derivando a RAG.`);
                         const nextEdge = edges.find(e => e.source === currentNode.id);
                         if (nextEdge) {
-                            contacto.nodo_actual_id = nextEdge.target;
-                            await db.actualizarContactoFlujo(dbContacto.id, flujo.id, nextEdge.target);
+                            currentNodeId = nextEdge.target;
+                            await db.pool.query('UPDATE contactos SET flujo_activo_id = ?, nodo_actual_id = ? WHERE id = ?', [activeFlowId, nextEdge.target, dbContacto.id]);
                             isResuming = false;
                             continue;
                         }
@@ -507,6 +520,7 @@ async function handleFlowEngine(dbContacto, cleanMessage, empresa, accessToken, 
         else if (currentNode.type === 'identity') {
             const varName = currentNode.data?.variable_name || '';
             const isCalendarNode = currentNode.id === 'node_a3_captura' || varName === 'datos_contacto_asesor';
+            const isLeaderCalendarNode = currentNode.id === 'node_c3_captura' || varName === 'datos_red_lider';
             const isWelcomeMenu = currentNode.id === 'node_id_seleccion' || varName === 'opcion_seleccionada';
 
             if (isWelcomeMenu) {
@@ -535,7 +549,7 @@ async function handleFlowEngine(dbContacto, cleanMessage, empresa, accessToken, 
                 
                 let sentInteractive = false;
                 try {
-                    const listPayload = await formatInteractiveCalendarList(codigoEmpresa);
+                    const listPayload = await formatInteractiveCalendarList(codigoEmpresa, 'asesores');
                     const outMetaId = await sendWhatsAppInteractiveList(cleanMessage.identificador.valor, listPayload, phoneId, accessToken);
                     if (outMetaId) {
                         sentInteractive = true;
@@ -547,7 +561,29 @@ async function handleFlowEngine(dbContacto, cleanMessage, empresa, accessToken, 
                 }
 
                 if (!sentInteractive) {
-                    const cleanText = await formatCalendarOptionsText(codigoEmpresa);
+                    const cleanText = await formatCalendarOptionsText(codigoEmpresa, 'asesores');
+                    const outMetaId = await sendWhatsAppMessage(cleanMessage.identificador.valor, cleanText, phoneId, accessToken);
+                    await db.guardarMensaje(dbContacto.id, outMetaId, 'SALIENTE', 'text', cleanText);
+                }
+            } else if (isLeaderCalendarNode) {
+                const { sendWhatsAppInteractiveList } = require('./whatsappService');
+                const { formatInteractiveCalendarList, formatCalendarOptionsText } = require('./googleCalendarService');
+                
+                let sentInteractive = false;
+                try {
+                    const listPayload = await formatInteractiveCalendarList(codigoEmpresa, 'lideres');
+                    const outMetaId = await sendWhatsAppInteractiveList(cleanMessage.identificador.valor, listPayload, phoneId, accessToken);
+                    if (outMetaId) {
+                        sentInteractive = true;
+                        await db.guardarMensaje(dbContacto.id, outMetaId, 'SALIENTE', 'interactive', 'Menú Interactivo: Turnos para Líderes de Equipo');
+                        console.log(`[Flow] Formulario interactivo de líderes enviado exitosamente.`);
+                    }
+                } catch (listErr) {
+                    console.warn(`[Flow] Falló envío interactivo de líderes (${listErr.message}), usando texto limpio.`);
+                }
+
+                if (!sentInteractive) {
+                    const cleanText = await formatCalendarOptionsText(codigoEmpresa, 'lideres');
                     const outMetaId = await sendWhatsAppMessage(cleanMessage.identificador.valor, cleanText, phoneId, accessToken);
                     await db.guardarMensaje(dbContacto.id, outMetaId, 'SALIENTE', 'text', cleanText);
                 }
