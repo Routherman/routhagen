@@ -2526,6 +2526,31 @@ app.get('/api/empresas/:codigo/ai-metrics', async (req, res) => {
         const ollamaStats = stats.filter(m => (m.model_name || '').toLowerCase().includes('ollama') || (m.model_name || '').toLowerCase().includes('local'));
         const ollamaTokens = ollamaStats.reduce((acc, m) => acc + (Number(m.tokens_used) || 0), 0);
 
+        // Contabilizar plantillas oficiales de Meta WhatsApp Cloud API enviadas
+        let totalTemplates = 0;
+        try {
+            const [templateRows] = await db.pool.query(
+                `SELECT COUNT(*) as total_templates 
+                 FROM mensajes m 
+                 INNER JOIN contactos c ON m.contacto_id = c.id 
+                 WHERE c.codigo_empresa = ? 
+                   AND (m.tipo = 'template' OR m.contenido LIKE '[Plantilla:%') 
+                   AND m.direccion = 'SALIENTE'`,
+                [req.params.codigo]
+            );
+            totalTemplates = Number(templateRows[0]?.total_templates) || 0;
+        } catch (tErr) {
+            console.warn('Error contando plantillas enviadas:', tErr.message);
+        }
+
+        // Tasa oficial solicitada: 0.06 dólares (6 centavos) por plantilla
+        const metaCostPerTemplate = 0.06;
+        const metaTemplatesCostUsd = Number((totalTemplates * metaCostPerTemplate).toFixed(2));
+
+        const cloudTokens = Math.max(0, totalTokens - ollamaTokens);
+        const cloudAiCostUsd = Number(((cloudTokens / 1000) * 0.0006).toFixed(4));
+        const totalConsolidatedCostUsd = Number((cloudAiCostUsd + metaTemplatesCostUsd).toFixed(4));
+
         res.json({
             success: true,
             stats,
@@ -2534,7 +2559,12 @@ app.get('/api/empresas/:codigo/ai-metrics', async (req, res) => {
                 totalSuccess,
                 totalFail,
                 ollamaTokens,
-                successRate: (totalSuccess + totalFail) > 0 ? ((totalSuccess / (totalSuccess + totalFail)) * 100).toFixed(1) : '100.0'
+                successRate: (totalSuccess + totalFail) > 0 ? ((totalSuccess / (totalSuccess + totalFail)) * 100).toFixed(1) : '100.0',
+                totalTemplates,
+                metaCostPerTemplate,
+                metaTemplatesCostUsd,
+                cloudAiCostUsd,
+                totalConsolidatedCostUsd
             }
         });
     } catch (error) {
