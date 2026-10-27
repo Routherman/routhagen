@@ -953,10 +953,17 @@ async function obtenerFlujo(id, codigo_empresa) {
 async function actualizarFlujo(id, codigo_empresa, data_json, activo = true, trigger_keyword = null) {
     if (!pool) return false;
     const jsonStr = typeof data_json === 'object' ? JSON.stringify(data_json) : data_json;
-    await pool.query(
-        'UPDATE flujos SET data_json = ?, activo = ?, trigger_keyword = ? WHERE id = ? AND codigo_empresa = ?',
-        [jsonStr, activo, trigger_keyword, id, codigo_empresa]
-    );
+    if (trigger_keyword !== undefined && trigger_keyword !== null) {
+        await pool.query(
+            'UPDATE flujos SET data_json = ?, activo = ?, trigger_keyword = ? WHERE id = ? AND codigo_empresa = ?',
+            [jsonStr, activo, trigger_keyword, id, codigo_empresa]
+        );
+    } else {
+        await pool.query(
+            'UPDATE flujos SET data_json = ?, activo = ? WHERE id = ? AND codigo_empresa = ?',
+            [jsonStr, activo, id, codigo_empresa]
+        );
+    }
     return true;
 }
 

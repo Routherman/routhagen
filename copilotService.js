@@ -2,6 +2,340 @@ const db = require('./database');
 const { getAvailableWebinarSlots, processBooking } = require('./googleCalendarService');
 
 /**
+ * Motor Especializado de Flujos Conversacionales para Copiloto Routh IA
+ */
+async function handleFlowCopilotAction({ rawMsg, context = {}, codigoEmpresa = 'KRZMJI', user = {} }) {
+    // Detectar si el mensaje es una instrucción de flujo
+    const isFlowIntent = 
+        /(flujo|flow|pipeline|nodo|nodos|paso|etapa|saludo|bienvenida|botonera|opciones|captura|rag|derivar|derivaci|ticket)/i.test(rawMsg) ||
+        (context.section && context.section.toLowerCase().includes('flujo')) ||
+        (context.pathname && context.pathname.includes('/flows'));
+
+    if (!isFlowIntent) return null;
+
+    // Obtener flujos existentes de la empresa
+    const allFlows = await db.obtenerFlujos(codigoEmpresa);
+    if (!allFlows || allFlows.length === 0) return null;
+
+    // Determinar flujo objetivo
+    let targetFlow = null;
+    let flowId = null;
+
+    if (context.currentFlowConfig?.flowId) {
+        flowId = parseInt(context.currentFlowConfig.flowId, 10);
+        targetFlow = allFlows.find(f => f.id === flowId);
+    } else if (context.pathname && /\/flows\/(\d+)/.test(context.pathname)) {
+        const match = context.pathname.match(/\/flows\/(\d+)/);
+        flowId = parseInt(match[1], 10);
+        targetFlow = allFlows.find(f => f.id === flowId);
+    }
+
+    if (!targetFlow) {
+        targetFlow = allFlows.find(f => f.nombre.toLowerCase().includes('bienvenida') || f.nombre.toLowerCase().includes('maestro')) || allFlows[0];
+        if (targetFlow) flowId = targetFlow.id;
+    }
+
+    if (!targetFlow) return null;
+
+    let flowData = targetFlow.data_json;
+    if (typeof flowData === 'string') {
+        try { flowData = JSON.parse(flowData); } catch (e) { flowData = { name: targetFlow.nombre, nodes: [], edges: [] }; }
+    }
+    if (!flowData) flowData = { name: targetFlow.nombre, nodes: [], edges: [] };
+    if (!Array.isArray(flowData.nodes)) flowData.nodes = [];
+    if (!Array.isArray(flowData.edges)) flowData.edges = [];
+
+    // CASO A: Modificar mensaje de saludo o bienvenida
+    // Ej: "modifica el saludo inicial para que diga: 'Hola...'", "cambia el saludo inicial a..."
+    const isEditGreeting = 
+        /(modificar|cambiar|editar|actualizar|poner).*?(saludo|bienvenida|primer mensaje)|(saludo|bienvenida).*?(que diga|sea|a\s+|por\s+|con\s+|modificar|cambiar)/i.test(rawMsg);
+
+    if (isEditGreeting) {
+        let newText = '';
+        const quoteMatch = rawMsg.match(/["'“]([^"'“”]+)["'“”]/);
+        if (quoteMatch) {
+            newText = quoteMatch[1].trim();
+        } else {
+            const matchAfter = rawMsg.match(/(?:que diga|diga|sea|a|por)\s*:\s*(.+)$/i) || rawMsg.match(/(?:que diga|diga|sea)\s+(.+)$/i);
+            if (matchAfter) newText = matchAfter[1].trim();
+        }
+
+        if (!newText) {
+            newText = "¡Hola! 👋 Te damos la bienvenida a Colaboratium (Global Loan S.A. • Registro Oficial BCRA Nº 40.015). Conectamos inversores y oportunidades con scoring de IA y custodia bancaria no custodial. ¿En qué perfil te gustaría participar hoy?";
+        }
+
+        // Buscar nodo de saludo (priorizando node_msg_bienvenida o nodos tipo message de saludo/bienvenida)
+        let greetingNode = flowData.nodes.find(n => n.id === 'node_msg_bienvenida') ||
+                           flowData.nodes.find(n => n.type === 'message' && n.name && /bienvenida|saludo/i.test(n.name)) ||
+                           flowData.nodes.find(n => n.type === 'message');
+        if (!greetingNode) {
+            greetingNode = {
+                id: `node_msg_${Date.now()}`,
+                type: 'message',
+                name: 'Saludo Oficial Colaboratium',
+                position: { x: 380, y: 200 },
+                data: { message: newText }
+            };
+            flowData.nodes.push(greetingNode);
+            const startNode = flowData.nodes.find(n => n.type === 'webhook');
+            if (startNode) {
+                flowData.edges.push({ id: `e_${Date.now()}`, source: startNode.id, target: greetingNode.id });
+            }
+        } else {
+            greetingNode.data = { ...(greetingNode.data || {}), message: newText };
+        }
+
+        await db.actualizarFlujo(targetFlow.id, codigoEmpresa, flowData, targetFlow.activo, targetFlow.trigger_keyword);
+
+        return {
+            success: true,
+            reply: `✅ **Nodo de Saludo Inicial Actualizado con Éxito**:\n\nHe actualizado el texto de bienvenida en el flujo **${targetFlow.nombre}**:\n\n> *"${newText}"*\n\n📌 Los cambios ya se guardaron en la base de datos y se desplegaron en tu diseñador nodal.`,
+            action: {
+                type: 'APPLY_FLOW_CONFIG',
+                payload: {
+                    flowId: targetFlow.id,
+                    flowName: targetFlow.nombre,
+                    nodes: flowData.nodes,
+                    edges: flowData.edges,
+                    highlightNodeId: greetingNode.id,
+                    targetUrl: `/dashboard/flows/${targetFlow.id}`
+                }
+            }
+        };
+    }
+
+    // CASO B: Agregar nuevo nodo
+    // Ej: "agrega un nodo que pida el DNI y celular", "agrega un nodo de opciones con 3 botones", "agrega un nodo de mensaje"
+    const isAddNode = /(agregar|agrega|añadir|añade|sumar|crear|meter|poner).*?(nodo|paso|etapa|pregunta|mensaje|opciones|boton|ticket|rag|archivo|derivaci|humano)/i.test(rawMsg);
+    if (isAddNode) {
+        let type = 'message';
+        let name = 'Nuevo Paso';
+        let description = '';
+        let data = {};
+
+        if (/dni|documento|cuit|identidad|datos|captura|pedir|formulario|nombre|celular|telefono|mail|email/i.test(rawMsg)) {
+            type = 'identity';
+            if (/dni/i.test(rawMsg)) {
+                name = 'Captura de DNI';
+                description = 'Solicita documento de identidad legal';
+                data = { question: 'Por favor, indícanos tu número de DNI para validar tu identidad:', variable_name: 'dni_cliente' };
+            } else if (/email|correo|mail/i.test(rawMsg)) {
+                name = 'Captura de Email';
+                description = 'Solicita correo electrónico verificado';
+                data = { question: 'Por favor, indícanos tu correo electrónico de contacto:', variable_name: 'email_cliente' };
+            } else if (/telefono|celular|whatsapp/i.test(rawMsg)) {
+                name = 'Captura de Teléfono';
+                description = 'Solicita número de WhatsApp móvil';
+                data = { question: 'Por favor, indícanos tu número de celular o WhatsApp:', variable_name: 'telefono_cliente' };
+            } else {
+                name = 'Captura de Datos Personales';
+                description = 'Solicita nombre y datos de contacto';
+                data = { question: 'Por favor, indícanos tu Nombre completo y correo de contacto:', variable_name: 'datos_contacto' };
+            }
+        } else if (/opcion|boton|men[uú]|elecci[oó]n|elegir/i.test(rawMsg)) {
+            type = 'buttons';
+            name = 'Menú Interactivo de Opciones';
+            description = 'Botonera de selección para el cliente';
+            data = {
+                message: 'Por favor, selecciona una de las siguientes opciones para continuar:\n\n1️⃣ Opción 1: Inversión de Capital\n2️⃣ Opción 2: Ser Asesor Comercial\n3️⃣ Opción 3: Derivar a Asesor',
+                options: [
+                    { number: '1', label: 'Inversión de Capital', response: 'Interés en invertir con custodia BIND/Coinag' },
+                    { number: '2', label: 'Ser Asesor Comercial', response: 'Interés en esquema de comisiones y capacitación' },
+                    { number: '3', label: 'Consultar Soporte', response: 'Derivar con un operador humano' }
+                ]
+            };
+        } else if (/rag|ia|asistente|conocimiento|inteligencia|consulta/i.test(rawMsg)) {
+            type = 'rag';
+            name = 'Asistente IA (RAG Oficial)';
+            description = 'Consulta a la base de conocimiento BCRA 40.015';
+            data = {
+                prompt: 'Eres el Asesor Especialista de Colaboratium. Responde todas las dudas operativas cumpliendo los guardarraíles normativos: no custodial, cero costo para el inversor y enlace obligatorio a BCRA Nº 40.015.'
+            };
+        } else if (/humano|asesor humano|derivar|operador|handoff|atenci[oó]n humana/i.test(rawMsg)) {
+            type = 'approval';
+            name = 'Derivación a Asesor Humano';
+            description = 'Pausa el bot y transfiere al equipo';
+            data = { reason: 'Derivación solicitada por el usuario', target_role: 'Asesores' };
+        } else if (/ticket|caso|reclamo|incidencia|helpdesk/i.test(rawMsg)) {
+            type = 'ticket';
+            name = 'Creación de Ticket Helpdesk';
+            description = 'Abre orden en el CRM y notifica al equipo';
+            data = { subject: 'Solicitud de atención comercial personalizada', priority: 'HIGH' };
+        } else if (/archivo|pdf|ficha|documento|adjunto/i.test(rawMsg)) {
+            type = 'file_send';
+            name = 'Envío de Documento Oficial';
+            description = 'Envía PDF o brochure informativo';
+            data = { file_url: 'https://colaboratium.com/docs/Brochure_Institucional_BCRA_40015.pdf', caption: 'Documentación oficial Colaboratium P2P' };
+        } else {
+            type = 'message';
+            name = 'Mensaje Informativo';
+            description = 'Envío de información al usuario';
+            data = { message: '¡Gracias por comunicarte con Colaboratium! Estamos a tu disposición para ayudarte a hacer crecer tu capital de manera transparente.' };
+        }
+
+        let maxX = 50;
+        if (flowData.nodes.length > 0) {
+            maxX = Math.max(...flowData.nodes.map(n => n.position?.x || 0));
+        }
+        const newPos = { x: maxX + 340, y: 200 };
+
+        const newNodeId = `node_${type}_${Date.now()}`;
+        const newNode = {
+            id: newNodeId,
+            type,
+            name,
+            description,
+            data,
+            position: newPos
+        };
+
+        const lastNode = flowData.nodes.length > 0 ? flowData.nodes[flowData.nodes.length - 1] : null;
+        flowData.nodes.push(newNode);
+
+        if (lastNode) {
+            flowData.edges.push({
+                id: `edge_${Date.now()}`,
+                source: lastNode.id,
+                target: newNode.id
+            });
+        }
+
+        await db.actualizarFlujo(targetFlow.id, codigoEmpresa, flowData, targetFlow.activo, targetFlow.trigger_keyword);
+
+        return {
+            success: true,
+            reply: `✨ **Nuevo Nodo Creado y Conectado en el Flujo**:\n\n- 🏷️ **Nombre**: **${name}**\n- 🧩 **Tipo**: \`${type.toUpperCase()}\`\n- 🔗 **Conexión**: Conectado automáticamente desde *${lastNode ? lastNode.name : 'Inicio'}*\n- 📝 **Detalle**: ${data.question || data.message || data.prompt || description}\n\n📌 *El nuevo nodo ya aparece en tu canvas visual y fue guardado en la base de datos.*`,
+            action: {
+                type: 'APPLY_FLOW_CONFIG',
+                payload: {
+                    flowId: targetFlow.id,
+                    flowName: targetFlow.nombre,
+                    nodes: flowData.nodes,
+                    edges: flowData.edges,
+                    highlightNodeId: newNode.id,
+                    targetUrl: `/dashboard/flows/${targetFlow.id}`
+                }
+            }
+        };
+    }
+
+    // CASO C: Conectar nodos
+    // Ej: "conecta el nodo de inicio con el nodo de opciones"
+    const isConnect = /(conectar|conecta|unir|une|enlazar|enlaza).*?(nodo|paso)/i.test(rawMsg);
+    if (isConnect && flowData.nodes.length >= 2) {
+        const terms = rawMsg.toLowerCase().split(/con|hacia|a|al/);
+        let sourceNode = flowData.nodes[0];
+        let targetNode = flowData.nodes[1];
+
+        if (terms.length >= 2) {
+            const srcTerm = terms[0].replace(/conectar|conecta|unir|une|nodo|el/g, '').trim();
+            const tgtTerm = terms[1].replace(/nodo|el/g, '').trim();
+            const foundSrc = flowData.nodes.find(n => n.name.toLowerCase().includes(srcTerm) || n.type.includes(srcTerm));
+            const foundTgt = flowData.nodes.find(n => n.name.toLowerCase().includes(tgtTerm) || n.type.includes(tgtTerm));
+            if (foundSrc) sourceNode = foundSrc;
+            if (foundTgt && foundTgt.id !== sourceNode.id) targetNode = foundTgt;
+        }
+
+        const newEdge = { id: `edge_${Date.now()}`, source: sourceNode.id, target: targetNode.id };
+        flowData.edges.push(newEdge);
+
+        await db.actualizarFlujo(targetFlow.id, codigoEmpresa, flowData, targetFlow.activo, targetFlow.trigger_keyword);
+
+        return {
+            success: true,
+            reply: `🔗 **Conexión Creada Exitosamente**:\n\nHe conectado el nodo **${sourceNode.name}** con el nodo **${targetNode.name}** en tu diagrama nodal.`,
+            action: {
+                type: 'APPLY_FLOW_CONFIG',
+                payload: {
+                    flowId: targetFlow.id,
+                    flowName: targetFlow.nombre,
+                    nodes: flowData.nodes,
+                    edges: flowData.edges,
+                    targetUrl: `/dashboard/flows/${targetFlow.id}`
+                }
+            }
+        };
+    }
+
+    // CASO D: Crear un flujo conversacional completo nuevo
+    // Ej: "crea un flujo para calificar prospectos", "arma un flujo que salude y pida datos"
+    const isCreateFlow = /(crear|creame|diseña|armar|arma|nuevo).*?(flujo|diagrama|pipeline|flow)/i.test(rawMsg);
+    if (isCreateFlow) {
+        const flowName = /prospecto/i.test(rawMsg) 
+            ? 'Calificación de Prospectos Comerciales'
+            : /inversor/i.test(rawMsg)
+                ? 'Onboarding Express de Inversores'
+                : 'Flujo Automatizado Copilot';
+
+        const newNodes = [
+            {
+                id: 'node_start',
+                type: 'webhook',
+                name: 'Punto de Inicio',
+                description: 'Disparador de entrada',
+                position: { x: 50, y: 200 },
+                data: {}
+            },
+            {
+                id: 'node_saludo',
+                type: 'message',
+                name: 'Saludo y Presentación',
+                description: 'Mensaje institucional Colaboratium',
+                position: { x: 380, y: 200 },
+                data: { message: '¡Hola! Bienvenido a Colaboratium. ¿En qué podemos ayudarte el día de hoy?' }
+            },
+            {
+                id: 'node_captura_dni',
+                type: 'identity',
+                name: 'Captura DNI / Teléfono',
+                description: 'Identificación de prospecto',
+                position: { x: 720, y: 200 },
+                data: { question: 'Por favor, indícanos tu número de DNI y teléfono móvil:', variable_name: 'contacto_prospecto' }
+            },
+            {
+                id: 'node_derivacion',
+                type: 'approval',
+                name: 'Derivación a Asesor',
+                description: 'Asignación inmediata en CRM',
+                position: { x: 1060, y: 200 },
+                data: { reason: 'Prospecto verificado listo para asesoría', target_role: 'Asesores' }
+            }
+        ];
+
+        const newEdges = [
+            { id: 'e1', source: 'node_start', target: 'node_saludo' },
+            { id: 'e2', source: 'node_saludo', target: 'node_captura_dni' },
+            { id: 'e3', source: 'node_captura_dni', target: 'node_derivacion' }
+        ];
+
+        const newFlowJson = {
+            name: flowName,
+            nodes: newNodes,
+            edges: newEdges
+        };
+
+        const newFlowId = await db.crearFlujo(codigoEmpresa, flowName, 'prospecto, lead, asesor', newFlowJson);
+
+        return {
+            success: true,
+            reply: `🚀 **Flujo Conversacional Creado con Éxito**:\n\nHe diseñado el nuevo flujo **${flowName}** con **4 nodos estructurados**:\n1. 🏁 **Inicio**\n2. 💬 **Saludo y Presentación**\n3. 🪪 **Captura DNI / Teléfono**\n4. 👥 **Derivación a Asesor**\n\n📌 Te redirijo al nuevo flujo en el diseñador nodal.`,
+            action: {
+                type: 'APPLY_FLOW_CONFIG',
+                payload: {
+                    flowId: newFlowId,
+                    flowName: flowName,
+                    nodes: newNodes,
+                    edges: newEdges,
+                    targetUrl: `/dashboard/flows/${newFlowId}`
+                }
+            }
+        };
+    }
+
+    return null;
+}
+
+/**
  * Motor Ampliado de Acciones y Asistencia para el Copiloto Routh IA
  */
 async function processCopilotCommand({ message, context = {}, codigoEmpresa = 'KRZMJI', user = {} }) {
@@ -46,8 +380,14 @@ async function processCopilotCommand({ message, context = {}, codigoEmpresa = 'K
         }
     }
 
-    // 2. ACCIÓN: LOCALIZAR FLUJO DEL BOT PARA MODIFICAR SALUDO (Desde Dashboard General o cualquier sección)
-    // Ej: "localiza el flujo del bot parta que pueda modificar el saludo"
+    // 2. ACCIÓN: COMANDOS DEL MOTOR DE FLUJOS CONVERSACIONALES (COPILOT FLOW EDITOR)
+    // Ej: "modifica el saludo inicial para que diga...", "agrega un nodo que pida el DNI", "crea un flujo para prospectos"
+    const flowResult = await handleFlowCopilotAction({ rawMsg, context, codigoEmpresa, user });
+    if (flowResult) {
+        return flowResult;
+    }
+
+    // 2.1. FALLBACK NAVEGACIÓN A FLUJOS
     if (/(flujo|bot).*?(saludo|bienvenida)|(modificar|cambiar|editar).*?(saludo|bienvenida)/i.test(rawMsg)) {
         return {
             success: true,
@@ -55,7 +395,7 @@ async function processCopilotCommand({ message, context = {}, codigoEmpresa = 'K
             action: {
                 type: 'NAVIGATE',
                 payload: {
-                    path: '/dashboard/flows',
+                    path: '/dashboard/flows/7',
                     highlight: 'saludo_inicial'
                 }
             },
