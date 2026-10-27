@@ -209,8 +209,92 @@ app.post('/api/messages/whatsapp/receive', async (req, res) => {
             const changes = entry?.changes?.[0];
             const value = changes?.value;
 
+            // CASO ESPECIAL META: Actualización de estado de Plantilla (message_template_status_update)
+            if (changes?.field === 'message_template_status_update' || value?.event) {
+                const templateEvent = value?.event; // 'APPROVED', 'REJECTED', 'PENDING_DELETION', 'PAUSED'
+                const templateId = value?.message_template_id;
+                const templateName = value?.message_template_name;
+                const reason = value?.reason || '';
+
+                console.log(`\n📢 [META WEBHOOK]: Actualización de plantilla "${templateName}" (ID: ${templateId}) -> Estado: ${templateEvent}`);
+
+                // Determinar código de empresa por WABA ID o fallback KRZMJI
+                let targetCodigo = 'KRZMJI';
+                if (entry?.id) {
+                    try {
+                        const [empRows] = await db.pool.query(
+                            "SELECT codigo FROM empresas WHERE cuentas_vinculadas LIKE ? LIMIT 1",
+                            [`%${entry.id}%`]
+                        );
+                        if (empRows && empRows.length > 0) {
+                            targetCodigo = empRows[0].codigo;
+                        }
+                    } catch (e) {}
+                }
+
+                // 1. Crear Evento / Ticket en Helpdesk
+                try {
+                    const ticketStatus = templateEvent === 'APPROVED' ? 'resolved' : 'open';
+                    const summary = templateEvent === 'APPROVED'
+                        ? `🎉 Plantilla WhatsApp Aprobada por Meta: ${templateName} (Meta ID: ${templateId}) - Lista para Envíos Masivos`
+                        : `⚠️ Plantilla WhatsApp ${templateEvent} por Meta: ${templateName} (Meta ID: ${templateId})${reason ? ' - Motivo: ' + reason : ''}`;
+
+                    const ticketId = await db.crearTicket(
+                        targetCodigo,
+                        null,
+                        templateId ? String(templateId) : 'Meta-Cloud-API',
+                        'Meta Cloud API',
+                        ticketStatus,
+                        summary,
+                        null,
+                        'Soporte'
+                    );
+
+                    await db.pool.query(
+                        `UPDATE tickets SET priority = 'alta', category = 'Meta WhatsApp', internal_notes = ? WHERE id = ?`,
+                        [`Notificación recibida por Webhook Meta el ${new Date().toLocaleString('es-AR')}. Evento: ${templateEvent}.`, ticketId]
+                    );
+                    console.log(`🎟️ [HELPDESK] Ticket #${ticketId} creado para plantilla "${templateName}".`);
+                } catch (tErr) {
+                    console.error('Error creando ticket helpdesk de plantilla:', tErr.message);
+                }
+
+                // 2. Registrar en auditoría
+                try {
+                    if (db.registrarAuditLog) {
+                        await db.registrarAuditLog({
+                            codigo_empresa: targetCodigo,
+                            usuario_email: 'meta-cloud@routhagent.com',
+                            usuario_nombre: 'Meta Cloud API',
+                            rol: 'Sistema',
+                            accion: `PLANTILLA_META_${templateEvent}`,
+                            entidad: 'whatsapp_template',
+                            entidad_id: String(templateId),
+                            detalles: `Webhook de Meta: Plantilla "${templateName}" actualizada a ${templateEvent}${reason ? '. Motivo: ' + reason : ''}.`,
+                            google_scope: 'colaboratium@gmail.com'
+                        });
+                    }
+                } catch (aErr) {}
+
+                // 3. Notificar por correo a colaboratium@gmail.com
+                try {
+                    const { sendGenericEmail } = require('./emailService');
+                    await sendGenericEmail({
+                        to: 'colaboratium@gmail.com',
+                        subject: `📢 [Meta WhatsApp] Plantilla "${templateName}" -> ${templateEvent}`,
+                        text: `Notificación de Meta Cloud API:\n\nLa plantilla de WhatsApp "${templateName}" (ID: ${templateId}) cambió a estado: ${templateEvent}.\n${reason ? 'Motivo: ' + reason + '\n' : ''}\nPodés ver el ticket generado en tu panel de Helpdesk de Routh Agent.`,
+                        html: `<h3>📢 Notificación de Meta Cloud API</h3>
+                            <p>La plantilla de WhatsApp <b>${templateName}</b> (ID: <code>${templateId}</code>) fue <b>${templateEvent}</b>.</p>
+                            ${reason ? '<p><b>Motivo:</b> ' + reason + '</p>' : ''}
+                            <p>El ticket correspondiente ya fue registrado en el panel de Helpdesk.</p>`
+                    });
+                } catch (mErr) {}
+
+                return res.sendStatus(200);
+            }
+
             // Identificar empresa por phone_number_id
-            const phoneId = value.metadata?.phone_number_id;
+            const phoneId = value?.metadata?.phone_number_id;
             let empresa = null;
             if (phoneId) {
                 empresa = await db.obtenerEmpresaPorPhoneId(phoneId);
@@ -340,6 +424,89 @@ app.get('/api/templates', async (req, res) => {
     } catch (err) {
         console.error('Error fetching templates from Meta:', err.response?.data || err.message);
         res.status(500).json({ error: 'No se pudieron obtener las plantillas de Meta', details: err.response?.data });
+    }
+});
+
+// Endpoint para sincronizar plantillas con Meta y crear eventos de Helpdesk automáticamente
+app.post('/api/templates/sync', async (req, res) => {
+    try {
+        const wabaId = process.env.WAPP_BUSINESS_ACCOUNT_ID;
+        const token = process.env.WAPP_ACCESS_TOKEN;
+        const codigoEmpresa = req.body?.codigoEmpresa || 'KRZMJI';
+
+        if (!wabaId || !token) {
+            return res.status(400).json({ error: 'Faltan credenciales de Meta en el backend.' });
+        }
+
+        const axios = require('axios');
+        const response = await axios.get(`https://graph.facebook.com/v19.0/${wabaId}/message_templates?limit=50`, {
+            headers: { Authorization: `Bearer ${token}` }
+        });
+
+        const templates = response.data?.data || [];
+        const synced = [];
+
+        for (const t of templates) {
+            // Verificar si ya existe ticket de evento en Helpdesk para esta plantilla
+            const [existingTickets] = await db.pool.query(
+                `SELECT id, status, summary FROM tickets 
+                 WHERE codigo_empresa = ? AND (customer_number = ? OR summary LIKE ?)`,
+                [codigoEmpresa, String(t.id), `%${t.name}%`]
+            );
+
+            let ticketId = null;
+            if (existingTickets.length === 0) {
+                const summary = t.status === 'APPROVED'
+                    ? `🎉 Plantilla WhatsApp Aprobada por Meta: ${t.name} (Meta ID: ${t.id}) - Lista para Envíos Masivos`
+                    : `⚠️ Plantilla WhatsApp ${t.status} por Meta: ${t.name} (Meta ID: ${t.id})`;
+
+                ticketId = await db.crearTicket(
+                    codigoEmpresa,
+                    null,
+                    String(t.id),
+                    'Meta Cloud API',
+                    t.status === 'APPROVED' ? 'resolved' : 'open',
+                    summary,
+                    null,
+                    'Soporte'
+                );
+
+                await db.pool.query(
+                    `UPDATE tickets SET priority = 'alta', category = 'Meta WhatsApp', internal_notes = ? WHERE id = ?`,
+                    [`Sincronizado vía Meta Graph API v19.0 el ${new Date().toLocaleString('es-AR')}. Categoría: ${t.category}.`, ticketId]
+                );
+
+                try {
+                    await db.registrarAuditLog({
+                        codigo_empresa: codigoEmpresa,
+                        usuario_email: 'meta-cloud@routhagent.com',
+                        usuario_nombre: 'Meta Cloud API',
+                        rol: 'Sistema',
+                        accion: `PLANTILLA_META_${t.status}`,
+                        entidad: 'whatsapp_template',
+                        entidad_id: String(t.id),
+                        detalles: `Plantilla "${t.name}" verificada en Meta con estado ${t.status}. Ticket Helpdesk #${ticketId}.`,
+                        google_scope: 'colaboratium@gmail.com'
+                    });
+                } catch(e) {}
+            } else {
+                ticketId = existingTickets[0].id;
+            }
+
+            synced.push({
+                id: t.id,
+                name: t.name,
+                status: t.status,
+                category: t.category,
+                language: t.language,
+                ticketId
+            });
+        }
+
+        res.json({ success: true, count: synced.length, templates: synced });
+    } catch (err) {
+        console.error('Error syncing templates with Meta:', err.response?.data || err.message);
+        res.status(500).json({ error: 'Error al sincronizar con Meta', details: err.response?.data || err.message });
     }
 });
 
