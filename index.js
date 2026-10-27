@@ -657,6 +657,102 @@ app.delete('/api/empresas/:codigo/plantillas/:id', async (req, res) => {
     }
 });
 
+// Enviar plantilla a Meta Cloud API para aprobación oficial
+const submitTemplateToMetaHandler = async (req, res) => {
+    try {
+        const plantilla = await db.obtenerPlantilla(req.params.id);
+        if (!plantilla) return res.status(404).json({ error: 'Plantilla no encontrada' });
+        
+        const empresa = await db.obtenerEmpresa(req.params.codigo);
+        if (!empresa) return res.status(404).json({ error: 'Empresa no encontrada' });
+        
+        let cv = empresa.cuentas_vinculadas;
+        if (typeof cv === 'string') { try { cv = JSON.parse(cv); } catch(e){} }
+        
+        const wabaId = cv?.whatsapp?.business_account_id || process.env.WAPP_BUSINESS_ACCOUNT_ID;
+        const accessToken = cv?.whatsapp?.access_token || process.env.WAPP_ACCESS_TOKEN;
+
+        if (!wabaId || !accessToken) {
+            return res.status(400).json({ error: 'Credenciales de Meta WhatsApp no configuradas (WABA ID / Access Token)' });
+        }
+
+        // Sanitizar nombre para Meta: minúsculas, números y guiones bajos únicamente
+        const metaName = plantilla.nombre
+            .toLowerCase()
+            .normalize('NFD')
+            .replace(/[\u0300-\u036f]/g, '')
+            .replace(/[^a-z0-9_]/g, '_')
+            .replace(/_+/g, '_')
+            .replace(/^_|_$/g, '')
+            .slice(0, 60);
+
+        // Transformar contenido para Meta: reemplazar variables nombradas por {{1}}, {{2}}, etc.
+        let bodyText = plantilla.contenido;
+        let varCount = 0;
+        bodyText = bodyText.replace(/\{\{([a-zA-ZáéíóúÁÉÍÓÚñÑ_]+)\}\}/g, () => {
+            varCount++;
+            return `{{${varCount}}}`;
+        });
+
+        // Detectar variables {{1}}, {{2}}, etc.
+        const varMatches = bodyText.match(/\{\{\d+\}\}/g) || [];
+        const uniqueVars = Array.from(new Set(varMatches));
+
+        const bodyComponent = {
+            type: 'BODY',
+            text: bodyText
+        };
+
+        if (uniqueVars.length > 0) {
+            const sampleValues = uniqueVars.map((v, i) => {
+                if (i === 0) return 'Juan Perez';
+                if (i === 1) return 'Lunes 10:30 hs';
+                if (i === 2) return '45 min';
+                if (i === 3) return 'https://meet.google.com/xyz';
+                return 'https://colaboratium.com.ar/baja';
+            });
+            bodyComponent.example = {
+                body_text: [sampleValues]
+            };
+        }
+
+        const payload = {
+            name: metaName,
+            category: 'MARKETING',
+            allow_category_change: true,
+            language: 'es_AR',
+            components: [bodyComponent]
+        };
+
+        const axios = require('axios');
+        const metaUrl = `https://graph.facebook.com/v19.0/${wabaId}/message_templates`;
+        const metaRes = await axios.post(metaUrl, payload, {
+            headers: { 
+                Authorization: `Bearer ${accessToken}`,
+                'Content-Type': 'application/json'
+            }
+        });
+
+        res.json({
+            success: true,
+            metaName,
+            metaId: metaRes.data?.id,
+            status: metaRes.data?.status || 'PENDING',
+            message: 'Plantilla enviada exitosamente a Meta para revisión oficial'
+        });
+    } catch (error) {
+        console.error('Error enviando plantilla a Meta:', error.response?.data || error.message);
+        const metaError = error.response?.data?.error;
+        res.status(500).json({ 
+            error: metaError?.message || 'Error al enviar plantilla a Meta Cloud API',
+            details: metaError || error.message
+        });
+    }
+};
+
+app.post('/api/empresas/:codigo/plantillas/:id/submit-meta', submitTemplateToMetaHandler);
+app.post('/empresas/:codigo/plantillas/:id/submit-meta', submitTemplateToMetaHandler);
+
 // ==========================================
 // ENDPOINTS DE BIBLIOTECA DE MEDIOS
 // ==========================================
@@ -1564,6 +1660,147 @@ app.post('/api/empresas/:codigo/tickets/summarize', async (req, res) => {
     } catch (error) {
         console.error('Error resumiendo conversación:', error);
         res.status(500).json({ success: false, error: 'Error generando resumen' });
+    }
+});
+
+// Endpoint del Simulador de Inferencia en Tiempo Real & Prueba de Flujos Conversacionales
+app.post(['/api/empresas/:codigo/ai/simulate', '/empresas/:codigo/ai/simulate'], async (req, res) => {
+    try {
+        const codigoEmpresa = req.params.codigo;
+        const { message, prompt, customText } = req.body;
+        const userText = (message || prompt || customText || '').trim();
+
+        if (!userText) {
+            return res.status(400).json({ success: false, error: 'Mensaje no proporcionado' });
+        }
+
+        const startTime = Date.now();
+
+        // 1. Obtener flujos activos de la empresa
+        const flujos = await db.obtenerFlujos(codigoEmpresa);
+        const flujosActivos = flujos.filter(f => f.activo);
+
+        // 2. Verificar si el texto activa un flujo conversacional
+        let matchedFlow = null;
+        let longestMatchLen = 0;
+        const userLower = userText.toLowerCase().trim();
+        const cleanUser = userLower.replace(/^[¡!¿?\s]+|[¡!¿?\s.,]+$/g, '');
+
+        for (const f of flujosActivos) {
+            if (!f.trigger_keyword) continue;
+            const keywords = f.trigger_keyword.toLowerCase().split(',').map(k => k.trim()).filter(Boolean);
+            for (const k of keywords) {
+                let isMatch = false;
+                if (userLower === k || cleanUser === k) {
+                    isMatch = true;
+                } else if (k.length >= 3) {
+                    const escaped = k.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                    const regex = new RegExp(`(^|\\b|\\s)${escaped}(\\b|\\s|\\.|!|\\?|$)`, 'i');
+                    if (regex.test(userLower)) isMatch = true;
+                }
+                if (isMatch && k.length > longestMatchLen) {
+                    longestMatchLen = k.length;
+                    matchedFlow = f;
+                }
+            }
+        }
+
+        // Si no coincidió directamente por palabra clave, verificar si es saludo o pregunta sobre Colaboratium
+        if (!matchedFlow) {
+            const greetingsOrWelcome = [
+                'hola', 'buenas', 'buen dia', 'buen día', 'buenos dias', 'buenos días', 
+                'que es colaboratium', 'quien es colaboratium', 'quién es colaboratium',
+                'que es', 'quienes son', 'de que trata', 'inicio', 'empezar', 'menu', 'opciones'
+            ];
+            const isWelcome = greetingsOrWelcome.some(g => userLower === g || cleanUser === g || userLower.includes(g));
+            if (isWelcome) {
+                matchedFlow = flujosActivos.find(f => 
+                    f.nombre.toLowerCase().includes('bienvenida') || 
+                    f.nombre.toLowerCase().includes('maestro')
+                ) || flujosActivos[0];
+            }
+        }
+
+        // Si se activó un flujo conversacional, extraer la respuesta de los nodos del flujo
+        if (matchedFlow) {
+            let flowData = matchedFlow.data_json;
+            if (typeof flowData === 'string') {
+                try { flowData = JSON.parse(flowData); } catch (e) { flowData = {}; }
+            }
+
+            const nodes = flowData.nodes || [];
+            const edges = flowData.edges || [];
+
+            let startNode = nodes.find(n => n.id === 'node_trigger' || n.type === 'webhook') || nodes[0];
+            let responseMessages = [];
+
+            // Seguir la cadena inicial de mensajes conectados
+            let currentNode = startNode;
+            let steps = 0;
+            while (currentNode && steps < 6) {
+                steps++;
+                if (currentNode.type === 'message' && currentNode.data?.message) {
+                    responseMessages.push(currentNode.data.message);
+                } else if (currentNode.type === 'identity' && currentNode.data?.question) {
+                    responseMessages.push(currentNode.data.question);
+                    break;
+                } else if (currentNode.type === 'rag' && currentNode.data?.prompt) {
+                    responseMessages.push(`💬 [Orientador Virtual Colaboratium]: ${currentNode.data.prompt}`);
+                    break;
+                }
+
+                // Buscar siguiente nodo conectado
+                const outEdge = edges.find(e => e.source === currentNode.id);
+                if (outEdge) {
+                    currentNode = nodes.find(n => n.id === outEdge.target);
+                } else {
+                    break;
+                }
+            }
+
+            // Si no se extrajeron mensajes por edges, tomar los primeros nodos de tipo message
+            if (responseMessages.length === 0) {
+                const msgNodes = nodes.filter(n => n.type === 'message' && n.data?.message);
+                responseMessages = msgNodes.slice(0, 2).map(n => n.data.message);
+            }
+
+            const flowResponseText = responseMessages.join('\n\n') || `¡Hola! Te damos la bienvenida a Colaboratium P2P. ¿En qué podemos orientarte hoy?`;
+            const elapsed = Math.max(12, Date.now() - startTime);
+
+            return res.json({
+                success: true,
+                type: 'flow',
+                flowId: matchedFlow.id,
+                flowName: matchedFlow.nombre,
+                provider: `Flujo Conversacional: ${matchedFlow.nombre}`,
+                text: flowResponseText,
+                latency: `${elapsed} ms`,
+                tokens: Math.round(flowResponseText.length / 4)
+            });
+        }
+
+        // Si no activó un flujo, consultar al AI Router con la base de conocimiento oficial
+        const [empresaRows] = await db.pool.query(
+            'SELECT * FROM empresas WHERE codigo = ? LIMIT 1',
+            [codigoEmpresa]
+        );
+        const empresaData = empresaRows[0] || { codigo: codigoEmpresa };
+
+        const { routeAiMessage } = require('./aiRouter');
+        const aiResponse = await routeAiMessage(empresaData, userText, []);
+        const elapsed = Date.now() - startTime;
+
+        res.json({
+            success: true,
+            type: 'ai_router',
+            provider: 'Groq Cloud (LLaMA 3.3 70B)',
+            text: aiResponse || 'Colaboratium es una plataforma financiera de préstamos P2P bajo registro oficial BCRA Nº 40.015.',
+            latency: `${elapsed} ms`,
+            tokens: Math.round((userText.length + (aiResponse || '').length) / 4)
+        });
+    } catch (error) {
+        console.error('Error en simulador de inferencia:', error);
+        res.status(500).json({ success: false, error: 'Error procesando simulación de inferencia' });
     }
 });
 

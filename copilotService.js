@@ -622,38 +622,83 @@ async function processCopilotCommand({ message, context = {}, codigoEmpresa = 'K
 
     // 6. ACCIÓN: DESCARGA / EXPORTACIÓN DE FICHA DE CLIENTE A PDF
     // Ej: "exportame la ficha de cliente a pdf", "descargar ficha en pdf", "exportar ficha a pdf", "ficha de alejandro bolognese a pdf"
-    if (/(exporta|exportar|descarga|descargar|generar|bajar|entregar|imprimir).*?(ficha|expediente).*?(cliente|contacto|pdf)|ficha.*?(cliente|contacto|pdf|damduff|juan|alejandro|bolognese)|(exporta|exportar|descarga|descargar).*?(ficha|expediente)/i.test(rawMsg)) {
+    if (/(exporta|exportar|descarga|descargar|generar|bajar|entregar|imprimir).*?(ficha|expediente).*?(cliente|contacto|pdf)|ficha.*?(cliente|contacto|pdf|damduff|juan|bolognese)|(exporta|exportar|descarga|descargar).*?(ficha|expediente)/i.test(rawMsg)) {
         try {
             let targetTerm = '';
-            if (/alejandro|bolognese/i.test(rawMsg)) targetTerm = 'Alejandro';
-            else if (/juan|ramon|valle/i.test(rawMsg)) targetTerm = 'Juan';
-            else if (/damduff/i.test(rawMsg)) targetTerm = 'damduff@gmail.com';
-            else if (/iabox/i.test(rawMsg)) targetTerm = 'iabox';
-            else {
-                const emailMatch = rawMsg.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/);
-                if (emailMatch) {
-                    targetTerm = emailMatch[0];
-                } else if (context.history && Array.isArray(context.history)) {
-                    // Buscar en el historial de conversación reciente
+            
+            // 1. Si el mensaje actual tiene un email explícito (excepto el de la empresa)
+            const emailMatch = rawMsg.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/);
+            if (emailMatch && emailMatch[0].toLowerCase() !== 'colaboratium@gmail.com') {
+                targetTerm = emailMatch[0];
+            } else if (/damduff|valle|juan ram[oó]n/i.test(rawMsg)) {
+                targetTerm = 'damduff@gmail.com';
+            } else if (/bolognese|sirkimonolabs/i.test(rawMsg)) {
+                targetTerm = 'Bolognese';
+            } else if (/iabox/i.test(rawMsg)) {
+                targetTerm = 'iabox';
+            } else {
+                // Si el mensaje dice "ficha de [nombre]"
+                const deMatch = rawMsg.match(/(?:de|del|para)\s+([a-zA-ZáéíóúñÁÉÍÓÚÑ0-9._%+-@]+)/i);
+                if (deMatch && !['cliente', 'contacto', 'este', 'pdf'].includes(deMatch[1].toLowerCase())) {
+                    targetTerm = deMatch[1].trim();
+                }
+
+                // Si aún no se determinó, revisar el historial de mensajes buscando el contacto activo
+                if (!targetTerm && context.history && Array.isArray(context.history)) {
                     for (let i = context.history.length - 1; i >= 0; i--) {
                         const hMsg = context.history[i].content || '';
-                        if (/alejandro|bolognese|sirkimonolabs/i.test(hMsg)) {
-                            targetTerm = 'Alejandro';
-                            break;
-                        } else if (/damduff@gmail\.com/i.test(hMsg) || /juan ram[oó]n/i.test(hMsg) || /valle/i.test(hMsg)) {
+                        
+                        // Buscar si el asistente reportó un contacto específico en 360°
+                        const contactHeaderMatch = hMsg.match(/👤 \*\*Contacto\*\*:\s*\*\*([^*]+)\*\*\s*\(([^)]+)\)/i);
+                        if (contactHeaderMatch) {
+                            const foundId = contactHeaderMatch[2].trim();
+                            if (foundId && foundId.toLowerCase() !== 'colaboratium@gmail.com') {
+                                targetTerm = foundId;
+                                break;
+                            }
+                        }
+
+                        // Buscar si hay un email de cliente en los mensajes
+                        const hEmails = hMsg.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g);
+                        if (hEmails) {
+                            const clientEmail = hEmails.find(e => e.toLowerCase() !== 'colaboratium@gmail.com');
+                            if (clientEmail) {
+                                targetTerm = clientEmail;
+                                break;
+                            }
+                        }
+
+                        // Buscar mención explícita a Dam o Bolognese
+                        if (/damduff|valle/i.test(hMsg)) {
                             targetTerm = 'damduff@gmail.com';
+                            break;
+                        } else if (/bolognese|sirkimonolabs/i.test(hMsg)) {
+                            targetTerm = 'Bolognese';
                             break;
                         }
                     }
                 }
             }
+
+            // Fallback por defecto a damduff si no se especifica otro
             if (!targetTerm) targetTerm = 'damduff@gmail.com';
 
             let contacts = await db.obtenerContactosCRM(codigoEmpresa, '', targetTerm);
             if ((!contacts || contacts.length === 0) && codigoEmpresa !== 'KRZMJI') {
                 contacts = await db.obtenerContactosCRM('KRZMJI', '', targetTerm);
             }
-            const contact = contacts && contacts.length > 0 ? contacts[0] : null;
+
+            // Si hay múltiples resultados y buscábamos por email, priorizar coincidencia exacta de email
+            let contact = null;
+            if (contacts && contacts.length > 0) {
+                if (targetTerm.includes('@')) {
+                    contact = contacts.find(c => (c.email || '').toLowerCase() === targetTerm.toLowerCase()) || contacts[0];
+                } else if (/bolognese/i.test(targetTerm)) {
+                    contact = contacts.find(c => (c.nombre || '').toLowerCase().includes('bolognese')) || contacts[0];
+                } else {
+                    contact = contacts[0];
+                }
+            }
 
             if (contact) {
                 const messages = await db.obtenerTodosLosMensajes(contact.id);
