@@ -4,6 +4,7 @@ const path = require('path');
 const { processMessageWithAI, transcribeAudioWithGroq } = require('../groqService');
 const { sendWhatsAppMessage, downloadWhatsAppMedia } = require('../whatsappService');
 const { handleFlowEngine } = require('../flowEngine');
+const { handleAdvisorDirectQuery } = require('../advisorService');
 const connection = require('./redisClient');
 const db = require('../database');
 
@@ -60,8 +61,15 @@ const incomingMessageWorker = new Worker('incoming-messages', async (job) => {
 
         console.log(`\n💬 [WORKER] Nuevo mensaje de ${cleanMessage.remitente} guardado en BD para empresa ${codigoEmpresa}.`);
 
-        // --- FLUJO DE EJECUCIÓN GRÁFICA (React Flow) ---
+        // --- PROCESAMIENTO DE MENSAJES CON BOT ACTIVO ---
         if (cleanMessage.contenido && dbContacto.estado_bot === 'ACTIVO') {
+            // 0. Interceptar consultas de Asesores (Precarga de inversores y reclamos de comisiones -> derivación a Líder)
+            const handledByAdvisor = await handleAdvisorDirectQuery(dbContacto, cleanMessage, empresa, accessToken, phoneId, history);
+            if (handledByAdvisor) {
+                return { success: true, via: 'advisor_service' };
+            }
+
+            // --- FLUJO DE EJECUCIÓN GRÁFICA (React Flow) ---
             const handledByFlow = await handleFlowEngine(dbContacto, cleanMessage, empresa, accessToken, phoneId, history);
             
             // Si el flujo procesó el mensaje, no hacemos nada más en esta iteración.

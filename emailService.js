@@ -653,6 +653,72 @@ async function sendMassEmailCampaign({ codigoEmpresa, campanaId, contacts = [], 
     return { total, enviados, entregados };
 }
 
+/**
+ * Envía invitación iCalendar (ICS) a colaboratium@gmail.com para que el evento se refleje en Google Calendar
+ */
+async function sendCalendarEventInvitation({ titulo, tipo, modalidad, categoria, fecha, horario, meetLink, ubicacion, creadoPor }) {
+    try {
+        const mailer = getTransporter();
+        const fromEmail = process.env.SMTP_USER || 'colaboratium@gmail.com';
+        const toEmail = 'colaboratium@gmail.com';
+
+        const uid = `event_${Date.now()}@colaboratium.com.ar`;
+        const nowStr = new Date().toISOString().replace(/[-:]/g, '').split('.')[0] + 'Z';
+        
+        const icsContent = [
+            'BEGIN:VCALENDAR',
+            'PRODID:-//Colaboratium//Calendar Meet 1.0//ES',
+            'VERSION:2.0',
+            'CALSCALE:GREGORIAN',
+            'METHOD:REQUEST',
+            'BEGIN:VEVENT',
+            `UID:${uid}`,
+            `DTSTAMP:${nowStr}`,
+            `SUMMARY:${titulo} - Colaboratium`,
+            `DESCRIPTION:Evento oficial: ${titulo}\\nModalidad: ${modalidad}\\nCategoría: ${categoria}\\nFecha y Horario: ${fecha} (${horario})\\nSala Google Meet: ${meetLink || 'https://meet.google.com/new'}\\nOrganizado por: ${creadoPor || 'Líder / Asesor'}`,
+            `LOCATION:${modalidad === 'PRESENCIAL' ? (ubicacion || 'Av. del Libertador 264, Vicente López') : (meetLink || 'Google Meet')}`,
+            'STATUS:CONFIRMED',
+            'ORGANIZER;CN=Colaboratium:mailto:colaboratium@gmail.com',
+            'ATTENDEE;CUTYPE=INDIVIDUAL;ROLE=REQ-PARTICIPANT;PARTSTAT=ACCEPTED;CN=Colaboratium:mailto:colaboratium@gmail.com',
+            'END:VEVENT',
+            'END:VCALENDAR'
+        ].join('\r\n');
+
+        const mailOptions = {
+            from: `"Colaboratium Calendar" <${fromEmail}>`,
+            to: toEmail,
+            subject: `📅 [Google Calendar] Nuevo Evento: ${titulo} (${fecha} ${horario})`,
+            html: `
+            <div style="font-family: Arial, sans-serif; background: #0c0f18; color: #f1f5f9; padding: 24px; border-radius: 16px;">
+                <h2 style="color: #38bdf8; margin-top: 0;">📅 Nuevo Evento Sincronizado en Google Calendar</h2>
+                <p>Se ha registrado un nuevo evento oficial en la plataforma:</p>
+                <ul style="line-height: 1.8; color: #cbd5e1;">
+                    <li><strong>Título:</strong> ${titulo}</li>
+                    <li><strong>Tipo / Categoría:</strong> ${String(tipo || '').toUpperCase()} (${categoria})</li>
+                    <li><strong>Modalidad:</strong> ${modalidad}</li>
+                    <li><strong>Fecha y Horario:</strong> ${fecha} - ${horario}</li>
+                    <li><strong>Google Meet / Sala:</strong> <a href="${meetLink || 'https://meet.google.com/new'}" style="color: #38bdf8;">${meetLink || 'https://meet.google.com/new'}</a></li>
+                    <li><strong>Organizador:</strong> ${creadoPor || 'Sistema'}</li>
+                </ul>
+                <p style="font-size: 12px; color: #94a3b8; margin-top: 20px;">Este evento se ha incorporado mediante invitación iCalendar oficial a colaboratium@gmail.com.</p>
+            </div>
+            `,
+            icalEvent: {
+                filename: 'evento_colaboratium.ics',
+                method: 'REQUEST',
+                content: icsContent
+            }
+        };
+
+        const info = await mailer.sendMail(mailOptions);
+        console.log(`✅ [CALENDAR EMAIL]: Invitación de evento enviada a ${toEmail} (ID: ${info.messageId})`);
+        return { success: true, messageId: info.messageId };
+    } catch (err) {
+        console.error('⚠️ [CALENDAR EMAIL ERROR]: Error enviando invitación iCal:', err.message);
+        return { success: false, error: err.message };
+    }
+}
+
 module.exports = {
     sendTicketEmail,
     sendWebinarConfirmationToAdvisor,
@@ -661,5 +727,6 @@ module.exports = {
     sendInvestorWelcomeGuide,
     sendInvestorInquiryToCompany,
     sendGenericEmail,
-    sendMassEmailCampaign
+    sendMassEmailCampaign,
+    sendCalendarEventInvitation
 };

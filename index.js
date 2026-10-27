@@ -687,12 +687,24 @@ const submitTemplateToMetaHandler = async (req, res) => {
             .slice(0, 60);
 
         // Transformar contenido para Meta: reemplazar variables nombradas por {{1}}, {{2}}, etc.
-        let bodyText = plantilla.contenido;
+        let bodyText = (plantilla.contenido || '').trim();
         let varCount = 0;
-        bodyText = bodyText.replace(/\{\{([a-zA-ZáéíóúÁÉÍÓÚñÑ_]+)\}\}/g, () => {
+        bodyText = bodyText.replace(/\{\{([a-zA-ZáéíóúÁÉÍÓÚñÑ_0-9]+)\}\}/g, () => {
             varCount++;
             return `{{${varCount}}}`;
         });
+
+        // Regla Meta: NO se permiten variables al final del texto (subcode 2388299). Debe haber palabras de cierre.
+        if (/\{\{\d+\}\}[.\s]*$/.test(bodyText)) {
+            bodyText += ' en cualquier momento.';
+        }
+
+        // Regla Meta: Límite estricto de 1024 caracteres para el componente BODY (subcode 2388040)
+        if (bodyText.length > 1024) {
+            bodyText = bodyText.slice(0, 1000).trim() + '... Muchas gracias.';
+            // Asegurar que no cortamos una variable a la mitad
+            bodyText = bodyText.replace(/\{\{\d*$/, '');
+        }
 
         // Detectar variables {{1}}, {{2}}, etc.
         const varMatches = bodyText.match(/\{\{\d+\}\}/g) || [];
@@ -733,11 +745,24 @@ const submitTemplateToMetaHandler = async (req, res) => {
             }
         });
 
+        const metaId = metaRes.data?.id;
+        const metaStatus = metaRes.data?.status || 'PENDING';
+
+        // Actualizar en base de datos local
+        try {
+            await db.pool.query(
+                'UPDATE plantillas SET meta_id = ?, meta_status = ?, meta_nombre = ? WHERE id = ?',
+                [metaId, metaStatus, metaName, plantilla.id]
+            );
+        } catch (dbErr) {
+            console.warn('⚠️ No se pudo persistir meta_id en plantillas:', dbErr.message);
+        }
+
         res.json({
             success: true,
             metaName,
-            metaId: metaRes.data?.id,
-            status: metaRes.data?.status || 'PENDING',
+            metaId,
+            status: metaStatus,
             message: 'Plantilla enviada exitosamente a Meta para revisión oficial'
         });
     } catch (error) {
@@ -1511,9 +1536,37 @@ app.post('/api/empresas/:codigo/tickets', async (req, res) => {
 
 app.put('/api/empresas/:codigo/tickets/:id', async (req, res) => {
     try {
+        const ticketAntes = await db.obtenerTicket(req.params.id, req.params.codigo);
         const success = await db.actualizarTicket(req.params.id, req.params.codigo, req.body);
-        if (success) res.json({ success: true });
-        else res.status(404).json({ success: false, error: 'Ticket no encontrado' });
+        if (success) {
+            if (ticketAntes && ticketAntes.creado_en) {
+                const creadoEn = new Date(ticketAntes.creado_en).getTime();
+                const elapsedMinutos = Math.max(1, Math.round((Date.now() - creadoEn) / (60 * 1000)));
+                const horas = Math.floor(elapsedMinutos / 60);
+                const mins = elapsedMinutos % 60;
+                const tiempoStr = horas > 0 ? `${horas}h ${mins}m` : `${mins} min`;
+
+                const isCierre = req.body.status === 'closed' || req.body.status === 'resolved';
+                const operador = req.body.usuario_nombre || req.body.operator_name || req.body.userName || 'Operador';
+                const accionLog = isCierre ? 'CIERRE_TICKET' : 'RESPUESTA_TICKET';
+
+                await db.registrarAuditLog({
+                    codigo_empresa: req.params.codigo,
+                    usuario_id: req.body.userId || req.body.usuario_id || null,
+                    usuario_nombre: operador,
+                    rol: req.body.userRole || req.body.rol || 'Soporte',
+                    accion: accionLog,
+                    entidad: 'tickets',
+                    entidad_id: String(req.params.id),
+                    detalles: isCierre
+                        ? `Ticket #${req.params.id} (${ticketAntes.customer_name || ticketAntes.customer_number}) cerrado por ${operador}. Tiempo total de resolución / cierre: ${tiempoStr} (${elapsedMinutos} min total).`
+                        : `Ticket #${req.params.id} actualizado a "${req.body.status || 'abierto'}" por ${operador}. Tiempo de respuesta transcurrido: ${tiempoStr} (${elapsedMinutos} min).`
+                });
+            }
+            res.json({ success: true });
+        } else {
+            res.status(404).json({ success: false, error: 'Ticket no encontrado' });
+        }
     } catch (error) {
         console.error('Error actualizando ticket:', error);
         res.status(500).json({ success: false, error: 'Error actualizando ticket' });
@@ -1559,6 +1612,7 @@ app.post('/api/empresas/:codigo/tickets/:id/send-email', async (req, res) => {
 app.post('/api/empresas/:codigo/tickets/:id/authorize', async (req, res) => {
     try {
         const { usuario_id, usuario_nombre, usuario_email, rol } = req.body;
+        const ticketAntes = await db.obtenerTicket(req.params.id, req.params.codigo);
         const success = await db.actualizarTicket(req.params.id, req.params.codigo, {
             status: 'open',
             authorized_at: new Date(),
@@ -1566,6 +1620,15 @@ app.post('/api/empresas/:codigo/tickets/:id/authorize', async (req, res) => {
         });
 
         if (success) {
+            let tiempoStr = '';
+            if (ticketAntes && ticketAntes.creado_en) {
+                const creadoEn = new Date(ticketAntes.creado_en).getTime();
+                const elapsedMinutos = Math.max(1, Math.round((Date.now() - creadoEn) / (60 * 1000)));
+                const horas = Math.floor(elapsedMinutos / 60);
+                const mins = elapsedMinutos % 60;
+                tiempoStr = ` Tiempo transcurrido hasta autorización: ${horas > 0 ? `${horas}h ${mins}m` : `${mins} min`}.`;
+            }
+
             await db.registrarAuditLog({
                 codigo_empresa: req.params.codigo,
                 usuario_id,
@@ -1575,7 +1638,7 @@ app.post('/api/empresas/:codigo/tickets/:id/authorize', async (req, res) => {
                 accion: 'AUTORIZAR_TICKET',
                 entidad: 'tickets',
                 entidad_id: String(req.params.id),
-                detalles: `Ticket #${req.params.id} autorizado exitosamente por ${usuario_nombre || 'Administrador'}`
+                detalles: `Ticket #${req.params.id} autorizado exitosamente por ${usuario_nombre || 'Administrador'}.${tiempoStr}`
             });
             res.json({ success: true, message: 'Ticket autorizado con éxito' });
         } else {
@@ -1591,6 +1654,7 @@ app.post('/api/empresas/:codigo/tickets/:id/authorize', async (req, res) => {
 app.post('/api/empresas/:codigo/tickets/:id/delegate', async (req, res) => {
     try {
         const { assigned_to_user_id, assigned_to_name, internal_notes, delegator_id, delegator_name, delegator_email, rol } = req.body;
+        const ticketAntes = await db.obtenerTicket(req.params.id, req.params.codigo);
         const updatePayload = {
             assigned_to_user_id: assigned_to_user_id || null,
             assigned_to_name: assigned_to_name || 'Sin Asignar'
@@ -1600,6 +1664,15 @@ app.post('/api/empresas/:codigo/tickets/:id/delegate', async (req, res) => {
         const success = await db.actualizarTicket(req.params.id, req.params.codigo, updatePayload);
 
         if (success) {
+            let tiempoStr = '';
+            if (ticketAntes && ticketAntes.creado_en) {
+                const creadoEn = new Date(ticketAntes.creado_en).getTime();
+                const elapsedMinutos = Math.max(1, Math.round((Date.now() - creadoEn) / (60 * 1000)));
+                const horas = Math.floor(elapsedMinutos / 60);
+                const mins = elapsedMinutos % 60;
+                tiempoStr = ` Tiempo hasta derivación: ${horas > 0 ? `${horas}h ${mins}m` : `${mins} min`}.`;
+            }
+
             await db.registrarAuditLog({
                 codigo_empresa: req.params.codigo,
                 usuario_id: delegator_id,
@@ -1609,7 +1682,7 @@ app.post('/api/empresas/:codigo/tickets/:id/delegate', async (req, res) => {
                 accion: 'DELEGAR_TICKET',
                 entidad: 'tickets',
                 entidad_id: String(req.params.id),
-                detalles: `Ticket #${req.params.id} delegado a ${assigned_to_name}. Notas: ${internal_notes || 'Ninguna'}`
+                detalles: `Ticket #${req.params.id} delegado a ${assigned_to_name} por ${delegator_name}.${tiempoStr} Notas: ${internal_notes || 'Ninguna'}`
             });
             res.json({ success: true, message: `Ticket delegado a ${assigned_to_name} con éxito` });
         } else {
@@ -2176,6 +2249,7 @@ app.post('/api/empresas/:codigo/calendar/events', async (req, res) => {
     try {
         const { titulo, tipo = 'webinar', modalidad = 'VIRTUAL', categoria = 'ASESORES', fecha, horario, meetLink, ubicacion, cupos = 25, userId, userName, userRole } = req.body;
         const codigoEmpresa = req.params.codigo;
+        const effectiveMeetLink = meetLink || 'https://meet.google.com/new';
 
         const eventId = await db.crearCalendarEvent(codigoEmpresa, {
             titulo,
@@ -2184,7 +2258,7 @@ app.post('/api/empresas/:codigo/calendar/events', async (req, res) => {
             categoria,
             fecha,
             horario,
-            meet_link: meetLink,
+            meet_link: effectiveMeetLink,
             ubicacion,
             cupos,
             creado_por_usuario_id: userId,
@@ -2192,7 +2266,28 @@ app.post('/api/empresas/:codigo/calendar/events', async (req, res) => {
             creado_por_rol: userRole
         });
 
-        // Registrar en Log de Sucesos del Ámbito Google Colaboratium
+        // 1. Sincronización automática con Google Calendar (colaboratium@gmail.com) enviando invitación iCal
+        try {
+            const { sendCalendarEventInvitation } = require('./emailService');
+            await sendCalendarEventInvitation({
+                titulo,
+                tipo,
+                modalidad,
+                categoria,
+                fecha,
+                horario,
+                meetLink: effectiveMeetLink,
+                ubicacion,
+                creadoPor: userName || userRole
+            });
+        } catch (calErr) {
+            console.warn('⚠️ Error en sincronización iCal de Google Calendar:', calErr.message);
+        }
+
+        // 2. Generar Enlace Directo para Google Calendar Web
+        const gCalDirectUrl = `https://calendar.google.com/calendar/render?action=TEMPLATE&text=${encodeURIComponent(titulo)}&details=${encodeURIComponent(`Evento oficial ${titulo}\nModalidad: ${modalidad}\nCategoría: ${categoria}\nHorario: ${horario}\nSala Meet: ${effectiveMeetLink}`)}&location=${encodeURIComponent(modalidad === 'PRESENCIAL' ? (ubicacion || 'Av. del Libertador 264, Vicente López') : effectiveMeetLink)}&add=colaboratium@gmail.com`;
+
+        // 3. Registrar en Log de Sucesos del Ámbito Google Colaboratium
         await db.registrarAuditLog({
             codigo_empresa: codigoEmpresa,
             usuario_id: userId,
@@ -2201,11 +2296,15 @@ app.post('/api/empresas/:codigo/calendar/events', async (req, res) => {
             accion: 'calendar_event_created',
             entidad: 'calendar',
             entidad_id: eventId.toString(),
-            detalles: `Evento creado: ${tipo === 'webinar' ? 'Webinar Capacitación' : 'Reunión Meet Inversores'} - "${titulo}" (${fecha} ${horario}, modalidad ${modalidad})`,
+            detalles: `Evento creado: ${tipo === 'webinar' ? 'Webinar Capacitación' : 'Reunión Meet Inversores'} - "${titulo}" (${fecha} ${horario}, modalidad ${modalidad}). Sincronizado en Google Calendar colaboratium@gmail.com`,
             google_scope: 'colaboratium@gmail.com'
         });
 
-        res.json({ success: true, id: eventId });
+        res.json({ 
+            success: true, 
+            id: eventId,
+            googleCalendarUrl: gCalDirectUrl
+        });
     } catch (error) {
         console.error('Error creando evento de calendario:', error);
         res.status(500).json({ success: false, error: error.message });
@@ -2286,7 +2385,7 @@ CONOCIMIENTO EMPRESARIAL OBLIGATORIO:
 - Comisiones de Asesores: 4% a 3m, 5% a 6m, 6% a 12m (3% al calce inmediato y el resto en cuotas).
 - Leads de Colaboratium (Caso Juan Ramírez): 3% inicial para Colaboratium, cuotas residuales y 100% de reinversiones para el asesor.
 - Líderes: 10% adicional de la bolsa de comisiones del equipo.
-- Reuniones y Capacitación: Lunes, Miércoles y Viernes por Google Meet (meet.google.com/qmv-wqzk-hxo) o Presencial en Vicente López los Miércoles a las 14:30 hs.
+- Reuniones y Capacitación: Lunes, Miércoles y Viernes por Google Meet (meet.google.com/new) o Presencial en Vicente López los Miércoles a las 14:30 hs.
 
 INSTRUCCIONES DE RESPUESTA:
 - Responde de forma ejecutiva, precisa, profesional y con formato Markdown amigable (viñetas, negritas, emojis).

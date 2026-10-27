@@ -189,8 +189,12 @@ async function routeAiMessage(userMessage, history = [], empresaData = {}) {
 REGLAS DE DERIVACIÓN Y RESPUESTA OBLIGATORIA:
 1. Si no puedes resolver la consulta o el usuario requiere atención humana, incluye [HANDOFF].
 2. OBLIGATORIO: Finaliza tu mensaje con una única etiqueta de rol: [ROLE:Asesores], [ROLE:Inversores], [ROLE:Lideres] o [ROLE:Soporte] (o [ROLE:General] si es saludo).
-3. PROHIBIDO TABLAS MARKDOWN: NUNCA utilices tablas de markdown (| col1 | col2 |) porque WhatsApp no las soporta y se muestran como texto roto e ilegible. Si presentas horarios o comparativas, usa viñetas (•), negritas (*) y saltos de línea claros y limpios.
-4. Cuando el usuario pregunte por horarios o capacitaciones, dale las opciones numeradas de forma clara y amigable invitándolo a responder con el número de opción y su email.`
+3. CONSULTAS DE ASESORES COMERCIALES (REGLA FUNDAMENTAL):
+   • La MAYORÍA de las consultas de los asesores (sobre clientes inversores, comisiones, producción de equipo, precargas o dudas comerciales) DEBEN derivarse a su Líder Comercial con [ROLE:Lideres] y [HANDOFF].
+   • Solo si es un problema técnico específico (olvido de contraseña, error en la plataforma, falla del sistema) se deriva a [ROLE:Soporte].
+   • Solo trámites formales de alta o constancia de CBU institucional van a [ROLE:Administracion].
+4. PROHIBIDO TABLAS MARKDOWN: NUNCA utilices tablas de markdown (| col1 | col2 |) porque WhatsApp no las soporta y se muestran como texto roto e ilegible. Si presentas horarios o comparativas, usa viñetas (•), negritas (*) y saltos de línea claros y limpios.
+5. Cuando el usuario pregunte por horarios o capacitaciones, dale las opciones numeradas de forma clara y amigable invitándolo a responder con el número de opción y su email.`
         }
     ];
 

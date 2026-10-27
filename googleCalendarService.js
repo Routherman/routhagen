@@ -27,7 +27,7 @@ const DEFAULT_SLOTS = [
         modalidad: 'VIRTUAL',
         fechaStr: 'Lunes 26 de Octubre',
         horarioStr: '10:30 a 12:00 hs',
-        meetLink: 'https://meet.google.com/qmv-wqzk-hxo',
+        meetLink: 'https://meet.google.com/new',
         ubicacion: 'Google Meet',
         cupos: 25
     },
@@ -37,7 +37,7 @@ const DEFAULT_SLOTS = [
         modalidad: 'VIRTUAL',
         fechaStr: 'Lunes 26 de Octubre',
         horarioStr: '12:30 a 14:00 hs',
-        meetLink: 'https://meet.google.com/qmv-wqzk-hxo',
+        meetLink: 'https://meet.google.com/new',
         ubicacion: 'Google Meet',
         cupos: 25
     },
@@ -47,7 +47,7 @@ const DEFAULT_SLOTS = [
         modalidad: 'VIRTUAL',
         fechaStr: 'Lunes 26 de Octubre',
         horarioStr: '14:30 a 16:00 hs',
-        meetLink: 'https://meet.google.com/qmv-wqzk-hxo',
+        meetLink: 'https://meet.google.com/new',
         ubicacion: 'Google Meet',
         cupos: 25
     },
@@ -57,7 +57,7 @@ const DEFAULT_SLOTS = [
         modalidad: 'VIRTUAL',
         fechaStr: 'Miércoles 28 de Octubre',
         horarioStr: '10:30 a 12:00 hs',
-        meetLink: 'https://meet.google.com/qmv-wqzk-hxo',
+        meetLink: 'https://meet.google.com/new',
         ubicacion: 'Google Meet',
         cupos: 25
     },
@@ -77,7 +77,7 @@ const DEFAULT_SLOTS = [
         modalidad: 'VIRTUAL',
         fechaStr: 'Viernes 30 de Octubre',
         horarioStr: '12:00 a 13:30 hs',
-        meetLink: 'https://meet.google.com/qmv-wqzk-hxo',
+        meetLink: 'https://meet.google.com/new',
         ubicacion: 'Google Meet',
         cupos: 25
     }
@@ -130,7 +130,7 @@ async function getAvailableWebinarSlots(codigoEmpresa = 'KRZMJI', category = 'al
                         categoria: isLider ? 'LIDERES' : 'ASESORES',
                         fechaStr: fechaStr.charAt(0).toUpperCase() + fechaStr.slice(1),
                         horarioStr: `${horaInicio} a ${horaFin} hs`,
-                        meetLink: 'https://meet.google.com/qmv-wqzk-hxo',
+                        meetLink: 'https://meet.google.com/new',
                         ubicacion: isPresencial ? 'Av. del Libertador 264, 1° Piso Contrafrente, Vicente López, Buenos Aires' : 'Google Meet',
                         cupos: isPresencial ? 15 : 25,
                         subscribers: []
@@ -170,7 +170,7 @@ async function getAvailableWebinarSlots(codigoEmpresa = 'KRZMJI', category = 'al
                         categoria: isLider ? 'LIDERES' : 'ASESORES',
                         fechaStr: ev.fecha,
                         horarioStr: ev.horario,
-                        meetLink: ev.meet_link || 'https://meet.google.com/qmv-wqzk-hxo',
+                        meetLink: ev.meet_link || 'https://meet.google.com/new',
                         ubicacion: ev.ubicacion || (ev.modalidad === 'PRESENCIAL' ? 'Av. del Libertador 264, Vicente López' : 'Google Meet'),
                         cupos: ev.cupos || (ev.modalidad === 'PRESENCIAL' ? 15 : 25),
                         isCustom: true,

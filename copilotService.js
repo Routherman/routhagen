@@ -433,7 +433,7 @@ async function processCopilotCommand({ message, context = {}, codigoEmpresa = 'K
             else if (/14|dos de la tarde/i.test(rawMsg)) horarioStr = '14:00 a 15:00 hs';
             else if (/16|cuatro de la tarde/i.test(rawMsg)) horarioStr = '16:30 a 17:30 hs';
 
-            const meetLink = 'https://meet.google.com/qmv-wqzk-hxo';
+            const meetLink = 'https://meet.google.com/new';
 
             const eventId = await db.crearCalendarEvent(codigoEmpresa, {
                 titulo,
