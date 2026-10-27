@@ -61,6 +61,25 @@ const incomingMessageWorker = new Worker('incoming-messages', async (job) => {
 
         console.log(`\n💬 [WORKER] Nuevo mensaje de ${cleanMessage.remitente} guardado en BD para empresa ${codigoEmpresa}.`);
 
+        // Si el contacto estaba en HANDOFF pero respondió a una plantilla saliente (reanudación de ventana 24h)
+        if (cleanMessage.contenido && dbContacto.estado_bot === 'HANDOFF') {
+            const [recentOutgoingRows] = await db.pool.query(
+                `SELECT id, tipo, contenido FROM mensajes WHERE contacto_id = ? AND direccion = 'SALIENTE' ORDER BY id DESC LIMIT 3`,
+                [dbContacto.id]
+            );
+            const isTemplate = recentOutgoingRows.some(m => 
+                m.tipo === 'template' || 
+                (m.contenido && m.contenido.includes('[Plantilla:')) ||
+                (m.contenido && /reunion_informativa|bienvenida_asesores|convocatoria_lideres|simulador_y_propuesta|sumarte al equipo comercial|futuros asesores/i.test(m.contenido))
+            );
+
+            if (isTemplate) {
+                console.log(`✅ [WORKER] El cliente respondió a una plantilla. Reactivando Bot/Flujos e IA para ${cleanMessage.remitente}...`);
+                await db.actualizarEstadoBot(dbContacto.id, 'ACTIVO');
+                dbContacto.estado_bot = 'ACTIVO';
+            }
+        }
+
         // --- PROCESAMIENTO DE MENSAJES CON BOT ACTIVO ---
         if (cleanMessage.contenido && dbContacto.estado_bot === 'ACTIVO') {
             // 0. Interceptar consultas de Asesores (Precarga de inversores y reclamos de comisiones -> derivación a Líder)
@@ -69,7 +88,7 @@ const incomingMessageWorker = new Worker('incoming-messages', async (job) => {
                 return { success: true, via: 'advisor_service' };
             }
 
-            // --- FLUJO DE EJECUCIÓN GRÁFICA (React Flow) ---
+            // --- FLUJO DE EJECUCIÓN GRÁFICA (React Flow & Plantillas de Asesor/Líder/Inversor) ---
             const handledByFlow = await handleFlowEngine(dbContacto, cleanMessage, empresa, accessToken, phoneId, history);
             
             // Si el flujo procesó el mensaje, no hacemos nada más en esta iteración.
@@ -143,62 +162,8 @@ ${flujosString}
             return { success: true, via: 'ai' };
 
         } else if (dbContacto.estado_bot === 'HANDOFF') {
-            // Verificar si el último mensaje SALIENTE fue una plantilla.
-            // Si es así, el cliente respondió a nuestra plantilla → reactivar IA.
-            const [lastOutgoing] = await db.pool.query(
-                `SELECT tipo FROM mensajes WHERE contacto_id = ? AND direccion = 'SALIENTE' ORDER BY id DESC LIMIT 1`,
-                [dbContacto.id]
-            );
-            
-            if (lastOutgoing[0]?.tipo === 'template') {
-                console.log(`✅ [WORKER] El cliente respondió a una plantilla. Reactivando IA para ${cleanMessage.remitente}...`);
-                await db.actualizarEstadoBot(dbContacto.id, 'ACTIVO');
-                
-                // Actualizamos dbContacto para esta ejecución
-                dbContacto.estado_bot = 'ACTIVO';
-                
-                // Y tiramos un error intencional o procesamos directo
-                // Para simplificar, procesamos directo la respuesta
-                const freshHistory = await db.obtenerHistorialMensajes(dbContacto.id, 10);
-                
-                const rolesEmpresa = await db.obtenerRoles(codigoEmpresa);
-                const rolesString = rolesEmpresa.map(r => r.nombre).join(', ');
-                
-                const flujos = await db.obtenerFlujos(codigoEmpresa);
-                const flujosActivos = flujos.filter(f => f.activo);
-                const flujosString = flujosActivos.length > 0 
-                    ? flujosActivos.map(f => `- Flujo: "${f.nombre}" | Palabra Clave: "${f.trigger_keyword}"`).join('\n')
-                    : 'No hay flujos automáticos activos.';
-
-                const contactInfo = `Nombre/Remitente: ${dbContacto.nombre || cleanMessage.remitente}\nTeléfono: ${dbContacto.identificador_valor}`;
-                const contextoAdicional = `\n[CONTEXTO OBLIGATORIO PARA LA IA]\nINFORMACIÓN DEL CONTACTO:\n${contactInfo}\nROLES DISPONIBLES EN LA EMPRESA:\n${rolesString}\nFLUJOS DISPONIBLES:\n${flujosString}`;
-                
-                const empresaContext = { ...empresa, prompt_ia: `${empresa.prompt_ia || ''}\n${contextoAdicional}` };
-                let aiResponse = await processMessageWithAI(cleanMessage.contenido, freshHistory, empresaContext);
-                
-                const roleMatch = aiResponse.match(/\[ROLE:(.*?)\]/i);
-                if (roleMatch) {
-                    const rolName = roleMatch[1].trim();
-                    await db.actualizarAsignacionContacto(dbContacto.id, rolName);
-                    aiResponse = aiResponse.replace(/\[ROLE:.*?\]/ig, '').trim();
-                }
-                
-                if (aiResponse.includes('[HANDOFF]')) {
-                    await db.actualizarEstadoBot(dbContacto.id, 'HANDOFF');
-                    let msgToUser = aiResponse.replace(/\[HANDOFF\]/g, '').trim();
-                    if (!msgToUser) msgToUser = 'Entiendo. Un asesor humano se conectará al chat en breve.';
-                    const outMetaId = await sendWhatsAppMessage(cleanMessage.identificador.valor, msgToUser, phoneId, accessToken);
-                    await db.guardarMensaje(dbContacto.id, outMetaId, 'SALIENTE', 'text', msgToUser);
-                } else {
-                    const outMetaId = await sendWhatsAppMessage(cleanMessage.identificador.valor, aiResponse, phoneId, accessToken);
-                    await db.guardarMensaje(dbContacto.id, outMetaId, 'SALIENTE', 'text', aiResponse);
-                    console.log(`✅ [WORKER] IA reactivada y respondió a ${cleanMessage.remitente}`);
-                }
-                return { success: true, via: 'ai_reactivation' };
-            } else {
-                console.log(`⏸️ [WORKER] Chat en modo HANDOFF. La IA no responderá a ${cleanMessage.remitente}.`);
-                return { success: true, via: 'ignored_handoff' };
-            }
+            console.log(`⏸️ [WORKER] Chat en modo HANDOFF. La IA no responderá a ${cleanMessage.remitente}.`);
+            return { success: true, via: 'ignored_handoff' };
         }
 
     } catch (error) {

@@ -29,6 +29,9 @@ async function sendWhatsAppMessage(recipientId, text, phoneId, accessToken) {
         phoneId = creds.phoneId;
         accessToken = creds.accessToken;
         if (!phoneId || !accessToken) throw new Error("Faltan credenciales de WhatsApp");
+        if (accessToken.startsWith('mock_') || accessToken.startsWith('sim_')) {
+            return `sim_msg_${Date.now()}`;
+        }
         // Utilizamos la versión 20.0 de la API (puedes ajustarla según necesites)
         const url = `https://graph.facebook.com/v20.0/${phoneId}/messages`;
 
@@ -73,6 +76,9 @@ async function sendWhatsAppInteractiveList(recipientId, { headerText, bodyText, 
         phoneId = creds.phoneId;
         accessToken = creds.accessToken;
         if (!phoneId || !accessToken) throw new Error("Faltan credenciales de WhatsApp");
+        if (accessToken.startsWith('mock_') || accessToken.startsWith('sim_')) {
+            return `sim_list_${Date.now()}`;
+        }
         const url = `https://graph.facebook.com/v20.0/${phoneId}/messages`;
 
         const headers = {

@@ -642,17 +642,18 @@ async function actualizarEstadoMensaje(metaId, estado) {
 }
 
 /**
- * Obtiene el historial de los últimos mensajes de un contacto para dar contexto a la IA.
+ * Obtiene el historial de los últimos mensajes de un contacto para dar contexto a la IA y flujos.
+ * Incluye mensajes de texto, plantillas salientes e interactivos.
  */
 async function obtenerHistorialMensajes(contactoId, limite = 10) {
     if (!pool) return [];
     
     // Obtenemos los últimos N mensajes ordenados por ID descendente
     const [rows] = await pool.query(`
-        SELECT direccion, contenido 
+        SELECT id, direccion, tipo, contenido, creado_en 
         FROM mensajes 
         WHERE contacto_id = ? 
-          AND tipo = 'text' 
+          AND tipo IN ('text', 'template', 'interactive')
           AND contenido IS NOT NULL 
         ORDER BY id DESC 
         LIMIT ?

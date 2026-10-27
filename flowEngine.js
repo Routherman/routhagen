@@ -26,12 +26,79 @@ async function handleFlowEngine(dbContacto, cleanMessage, empresa, accessToken, 
     let activeFlowId = dbContacto.flujo_activo_id;
     let currentNodeId = dbContacto.nodo_actual_id;
 
+    // 1.1 Analizar los últimos mensajes (historial) para reconocer el contexto de la conversación (ej: plantillas enviadas)
+    let recentMessages = history || [];
+    if (!recentMessages || recentMessages.length < 2) {
+        recentMessages = await db.obtenerHistorialMensajes(dbContacto.id, 10);
+    }
+
+    // Buscar en el historial si el último mensaje saliente relevante fue una plantilla
+    const reversedMessages = [...recentMessages].reverse();
+    const lastOutgoingMsg = reversedMessages.find(m => m.direccion === 'SALIENTE') || null;
+
+    let templateContext = null; // 'asesores' | 'lideres' | 'inversores'
+
+    if (lastOutgoingMsg) {
+        const isTemplate = lastOutgoingMsg.tipo === 'template' || 
+                           (lastOutgoingMsg.contenido && lastOutgoingMsg.contenido.includes('[Plantilla:')) ||
+                           (lastOutgoingMsg.contenido && /reunion_informativa|bienvenida_asesores|convocatoria_lideres|simulador_y_propuesta|sumarte al equipo comercial|futuros asesores/i.test(lastOutgoingMsg.contenido));
+
+        if (isTemplate) {
+            const outContent = ((lastOutgoingMsg.contenido || '') + ' ' + (lastOutgoingMsg.tipo || '')).toLowerCase();
+
+            // Identificar si la plantilla enviada fue de Asesores
+            if (
+                outContent.includes('bienvenida_asesores_colaboratium') ||
+                outContent.includes('reunion_informativa_asesores') ||
+                outContent.includes('asesor') ||
+                outContent.includes('asesores') ||
+                outContent.includes('equipo comercial') ||
+                outContent.includes('futuros asesores') ||
+                outContent.includes('propuesta de trabajo')
+            ) {
+                templateContext = 'asesores';
+            } 
+            // Identificar si la plantilla enviada fue de Líderes
+            else if (
+                outContent.includes('convocatoria_lideres_de_equipo') ||
+                outContent.includes('lider') ||
+                outContent.includes('lideres') ||
+                outContent.includes('equipo de trabajo') ||
+                outContent.includes('broker')
+            ) {
+                templateContext = 'lideres';
+            }
+            // Identificar si la plantilla enviada fue de Inversores
+            else if (
+                outContent.includes('simulador_y_propuesta_inversores') ||
+                outContent.includes('inversor') ||
+                outContent.includes('inversores') ||
+                outContent.includes('rendimiento') ||
+                outContent.includes('simulador')
+            ) {
+                templateContext = 'inversores';
+            }
+        }
+    }
+
+    if (templateContext) {
+        console.log(`[Flow] Contexto detectado desde los últimos mensajes (Plantilla): "${templateContext.toUpperCase()}"`);
+    }
+
     // 2. Verificar si el mensaje coincide con alguna palabra clave de flujo (priorizando la coincidencia más específica/larga)
     let matchedFlow = null;
     let longestMatchLen = 0;
 
     for (const f of flujosActivos) {
         if (!f.trigger_keyword) continue;
+
+        // Si se envió una plantilla previamente (templateContext activo), no permitir que las palabras genéricas de saludo
+        // del Flujo Maestro de Bienvenida ("hola", "buenas", "buenas tardes") secuestren la respuesta al template.
+        const isMasterMenu = f.nombre.toLowerCase().includes('bienvenida') || f.nombre.toLowerCase().includes('maestro');
+        if (templateContext && isMasterMenu) {
+            continue;
+        }
+
         const keywords = f.trigger_keyword.toLowerCase().split(',').map(k => k.trim()).filter(Boolean);
         const cleanUserText = userText.replace(/^[¡!¿?\s]+|[¡!¿?\s.,]+$/g, '');
 
@@ -72,12 +139,50 @@ async function handleFlowEngine(dbContacto, cleanMessage, empresa, accessToken, 
         }
     }
 
-    // Fallback inteligente para saludos si ningún flujo específico fue capturado
-    if (!matchedFlow && (!activeFlowId || activeFlowId === null)) {
-        const greetings = ['hola', 'buenas', 'buen dia', 'buen día', 'buenos dias', 'buenos días', 'buenas tardes', 'buenas noches', 'que tal', 'saludos', 'como estás', 'como estas', 'inicio', 'empezar', 'menu'];
+    // 2.1 Si se envió previamente una plantilla y el usuario responde, activar el flujo correspondiente según el contexto reconocido
+    if (!matchedFlow) {
         const cleanUser = userText.replace(/^[¡!¿?\s]+|[¡!¿?\s.,]+$/g, '');
-        const isGreeting = greetings.some(g => userText === g || cleanUser === g || userText.startsWith(g) || cleanUser.startsWith(g));
-        if (isGreeting) {
+        const isGreeting = ['hola', 'buenas', 'buen dia', 'buen día', 'buenos dias', 'buenos días', 'buenas tardes', 'buenas noches', 'que tal', 'saludos', 'como estás', 'como estas', 'inicio', 'empezar', 'menu'].some(g => userText === g || cleanUser === g || userText.startsWith(g) || cleanUser.startsWith(g));
+        const isAffirmativeOrInterested = /^(s[ií]|si por favor|si claro|me interesa|quiero|quiero participar|quiero sumarme|contame|contame mas|info|informacion|cuando es|a que hora|donde es|confirmar|confirmo|dale|ok|de que se trata|estoy interesado|buenas me interesa|hola me interesa|estoy disponible)\b/i.test(userText);
+
+        if (templateContext === 'asesores') {
+            const flowAsesor = flujosActivos.find(f => 
+                f.id === 12 || 
+                f.nombre.toLowerCase().includes('asesor') || 
+                (f.trigger_keyword && f.trigger_keyword.toLowerCase().includes('asesor'))
+            );
+            if (flowAsesor) {
+                matchedFlow = flowAsesor;
+                console.log(`[Flow] Contexto ASESORES detectado desde la plantilla enviada. Asignando Flujo de Asesor: ${matchedFlow.nombre}`);
+                await db.actualizarAsignacionContacto(dbContacto.id, 'Asesores');
+                dbContacto.rol_asignado = 'Asesores';
+            }
+        } else if (templateContext === 'lideres') {
+            const flowLider = flujosActivos.find(f => 
+                f.id === 14 || 
+                f.nombre.toLowerCase().includes('lider') || 
+                (f.trigger_keyword && f.trigger_keyword.toLowerCase().includes('lider'))
+            );
+            if (flowLider) {
+                matchedFlow = flowLider;
+                console.log(`[Flow] Contexto LÍDERES detectado desde la plantilla enviada. Asignando Flujo de Líder: ${matchedFlow.nombre}`);
+                await db.actualizarAsignacionContacto(dbContacto.id, 'Lideres');
+                dbContacto.rol_asignado = 'Lideres';
+            }
+        } else if (templateContext === 'inversores') {
+            const flowInversor = flujosActivos.find(f => 
+                f.id === 13 || 
+                f.nombre.toLowerCase().includes('inversor') || 
+                (f.trigger_keyword && f.trigger_keyword.toLowerCase().includes('inversor'))
+            );
+            if (flowInversor) {
+                matchedFlow = flowInversor;
+                console.log(`[Flow] Contexto INVERSORES detectado desde la plantilla enviada. Asignando Flujo de Inversor: ${matchedFlow.nombre}`);
+                await db.actualizarAsignacionContacto(dbContacto.id, 'Inversores');
+                dbContacto.rol_asignado = 'Inversores';
+            }
+        } else if (isGreeting) {
+            // Fallback genérico para saludos solo si no hubo plantilla contextual previa
             const welcomeFlow = flujosActivos.find(f => 
                 f.nombre.toLowerCase().includes('bienvenida') || 
                 f.nombre.toLowerCase().includes('maestro') || 
@@ -92,7 +197,7 @@ async function handleFlowEngine(dbContacto, cleanMessage, empresa, accessToken, 
 
     let justStartedFlow = false;
     if (matchedFlow && (!activeFlowId || matchedFlow.id !== activeFlowId)) {
-        console.log(`[Flow] ¡Palabra clave interceptada! Iniciando flujo: ${matchedFlow.nombre}`);
+        console.log(`[Flow] ¡Palabra clave/Contexto interceptado! Iniciando flujo: ${matchedFlow.nombre}`);
         activeFlowId = matchedFlow.id;
         justStartedFlow = true;
         
@@ -556,6 +661,43 @@ async function handleFlowEngine(dbContacto, cleanMessage, empresa, accessToken, 
                     await db.guardarMensaje(dbContacto.id, outMetaId, 'SALIENTE', 'text', question);
                 }
             } else if (isCalendarNode) {
+                const emailMatch = cleanMessage.contenido?.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/);
+                const slotChoiceMatch = cleanMessage.contenido?.match(/slot_([1-6])|\b([1-6])\b|opci[oó]n\s*([1-6])/i);
+                
+                // Si el mensaje entrante ya contiene un correo electrónico para agendar directo
+                if (emailMatch) {
+                    const detectedEmail = emailMatch[0];
+                    const slotChoice = slotChoiceMatch ? (slotChoiceMatch[1] || slotChoiceMatch[2] || slotChoiceMatch[3]) : '1';
+                    let detectedName = cleanMessage.contenido
+                        .replace(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g, '')
+                        .replace(/slot_[1-6]|[1-6]/gi, '')
+                        .replace(/^(mi nombre es|soy|nombre:)\s*/i, '')
+                        .trim();
+                    if (!detectedName || detectedName.length < 2) detectedName = dbContacto.nombre || 'Asesor Candidato';
+
+                    try {
+                        const { processBooking } = require('./googleCalendarService');
+                        const bookingRes = await processBooking({
+                            slotChoice,
+                            customerName: detectedName,
+                            customerEmail: detectedEmail,
+                            customerPhone: cleanMessage.identificador.valor,
+                            codigoEmpresa,
+                            category: 'asesores'
+                        });
+
+                        if (bookingRes && bookingRes.whatsappResponse) {
+                            const outMetaId = await sendWhatsAppMessage(cleanMessage.identificador.valor, bookingRes.whatsappResponse, phoneId, accessToken);
+                            await db.guardarMensaje(dbContacto.id, outMetaId, 'SALIENTE', 'text', bookingRes.whatsappResponse);
+                            await clearFlowState(dbContacto.id);
+                            executing = false;
+                            continue;
+                        }
+                    } catch (bookingErr) {
+                        console.error('[Flow] Error en processBooking directo en captura:', bookingErr.message);
+                    }
+                }
+
                 const { sendWhatsAppInteractiveList } = require('./whatsappService');
                 const { formatInteractiveCalendarList, formatCalendarOptionsText } = require('./googleCalendarService');
                 
