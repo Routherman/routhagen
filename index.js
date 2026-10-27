@@ -1472,7 +1472,16 @@ app.delete('/api/empresas/:codigo/flujos/:id', async (req, res) => {
 
 app.get('/api/empresas/:codigo/tickets', async (req, res) => {
     try {
-        const tickets = await db.obtenerTickets(req.params.codigo, req.query.status);
+        let tickets = await db.obtenerTickets(req.params.codigo, req.query.status);
+        const role = (req.query.role || req.query.user_role || '').toLowerCase();
+        const userId = req.query.user_id;
+        if (role === 'soporte') {
+            tickets = tickets.filter(t => 
+                (t.category || '').toLowerCase() === 'soporte' || 
+                (t.assigned_to_name || '').toLowerCase().includes('soporte') ||
+                (userId && t.assigned_to_user_id === userId)
+            );
+        }
         res.json({ success: true, tickets });
     } catch (error) {
         console.error('Error obteniendo tickets:', error);
@@ -1854,11 +1863,12 @@ app.delete('/api/empresas/:codigo/crm/contacts/:id', async (req, res) => {
 // Derivar contacto a Team / Staff
 app.post('/api/empresas/:codigo/contacts/:id/assign-team', async (req, res) => {
     try {
-        const { rol_asignado, usuario_asignado_id, usuario_nombre, updated_by } = req.body;
+        const { rol_asignado, usuario_asignado_id, usuario_nombre, derivado_desde, resumen_necesidad, updated_by } = req.body;
         const codigoEmpresa = req.params.codigo;
         const contactId = req.params.id;
 
-        const success = await db.derivarContactoTeam(contactId, codigoEmpresa, rol_asignado, usuario_asignado_id);
+        const fromSector = derivado_desde || updated_by?.role || updated_by?.name || 'Soporte';
+        const success = await db.derivarContactoTeam(contactId, codigoEmpresa, rol_asignado, usuario_asignado_id, fromSector, resumen_necesidad);
         if (success) {
             await db.registrarAuditLog({
                 codigo_empresa: codigoEmpresa,
@@ -1868,7 +1878,7 @@ app.post('/api/empresas/:codigo/contacts/:id/assign-team', async (req, res) => {
                 accion: 'contacto_derivado_team',
                 entidad: 'contacto',
                 entidad_id: contactId.toString(),
-                detalles: `Contacto derivado a Team: "${rol_asignado}" ${usuario_nombre ? `(Asignado a: ${usuario_nombre})` : ''}`,
+                detalles: `Contacto derivado a Team: "${rol_asignado}" ${usuario_nombre ? `(Asignado a: ${usuario_nombre})` : ''} - Necesidad: ${resumen_necesidad || 'N/A'}`,
                 google_scope: 'colaboratium@gmail.com'
             });
             res.json({ success: true });

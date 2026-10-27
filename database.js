@@ -385,6 +385,12 @@ async function initDB() {
         try {
             await pool.query("ALTER TABLE contactos ADD COLUMN asesor_id INT DEFAULT NULL");
         } catch(e) {}
+        try {
+            await pool.query("ALTER TABLE contactos ADD COLUMN derivado_desde VARCHAR(255) DEFAULT NULL");
+        } catch(e) {}
+        try {
+            await pool.query("ALTER TABLE contactos ADD COLUMN resumen_necesidad TEXT DEFAULT NULL");
+        } catch(e) {}
 
         // Enriquecer datos de Juan Ramón Valle (damduff@gmail.com) para su Ficha Catastral oficial
         try {
@@ -522,9 +528,41 @@ async function upsertContacto(telefono, nombre, codigo_empresa, email = null) {
 /**
  * Cambia el estado del bot para un contacto (ej. a HANDOFF)
  */
-async function actualizarEstadoBot(contactoId, estado) {
+async function actualizarEstadoBot(contactoId, estado, motivo = 'Derivación por IA a operador humano') {
     if (!pool) return;
     await pool.query('UPDATE contactos SET estado_bot = ? WHERE id = ?', [estado, contactoId]);
+    if (estado === 'HANDOFF') {
+        try {
+            const [rows] = await pool.query('SELECT * FROM contactos WHERE id = ?', [contactoId]);
+            const c = rows[0];
+            if (c) {
+                const [lastMsgs] = await pool.query(
+                    'SELECT contenido FROM mensajes WHERE contacto_id = ? AND direccion = "ENTRANTE" ORDER BY id DESC LIMIT 1',
+                    [contactoId]
+                );
+                const lastMsg = lastMsgs[0]?.contenido || motivo;
+                await pool.query(
+                    'UPDATE contactos SET estado_resolucion = "PENDIENTE", nota_pendiente = ?, derivado_desde = "Bot IA (Asistente)", resumen_necesidad = ? WHERE id = ?',
+                    [motivo, lastMsg, contactoId]
+                );
+                await crearTicket(
+                    c.codigo_empresa,
+                    c.id,
+                    c.telefono,
+                    c.nombre || 'Contacto WhatsApp',
+                    'open',
+                    `Derivación IA: ${c.nombre || c.telefono} - ${lastMsg.substring(0, 80)}`,
+                    c.usuario_asignado_id || null,
+                    c.rol_asignado || 'Soporte',
+                    'alta',
+                    c.rol_asignado || 'General',
+                    `Derivado automáticamente por IA al solicitar atención humana. Último mensaje: "${lastMsg}"`
+                );
+            }
+        } catch (e) {
+            console.error('Error auto-creando ticket en HANDOFF:', e);
+        }
+    }
 }
 
 /**
@@ -769,14 +807,38 @@ async function unirseEmpresa(clerkId, codigo) {
     const [empresas] = await pool.query('SELECT * FROM empresas WHERE codigo = ?', [codigo]);
     if (empresas.length === 0) return false; // La empresa no existe
     
-    // Obtener el rol 'main'
-    const [roles] = await pool.query('SELECT id FROM roles WHERE codigo_empresa = ? AND nombre = ?', [codigo, 'main']);
-    let mainRoleId = null;
-    if (roles.length > 0) {
-        mainRoleId = roles[0].id;
+    // Obtener los datos del usuario que se está uniendo
+    const [users] = await pool.query('SELECT * FROM users WHERE clerk_id = ?', [clerkId]);
+    const user = users[0];
+    const userEmail = (user?.email || '').toLowerCase().trim();
+    const adminEmails = ['colaboratium@gmail.com', 'publicidadgloballoan@gmail.com', 'publididadgloballoan@gmail.com'];
+
+    let targetRoleId = null;
+    if (adminEmails.includes(userEmail)) {
+        const [masterRoles] = await pool.query('SELECT id FROM roles WHERE codigo_empresa = ? AND nombre = "master"', [codigo]);
+        if (masterRoles.length > 0) targetRoleId = masterRoles[0].id;
     }
+
+    // Actualizar usuario: si NO es admin, queda SIN ROL (targetRoleId = null)
+    await pool.query('UPDATE users SET codigo_empresa = ?, rol_id = ? WHERE clerk_id = ?', [codigo, targetRoleId, clerkId]);
     
-    await pool.query('UPDATE users SET codigo_empresa = ?, rol_id = ? WHERE clerk_id = ?', [codigo, mainRoleId, clerkId]);
+    // Si NO es admin, generar automáticamente un ticket en Helpdesk para asignación de rol
+    if (!adminEmails.includes(userEmail)) {
+        const userName = `${user?.first_name || ''} ${user?.last_name || ''}`.trim() || userEmail;
+        await crearTicket(
+            codigo,
+            null, // contacto_id
+            userEmail, // customer_number
+            userName, // customer_name
+            'open', // status
+            `Asignación de Rol para nuevo usuario: ${userName} (${userEmail})`, // summary
+            null, // assigned_to_user_id
+            'Master / Admin', // assigned_to_name
+            'alta', // priority
+            'Asignación de Roles', // category
+            `Nuevo usuario registrado en la empresa ${codigo}. Por favor asignar rol correspondiente en la sección Equipo & Roles.`
+        );
+    }
     return true;
 }
 
@@ -1195,12 +1257,35 @@ async function actualizarContactoCRM(id, codigo_empresa, data) {
     return true;
 }
 
-async function derivarContactoTeam(id, codigo_empresa, rol_asignado, usuario_asignado_id = null) {
+async function derivarContactoTeam(id, codigo_empresa, rol_asignado, usuario_asignado_id = null, derivado_desde = null, resumen_necesidad = null) {
     if (!pool) return false;
     await pool.query(
-        'UPDATE contactos SET rol_asignado = ?, usuario_asignado_id = ? WHERE id = ? AND codigo_empresa = ?',
-        [rol_asignado, usuario_asignado_id, id, codigo_empresa]
+        'UPDATE contactos SET rol_asignado = ?, usuario_asignado_id = ?, estado_resolucion = "PENDIENTE", nota_pendiente = ?, derivado_desde = ?, resumen_necesidad = ? WHERE id = ? AND codigo_empresa = ?',
+        [rol_asignado, usuario_asignado_id, `Derivado a ${rol_asignado}`, derivado_desde || 'Sector Anterior', resumen_necesidad, id, codigo_empresa]
     );
+
+    // Obtener datos del contacto para crear el ticket en Helpdesk
+    try {
+        const [rows] = await pool.query('SELECT * FROM contactos WHERE id = ? AND codigo_empresa = ?', [id, codigo_empresa]);
+        const c = rows[0];
+        if (c) {
+            await crearTicket(
+                codigo_empresa,
+                c.id,
+                c.telefono,
+                c.nombre || 'Contacto',
+                'open',
+                `Derivación a sector ${rol_asignado}: ${resumen_necesidad || c.nombre || c.telefono}`,
+                usuario_asignado_id || null,
+                rol_asignado,
+                'alta',
+                rol_asignado,
+                `Derivado desde: ${derivado_desde || 'Soporte'}. Resumen: ${resumen_necesidad || 'Atención requerida'}`
+            );
+        }
+    } catch (e) {
+        console.error('Error auto-creando ticket en derivarContactoTeam:', e);
+    }
     return true;
 }
 
