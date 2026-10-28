@@ -171,7 +171,7 @@ function parseStatus(statusData) {
 // ---------------------------------------------------------
 
 // Endpoint GET para verificar el Webhook (Requerido por Meta)
-app.get('/api/messages/whatsapp/receive', async (req, res) => {
+app.get(['/api/messages/whatsapp/receive', '/webhook'], async (req, res) => {
     const mode = req.query['hub.mode'];
     const token = req.query['hub.verify_token'];
     const challenge = req.query['hub.challenge'];
@@ -200,7 +200,7 @@ app.get('/api/messages/whatsapp/receive', async (req, res) => {
 });
 
 // Endpoint POST para recibir los eventos de WhatsApp
-app.post('/api/messages/whatsapp/receive', async (req, res) => {
+app.post(['/api/messages/whatsapp/receive', '/webhook'], async (req, res) => {
     try {
         const body = req.body;
 
