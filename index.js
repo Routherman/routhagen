@@ -2127,6 +2127,65 @@ app.post('/api/empresas/:codigo/audit-logs', async (req, res) => {
     }
 });
 
+// Archivar ticket (para que no afecte pendientes ni métricas operativas)
+app.post('/api/empresas/:codigo/tickets/:id/archive', async (req, res) => {
+    try {
+        const { usuario_id, usuario_nombre, usuario_email, rol } = req.body;
+        const ticketAntes = await db.obtenerTicket(req.params.id, req.params.codigo);
+        const success = await db.actualizarTicket(req.params.id, req.params.codigo, {
+            status: 'archived'
+        });
+        if (success) {
+            await db.registrarAuditLog({
+                codigo_empresa: req.params.codigo,
+                usuario_id,
+                usuario_nombre,
+                usuario_email,
+                rol,
+                accion: 'ARCHIVAR_TICKET',
+                entidad: 'tickets',
+                entidad_id: String(req.params.id),
+                detalles: `Ticket #${req.params.id} archivado por ${usuario_nombre || 'Operador'} (excluido de pendientes).`
+            });
+            res.json({ success: true, message: 'Ticket archivado con éxito' });
+        } else {
+            res.status(404).json({ success: false, error: 'Ticket no encontrado' });
+        }
+    } catch (error) {
+        console.error('Error archivando ticket:', error);
+        res.status(500).json({ success: false, error: 'Error archivando ticket' });
+    }
+});
+
+// Desarchivar ticket (restaurar a estado abierto)
+app.post('/api/empresas/:codigo/tickets/:id/unarchive', async (req, res) => {
+    try {
+        const { usuario_id, usuario_nombre, usuario_email, rol } = req.body;
+        const success = await db.actualizarTicket(req.params.id, req.params.codigo, {
+            status: 'open'
+        });
+        if (success) {
+            await db.registrarAuditLog({
+                codigo_empresa: req.params.codigo,
+                usuario_id,
+                usuario_nombre,
+                usuario_email,
+                rol,
+                accion: 'DESARCHIVAR_TICKET',
+                entidad: 'tickets',
+                entidad_id: String(req.params.id),
+                detalles: `Ticket #${req.params.id} restaurado a estado abierto por ${usuario_nombre || 'Operador'}.`
+            });
+            res.json({ success: true, message: 'Ticket restaurado con éxito' });
+        } else {
+            res.status(404).json({ success: false, error: 'Ticket no encontrado' });
+        }
+    } catch (error) {
+        console.error('Error desarchivando ticket:', error);
+        res.status(500).json({ success: false, error: 'Error desarchivando ticket' });
+    }
+});
+
 // Resumen automático de conversación con IA para un ticket
 app.post('/api/empresas/:codigo/tickets/summarize', async (req, res) => {
     try {
