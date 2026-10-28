@@ -185,8 +185,177 @@ async function sendReplyEmail({ to, subject, body, inReplyTo }) {
     return { success: true, messageId: info.messageId };
 }
 
+/**
+ * Monitor Inteligente de Mails: Detecta respuestas de candidatos en Gmail,
+ * agenda automáticamente su lugar en el webinar, genera tickets en Helpdesk,
+ * envía el correo de confirmación con el link de Google Meet y suma las conversiones a la campaña.
+ */
+async function monitorAndProcessIncomingReplies(codigoEmpresa = 'KRZMJI') {
+    const { processBooking, getAvailableWebinarSlots } = require('./googleCalendarService');
+    const db = require('./database');
+
+    const results = {
+        checked: 0,
+        confirmed: 0,
+        consultas: 0,
+        tickets: []
+    };
+
+    try {
+        const inboxData = await getInboxEmails(20, codigoEmpresa);
+        if (!inboxData || !inboxData.emails || inboxData.emails.length === 0) {
+            return { success: true, ...results, message: 'No hay correos recientes en la bandeja' };
+        }
+
+        for (const msg of inboxData.emails) {
+            results.checked++;
+            const fromEmail = (msg.fromEmail || '').toLowerCase().trim();
+            const isSystemEmail = !fromEmail ||
+                fromEmail.includes('colaboratium@gmail.com') ||
+                fromEmail.includes('mailer-daemon') ||
+                fromEmail.includes('noreply') ||
+                fromEmail.includes('no-reply') ||
+                fromEmail.includes('notification') ||
+                fromEmail.includes('bounce') ||
+                fromEmail.endsWith('@google.com') ||
+                fromEmail.endsWith('@youtube.com') ||
+                fromEmail.endsWith('@facebookmail.com');
+
+            if (isSystemEmail) {
+                continue;
+            }
+
+            const msgIdentifier = msg.messageId || `uid_${msg.uid}_${fromEmail}`;
+
+            // 1. Verificar si ya fue procesado previamente
+            if (db && db.pool) {
+                const [procRows] = await db.pool.query(
+                    "SELECT id FROM email_inbox_processed WHERE message_id = ? LIMIT 1",
+                    [msgIdentifier]
+                );
+                if (procRows && procRows.length > 0) {
+                    continue; // Ya procesado
+                }
+            }
+
+            // 2. Descargar el cuerpo completo del correo
+            let fullEmail = null;
+            try {
+                const bRes = await getEmailBody(msg.uid);
+                if (bRes.success) fullEmail = bRes.email;
+            } catch (errBody) {
+                console.warn(`No se pudo descargar cuerpo para UID ${msg.uid}:`, errBody.message);
+            }
+
+            const subject = (msg.subject || fullEmail?.subject || '').trim();
+            const textContent = (fullEmail?.text || fullEmail?.html?.replace(/<[^>]*>?/gm, '') || '').trim();
+            const combinedText = `${subject} ${textContent}`.toLowerCase();
+
+            // 3. Buscar datos del contacto en el CRM
+            let contact = msg.contact;
+            if (!contact && db && db.pool) {
+                const [cRows] = await db.pool.query(
+                    "SELECT id, nombre, email, telefono, grupo, rol_asignado FROM contactos WHERE LOWER(email) = ? AND codigo_empresa = ? LIMIT 1",
+                    [fromEmail, codigoEmpresa]
+                );
+                if (cRows && cRows.length > 0) contact = cRows[0];
+            }
+
+            const customerName = contact?.nombre || msg.fromName || fromEmail.split('@')[0] || 'Candidato Asesor';
+            const customerPhone = contact?.telefono || '';
+
+            // 4. Analizar si es una confirmación de asistencia o consulta de webinar
+            const isAffirmative = /confirm|asist|reserv|lugar|quiero|anot|opcion|opción|martes|mi[eé]rcoles|jueves|viernes|\bs[ií]\b/i.test(combinedText);
+            const isWebinarContext = /webinar|capacitaci[oó]n|reuni[oó]n|asesor|encuentro|meet|horario|cu[aá]ndo/i.test(combinedText);
+
+            if (isAffirmative || isWebinarContext) {
+                // Determinar el turno elegido
+                let slotChoice = 'slot_1';
+                if (/opci[oó]n\s*2|16:15|4:15|tarde/i.test(combinedText)) {
+                    slotChoice = 'slot_2';
+                } else if (/opci[oó]n\s*3|mi[eé]rcoles/i.test(combinedText)) {
+                    slotChoice = 'slot_3';
+                } else if (/opci[oó]n\s*4|l[ií]der/i.test(combinedText)) {
+                    slotChoice = 'slot_4';
+                }
+
+                console.log(`\n📬 [EMAIL MONITOR] Procesando respuesta de ${customerName} (${fromEmail}) -> Slot: ${slotChoice}...`);
+
+                // Ejecutar inscripción automática y despacho de confirmación con Google Meet
+                let bookingResult = null;
+                try {
+                    bookingResult = await processBooking({
+                        slotChoice,
+                        customerName,
+                        customerEmail: fromEmail,
+                        customerPhone,
+                        codigoEmpresa,
+                        category: 'asesores'
+                    });
+                } catch (bErr) {
+                    console.error("Error en processBooking para email monitor:", bErr.message);
+                }
+
+                const ticketId = bookingResult?.ticketId || null;
+                results.confirmed++;
+                if (ticketId) results.tickets.push(ticketId);
+
+                // 5. Incrementar conversiones en la campaña de email más reciente
+                if (db && db.pool) {
+                    try {
+                        await db.pool.query(
+                            "UPDATE campanas SET conversiones = COALESCE(conversiones, 0) + 1, respondidos = COALESCE(respondidos, 0) + 1 WHERE codigo_empresa = ? AND (tipo = 'email' OR plantilla_id IS NOT NULL) ORDER BY id DESC LIMIT 1",
+                            [codigoEmpresa]
+                        );
+                        console.log(`📈 [CAMPAIGN] Conversión incrementada con éxito para ${customerName}.`);
+                    } catch (cErr) {
+                        console.warn("No se pudo actualizar contador de conversiones de campaña:", cErr.message);
+                    }
+
+                    // Registrar mensaje procesado
+                    try {
+                        await db.pool.query(
+                            "INSERT INTO email_inbox_processed (message_id, from_email, subject, intent, ticket_id) VALUES (?, ?, ?, 'CONFIRMACION_WEBINAR', ?)",
+                            [msgIdentifier, fromEmail, subject, ticketId]
+                        );
+                    } catch (e) {}
+                }
+            } else {
+                // Si es otro tipo de correo entrante de un contacto de la empresa, registrar ticket en helpdesk
+                if (db && db.pool && contact) {
+                    try {
+                        const ticketId = await db.crearTicket(
+                            codigoEmpresa,
+                            contact.id,
+                            customerPhone || fromEmail,
+                            customerName,
+                            'open',
+                            `Consulta por Correo de ${customerName}: ${subject} - "${textContent.substring(0, 140)}..."`,
+                            null,
+                            'Soporte'
+                        );
+                        results.consultas++;
+                        results.tickets.push(ticketId);
+
+                        await db.pool.query(
+                            "INSERT INTO email_inbox_processed (message_id, from_email, subject, intent, ticket_id) VALUES (?, ?, ?, 'CONSULTA_GENERAL', ?)",
+                            [msgIdentifier, fromEmail, subject, ticketId]
+                        );
+                    } catch (e) {}
+                }
+            }
+        }
+
+        return { success: true, ...results };
+    } catch (error) {
+        console.error("Error en monitorAndProcessIncomingReplies:", error);
+        return { success: false, error: error.message };
+    }
+}
+
 module.exports = {
     getInboxEmails,
     getEmailBody,
-    sendReplyEmail
+    sendReplyEmail,
+    monitorAndProcessIncomingReplies
 };

@@ -510,7 +510,7 @@ async function sendGenericEmail({ to, subject, html, text, attachments = [] }) {
  * Despacha una campaña masiva de emails desde colaboratium@gmail.com
  * Simula comportamiento humano (2 a 3 emails por minuto) con pausas aleatorias para evitar bloqueos de Gmail.
  */
-async function sendMassEmailCampaign({ codigoEmpresa, campanaId, contacts = [], subject, htmlContent, attachments = [], humanPacing = true, startIndex = 0 }) {
+async function sendMassEmailCampaign({ codigoEmpresa, campanaId, contacts = [], subject, htmlContent, attachments = [], humanPacing = true, startIndex = 0, selectedSlotIds = [] }) {
     const db = require('./database');
     let enviados = 0;
     let entregados = 0;
@@ -539,14 +539,58 @@ async function sendMassEmailCampaign({ codigoEmpresa, campanaId, contacts = [], 
     let calendarSlots = [];
     try {
         calendarSlots = await getAvailableWebinarSlots(codigoEmpresa, 'asesores');
+        if (selectedSlotIds && selectedSlotIds.length > 0) {
+            const filtered = calendarSlots.filter(s => selectedSlotIds.includes(s.id) || selectedSlotIds.includes(String(s.id)) || selectedSlotIds.includes(Number(s.id)));
+            if (filtered.length > 0) {
+                calendarSlots = filtered;
+            }
+        }
     } catch (e) {
         console.warn('No se pudieron obtener slots para variables de email:', e.message);
     }
     const defaultSlot = (calendarSlots && calendarSlots.length > 0) ? calendarSlots[0] : null;
-    const fechaSlot = defaultSlot ? defaultSlot.fechaStr : 'Jueves, 29 de octubre';
+    const fechaSlot = defaultSlot ? defaultSlot.fechaStr : 'Martes, 3 de noviembre';
     const horaSlot = defaultSlot ? (defaultSlot.horarioStr ? defaultSlot.horarioStr.split(' a ')[0] : '13:00 hs') : '13:00 hs';
     const duracionSlot = '1 hora y media (90 minutos)';
     const botWhatsApp = '5491173722708';
+
+    // Función auxiliar para construir el bloque HTML dinámico de turnos con botones directos
+    const buildSlotsHtml = (cSlots, cNombre, cEmail, cTel) => {
+        const slotsToUse = (cSlots && cSlots.length > 0) ? cSlots : [
+            { id: 1, fechaStr: 'Martes, 3 de noviembre', horarioStr: '01:00 p. m. a 02:30 p. m. hs', modalidad: 'VIRTUAL' },
+            { id: 2, fechaStr: 'Martes, 3 de noviembre', horarioStr: '04:15 p. m. a 05:45 p. m. hs', modalidad: 'VIRTUAL' }
+        ];
+
+        const listItems = slotsToUse.map((s, idx) => {
+            const optNum = idx + 1;
+            const sub = encodeURIComponent(`Confirmación Asistencia Webinar Asesores (Opción ${optNum}) - ${cNombre}`);
+            const bod = encodeURIComponent(
+                `Hola Colaboratium,\n\nConfirmo mi asistencia para la Opción ${optNum} (${s.fechaStr} de ${s.horarioStr}).\n\nMis datos:\n- Nombre: ${cNombre}\n- Email: ${cEmail}\n- Teléfono: ${cTel}\n\nQuedo a la espera del enlace de Google Meet.\n¡Muchas gracias!`
+            );
+            const mailtoBtn = `mailto:colaboratium@gmail.com?subject=${sub}&body=${bod}`;
+            return `
+            <li style="margin-bottom: 10px; background: #ffffff; padding: 12px 14px; border-radius: 8px; border: 1px solid #e2e8f0; list-style-type: none;">
+              <div style="font-size: 13px; color: #1e293b; margin-bottom: 6px;">
+                <strong style="color: #0284c7;">Opción ${optNum}:</strong> <strong>${s.fechaStr}</strong> • <strong>${s.horarioStr}</strong> (Argentina) • Modalidad: <strong>${s.modalidad || 'VIRTUAL'}</strong>
+              </div>
+              <div style="margin-top: 6px;">
+                <a href="${mailtoBtn}" target="_blank" style="display: inline-block; background-color: #0284c7; color: #ffffff; text-decoration: none; padding: 6px 14px; border-radius: 6px; font-weight: 700; font-size: 11px; letter-spacing: 0.3px;">
+                  ✉️ Confirmar Opción ${optNum} (${s.horarioStr.split(' a ')[0]})
+                </a>
+              </div>
+            </li>`;
+        }).join('\n');
+
+        return `
+        <div style="background-color: #f8fafc; border-left: 4px solid #0284c7; padding: 16px; border-radius: 8px; margin: 22px 0;">
+          <h4 style="margin: 0 0 12px 0; color: #0369a1; font-size: 13px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.5px;">
+            📅 DETALLES DEL ENCUENTRO Y TURNOS DISPONIBLES:
+          </h4>
+          <ul style="margin: 0; padding-left: 0;">
+            ${listItems}
+          </ul>
+        </div>`;
+    };
 
     for (let i = startIndex; i < total; i++) {
         const contact = contacts[i];
@@ -566,7 +610,16 @@ async function sendMassEmailCampaign({ codigoEmpresa, campanaId, contacts = [], 
         const backendUrl = process.env.BACKEND_URL || 'http://localhost:8080';
         const enlaceBaja = `${backendUrl}/api/campanas/desuscribir?email=${encodeURIComponent(targetEmail)}&empresa=${encodeURIComponent(codigoEmpresa)}`;
 
-        const personalizedHtml = htmlContent
+        // Enlace de reserva por email con mailto estructurado
+        const mailtoSubject = encodeURIComponent(`Confirmar Asistencia Webinar Asesores - ${nombre}`);
+        const mailtoBody = encodeURIComponent(
+            `Hola Colaboratium,\n\nConfirmo mi asistencia y deseo RESERVAR MI LUGAR en la reunión de asesores comerciales.\n\nMis datos:\n- Nombre: ${nombre}\n- Email: ${targetEmail}\n- Teléfono: ${telefono}\n\nOpción de turno elegida: Opción 1 (${fechaSlot} ${horaSlot}) o la que consideren más conveniente.\n\nSaludos cordiales!`
+        );
+        const enlaceRegistro = `mailto:colaboratium@gmail.com?subject=${mailtoSubject}&body=${mailtoBody}`;
+
+        const dynamicSlotsHtml = buildSlotsHtml(calendarSlots, nombre, targetEmail, telefono);
+
+        let personalizedHtml = htmlContent
             .replace(/\{\{nombre\}\}/gi, nombre)
             .replace(/\{\{email\}\}/gi, targetEmail)
             .replace(/\{\{rol\}\}/gi, rol)
@@ -575,7 +628,18 @@ async function sendMassEmailCampaign({ codigoEmpresa, campanaId, contacts = [], 
             .replace(/\{\{enlacebaja\}\}/gi, enlaceBaja)
             .replace(/\{\{fecha\}\}/gi, fechaSlot)
             .replace(/\{\{hora\}\}/gi, horaSlot)
-            .replace(/\{\{duracion\}\}/gi, duracionSlot);
+            .replace(/\{\{duracion\}\}/gi, duracionSlot)
+            .replace(/\{\{detalles_encuentro\}\}/gi, dynamicSlotsHtml)
+            .replace(/\{\{detallesencuentro\}\}/gi, dynamicSlotsHtml)
+            .replace(/\{\{opciones_calendario\}\}/gi, dynamicSlotsHtml);
+
+        // Si el html original contenía fechas estáticas viejas (ej: 29 de octubre / 30 de octubre), reemplazarlas por el bloque dinámico
+        if (personalizedHtml.includes('29 de octubre') || personalizedHtml.includes('30 de octubre')) {
+            personalizedHtml = personalizedHtml.replace(
+                /<div style="background-color: #f8fafc; border-left: 4px solid #0284c7;[\s\S]*?<\/ul>\s*<\/div>/gi,
+                dynamicSlotsHtml
+            );
+        }
 
         const personalizedSubject = subject
             .replace(/\{\{nombre\}\}/gi, nombre)

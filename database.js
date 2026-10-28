@@ -1504,14 +1504,14 @@ async function eliminarMedio(id) {
     return true;
 }
 
-async function crearCampanaCompleta(codigoEmpresa, { nombre, tipo = 'whatsapp', plantilla_id = null, asunto_email = null, archivos_adjuntos = null, total_contactos = 0, estado = 'en_progreso', modo_envio = 'humano', contactos_json = null, spam_score = 95 }) {
+async function crearCampanaCompleta(codigoEmpresa, { nombre, tipo = 'whatsapp', plantilla_id = null, asunto_email = null, archivos_adjuntos = null, total_contactos = 0, estado = 'en_progreso', modo_envio = 'humano', contactos_json = null, spam_score = 95, rango_destinatarios = null }) {
     if (!pool) return null;
     const adjStr = archivos_adjuntos ? (typeof archivos_adjuntos === 'string' ? archivos_adjuntos : JSON.stringify(archivos_adjuntos)) : null;
     const contStr = contactos_json ? (typeof contactos_json === 'string' ? contactos_json : JSON.stringify(contactos_json)) : null;
     const [res] = await pool.query(`
-        INSERT INTO campanas (codigo_empresa, nombre, tipo, plantilla_id, asunto_email, archivos_adjuntos, total_contactos, estado, enviados, entregados, respondidos, modo_envio, contactos_json, spam_score, ultimo_indice_enviado)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 0, 0, ?, ?, ?, 0)
-    `, [codigoEmpresa, nombre, tipo, plantilla_id, asunto_email, adjStr, total_contactos, estado, modo_envio, contStr, spam_score]);
+        INSERT INTO campanas (codigo_empresa, nombre, tipo, plantilla_id, asunto_email, archivos_adjuntos, total_contactos, estado, enviados, entregados, respondidos, modo_envio, contactos_json, spam_score, ultimo_indice_enviado, rango_destinatarios)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 0, 0, ?, ?, ?, 0, ?)
+    `, [codigoEmpresa, nombre, tipo, plantilla_id, asunto_email, adjStr, total_contactos, estado, modo_envio, contStr, spam_score, rango_destinatarios]);
     return res.insertId;
 }
 

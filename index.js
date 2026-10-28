@@ -1187,7 +1187,7 @@ app.post('/api/empresas/:codigo/campanas/email/validate-merge', async (req, res)
 // 3. Test de Envío de 1 Clic / Compuerta de Prueba (robindarlington/mail-merge)
 app.post('/api/empresas/:codigo/campanas/email/test-send', async (req, res) => {
     try {
-        const { testEmail = 'damduff@gmail.com', subject, content, attachments = [] } = req.body;
+        const { testEmail = 'damduff@gmail.com', subject, content, attachments = [], selectedSlotIds = [] } = req.body;
         if (!subject || !content) {
             return res.status(400).json({ error: 'Asunto y contenido son obligatorios para la prueba' });
         }
@@ -1196,24 +1196,71 @@ app.post('/api/empresas/:codigo/campanas/email/test-send', async (req, res) => {
         let calendarSlots = [];
         try {
             calendarSlots = await getAvailableWebinarSlots(req.params.codigo, 'asesores');
+            if (selectedSlotIds && selectedSlotIds.length > 0) {
+                const filtered = calendarSlots.filter(s => selectedSlotIds.includes(s.id) || selectedSlotIds.includes(String(s.id)) || selectedSlotIds.includes(Number(s.id)));
+                if (filtered.length > 0) {
+                    calendarSlots = filtered;
+                }
+            }
         } catch (e) {}
         const defaultSlot = (calendarSlots && calendarSlots.length > 0) ? calendarSlots[0] : null;
-        const fechaSlot = defaultSlot ? defaultSlot.fechaStr : 'Jueves, 29 de octubre';
+        const fechaSlot = defaultSlot ? defaultSlot.fechaStr : 'Martes, 3 de noviembre';
         const horaSlot = defaultSlot ? (defaultSlot.horarioStr ? defaultSlot.horarioStr.split(' a ')[0] : '13:00 hs') : '13:00 hs';
         const duracionSlot = '1 hora y media (90 minutos)';
-        const botWhatsApp = '5491173722708';
         const backendUrl = process.env.BACKEND_URL || 'http://localhost:8080';
-        const enlaceRegistro = `https://wa.me/${botWhatsApp}?text=Hola%20Colaboratium,%20quiero%20confirmar%20mi%20asistencia%20y%20RESERVAR%20MI%20LUGAR%20EN%20LA%20REUNI%C3%93N%20de%20asesores`;
+
+        const sampleNombre = 'Damián (Prueba)';
+        const mailtoSub = encodeURIComponent(`Confirmar Asistencia Webinar Asesores - ${sampleNombre}`);
+        const mailtoBod = encodeURIComponent(
+            `Hola Colaboratium,\n\nConfirmo mi asistencia y deseo RESERVAR MI LUGAR en la reunión de asesores comerciales.\n\nMis datos:\n- Nombre: ${sampleNombre}\n- Email: ${testEmail}\n- Teléfono: +54 9 11 7372-2708\n\nOpción de turno elegida: Opción 1 (${fechaSlot} ${horaSlot}) o la que consideren más conveniente.\n\nSaludos cordiales!`
+        );
+        const enlaceRegistro = `mailto:colaboratium@gmail.com?subject=${mailtoSub}&body=${mailtoBod}`;
         const enlaceBaja = `${backendUrl}/api/campanas/desuscribir?email=${encodeURIComponent(testEmail)}&empresa=${encodeURIComponent(req.params.codigo)}`;
 
-        const personalizedHtml = `
+        // Bloque dinámico de turnos reales del calendario
+        const slotsToUse = (calendarSlots && calendarSlots.length > 0) ? calendarSlots.slice(0, 3) : [
+            { id: 1, fechaStr: 'Martes, 3 de noviembre', horarioStr: '01:00 p. m. a 02:30 p. m. hs', modalidad: 'VIRTUAL' },
+            { id: 2, fechaStr: 'Martes, 3 de noviembre', horarioStr: '04:15 p. m. a 05:45 p. m. hs', modalidad: 'VIRTUAL' }
+        ];
+
+        const listItems = slotsToUse.map((s, idx) => {
+            const optNum = idx + 1;
+            const sub = encodeURIComponent(`Confirmación Asistencia Webinar Asesores (Opción ${optNum}) - ${sampleNombre}`);
+            const bod = encodeURIComponent(
+                `Hola Colaboratium,\n\nConfirmo mi asistencia para la Opción ${optNum} (${s.fechaStr} de ${s.horarioStr}).\n\nMis datos:\n- Nombre: ${sampleNombre}\n- Email: ${testEmail}\n- Teléfono: +54 9 11 7372-2708\n\nQuedo a la espera del enlace de Google Meet.\n¡Muchas gracias!`
+            );
+            const mailtoBtn = `mailto:colaboratium@gmail.com?subject=${sub}&body=${bod}`;
+            return `
+            <li style="margin-bottom: 10px; background: #ffffff; padding: 12px 14px; border-radius: 8px; border: 1px solid #e2e8f0; list-style-type: none;">
+              <div style="font-size: 13px; color: #1e293b; margin-bottom: 6px;">
+                <strong style="color: #0284c7;">Opción ${optNum}:</strong> <strong>${s.fechaStr}</strong> • <strong>${s.horarioStr}</strong> (Argentina) • Modalidad: <strong>${s.modalidad || 'VIRTUAL'}</strong>
+              </div>
+              <div style="margin-top: 6px;">
+                <a href="${mailtoBtn}" target="_blank" style="display: inline-block; background-color: #0284c7; color: #ffffff; text-decoration: none; padding: 6px 14px; border-radius: 6px; font-weight: 700; font-size: 11px; letter-spacing: 0.3px;">
+                  ✉️ Confirmar Opción ${optNum} (${s.horarioStr ? s.horarioStr.split(' a ')[0] : 'Horario'})
+                </a>
+              </div>
+            </li>`;
+        }).join('\n');
+
+        const dynamicSlotsHtml = `
+        <div style="background-color: #f8fafc; border-left: 4px solid #0284c7; padding: 16px; border-radius: 8px; margin: 22px 0;">
+          <h4 style="margin: 0 0 12px 0; color: #0369a1; font-size: 13px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.5px;">
+            📅 DETALLES DEL ENCUENTRO Y TURNOS DISPONIBLES:
+          </h4>
+          <ul style="margin: 0; padding-left: 0;">
+            ${listItems}
+          </ul>
+        </div>`;
+
+        let personalizedHtml = `
             <div style="background:#fef3c7;border:1px solid #f59e0b;color:#92400e;padding:12px 18px;border-radius:10px;margin-bottom:20px;font-family:sans-serif;font-size:13px;line-height:1.5;">
                 <strong>🧪 TEST DE ENVÍO DE 1 CLIC (Pre-flight Mail-Merge):</strong><br>
-                Este correo es una prueba de previsualización directa despachada a <code>${testEmail}</code> antes de lanzar la campaña masiva.
+                Este correo es una prueba de previsualización directa despachada a <code>${testEmail}</code> con turnos sincronizados en vivo desde el calendario oficial.
             </div>
             ${content}
         `
-        .replace(/\{\{nombre\}\}/gi, 'Damián (Prueba)')
+        .replace(/\{\{nombre\}\}/gi, sampleNombre)
         .replace(/\{\{email\}\}/gi, testEmail)
         .replace(/\{\{rol\}\}/gi, 'Prospecto Asesores')
         .replace(/\{\{telefono\}\}/gi, '+54 9 11 7372-2708')
@@ -1221,7 +1268,17 @@ app.post('/api/empresas/:codigo/campanas/email/test-send', async (req, res) => {
         .replace(/\{\{enlacebaja\}\}/gi, enlaceBaja)
         .replace(/\{\{fecha\}\}/gi, fechaSlot)
         .replace(/\{\{hora\}\}/gi, horaSlot)
-        .replace(/\{\{duracion\}\}/gi, duracionSlot);
+        .replace(/\{\{duracion\}\}/gi, duracionSlot)
+        .replace(/\{\{detalles_encuentro\}\}/gi, dynamicSlotsHtml)
+        .replace(/\{\{detallesencuentro\}\}/gi, dynamicSlotsHtml)
+        .replace(/\{\{opciones_calendario\}\}/gi, dynamicSlotsHtml);
+
+        if (personalizedHtml.includes('29 de octubre') || personalizedHtml.includes('30 de octubre')) {
+            personalizedHtml = personalizedHtml.replace(
+                /<div style="background-color: #f8fafc; border-left: 4px solid #0284c7;[\s\S]*?<\/ul>\s*<\/div>/gi,
+                dynamicSlotsHtml
+            );
+        }
 
         const testSubject = `[TEST PRUEBA 1-CLIC] ${subject.replace(/\{\{nombre\}\}/gi, 'Damián')}`;
 
@@ -1246,7 +1303,7 @@ app.post('/api/empresas/:codigo/campanas/email/test-send', async (req, res) => {
 // 4. Creación y Despacho Masivo con Resiliencia (ranaroussi/minigun)
 app.post('/api/empresas/:codigo/campanas/email', async (req, res) => {
     try {
-        const { campaignName, contactIds, subject, content, plantillaId, attachments, humanPacing } = req.body;
+        const { campaignName, contactIds, subject, content, plantillaId, attachments, humanPacing, range, selectedSlotIds = [] } = req.body;
         if (!campaignName || !subject || !content) {
             return res.status(400).json({ error: 'El nombre de campaña, asunto y contenido son obligatorios' });
         }
@@ -1279,7 +1336,8 @@ app.post('/api/empresas/:codigo/campanas/email', async (req, res) => {
             estado: 'en_progreso',
             modo_envio: humanPacing !== false ? 'humano' : 'directo',
             contactos_json: targetContacts.map(c => ({ id: c.id, nombre: c.nombre, email: c.email })),
-            spam_score: deliverability.score
+            spam_score: deliverability.score,
+            rango_destinatarios: range || null
         });
 
         // Despachar envíos en segundo plano
@@ -1293,7 +1351,8 @@ app.post('/api/empresas/:codigo/campanas/email', async (req, res) => {
                     htmlContent: content,
                     attachments: attachments || [],
                     humanPacing: humanPacing !== false,
-                    startIndex: 0
+                    startIndex: 0,
+                    selectedSlotIds
                 });
             } catch (err) {
                 console.error('Error ejecutando campaña de email:', err);
@@ -2576,7 +2635,7 @@ app.get('/api/empresas/:codigo/ai-metrics', async (req, res) => {
 // ---------------------------------------------------------
 // RUTAS PARA INBOX GMAIL (ESTILO IABOX) & CALENDAR MEET
 // ---------------------------------------------------------
-const { getInboxEmails, getEmailBody, sendReplyEmail } = require('./inboxService');
+const { getInboxEmails, getEmailBody, sendReplyEmail, monitorAndProcessIncomingReplies } = require('./inboxService');
 const { getAvailableWebinarSlots, processBooking } = require('./googleCalendarService');
 
 app.get('/api/empresas/:codigo/inbox', async (req, res) => {
@@ -2589,6 +2648,44 @@ app.get('/api/empresas/:codigo/inbox', async (req, res) => {
         res.status(500).json({ success: false, error: error.message });
     }
 });
+
+app.post('/api/empresas/:codigo/inbox/check-replies', async (req, res) => {
+    try {
+        const results = await monitorAndProcessIncomingReplies(req.params.codigo);
+        res.json(results);
+    } catch (error) {
+        console.error('Error verificando respuestas de email:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+app.get('/api/empresas/:codigo/inbox/monitor-status', async (req, res) => {
+    try {
+        const [pRows] = await db.pool.query(
+            "SELECT COUNT(*) as total_procesados, SUM(CASE WHEN intent = 'CONFIRMACION_WEBINAR' THEN 1 ELSE 0 END) as total_confirmaciones FROM email_inbox_processed"
+        );
+        const [recent] = await db.pool.query(
+            "SELECT * FROM email_inbox_processed ORDER BY id DESC LIMIT 5"
+        );
+        res.json({
+            success: true,
+            active: true,
+            stats: pRows[0] || { total_procesados: 0, total_confirmaciones: 0 },
+            recent
+        });
+    } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+// Monitor automático en segundo plano para respuestas de correo cada 2 minutos
+setInterval(async () => {
+    try {
+        await monitorAndProcessIncomingReplies('KRZMJI');
+    } catch (e) {
+        // Silencioso en background
+    }
+}, 2 * 60 * 1000);
 
 app.get('/api/empresas/:codigo/inbox/contact-profile', async (req, res) => {
     try {
