@@ -619,7 +619,12 @@ async function sendMassEmailCampaign({ codigoEmpresa, campanaId, contacts = [], 
 
         const dynamicSlotsHtml = buildSlotsHtml(calendarSlots, nombre, targetEmail, telefono);
 
-        let personalizedHtml = htmlContent
+        let baseContent = htmlContent;
+        if (!/<[a-z][\s\S]*>/i.test(baseContent)) {
+            baseContent = `<div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; font-size: 15px; line-height: 1.6; color: #1e293b; max-width: 600px; margin: 0 auto; padding: 24px; background-color: #ffffff; border-radius: 12px; border: 1px solid #e2e8f0;">${baseContent.replace(/\n/g, '<br>')}</div>`;
+        }
+
+        let personalizedHtml = baseContent
             .replace(/\{\{nombre\}\}/gi, nombre)
             .replace(/\{\{email\}\}/gi, targetEmail)
             .replace(/\{\{rol\}\}/gi, rol)
@@ -631,7 +636,12 @@ async function sendMassEmailCampaign({ codigoEmpresa, campanaId, contacts = [], 
             .replace(/\{\{duracion\}\}/gi, duracionSlot)
             .replace(/\{\{detalles_encuentro\}\}/gi, dynamicSlotsHtml)
             .replace(/\{\{detallesencuentro\}\}/gi, dynamicSlotsHtml)
-            .replace(/\{\{opciones_calendario\}\}/gi, dynamicSlotsHtml);
+            .replace(/\{\{opciones_calendario\}\}/gi, dynamicSlotsHtml)
+            .replace(/\{\{1\}\}/g, fechaSlot)
+            .replace(/\{\{2\}\}/g, horaSlot)
+            .replace(/\{\{3\}\}/g, duracionSlot)
+            .replace(/\{\{4\}\}/g, enlaceRegistro)
+            .replace(/\{\{5\}\}/g, enlaceBaja);
 
         // Si el html original contenía fechas estáticas viejas (ej: 29 de octubre / 30 de octubre), reemplazarlas por el bloque dinámico
         if (personalizedHtml.includes('29 de octubre') || personalizedHtml.includes('30 de octubre')) {
