@@ -2480,33 +2480,38 @@ app.get(['/api/empresas/:codigo/crm/contacts', '/api/empresas/:codigo/crm/contac
         if (clerkId || userId || role) {
             const ctx = await db.getUserPortfolioContext(clerkId, userId, role, req.params.codigo);
             if (!ctx.isMaster && !ctx.isSoporte) {
-                if (ctx.isLider) {
-                    const teamAdvisorIds = contacts
-                        .filter(c => {
-                            const isAdvisor = (c.grupo || '').toUpperCase() === 'ASESORES' || (c.rol_asignado || '').toLowerCase() === 'asesores';
-                            const belongsToMe = ctx.allMyIds.includes(c.lider_id) || ctx.allMyIds.includes(Number(c.lider_id));
-                            return isAdvisor && belongsToMe;
-                        })
-                        .map(c => c.id);
+                const gUpper = (grupo || '').toUpperCase();
+                const isStaffDirectory = ['ASESORES', 'LIDERES', 'TEAM', 'SOPORTE'].includes(gUpper);
 
-                    contacts = contacts.filter(c => {
-                        if (teamAdvisorIds.includes(c.id)) return true;
-                        const belongsToTree = ctx.allMyIds.includes(c.lider_id) || 
-                                              ctx.allMyIds.includes(Number(c.lider_id)) || 
-                                              teamAdvisorIds.includes(c.asesor_id) ||
-                                              teamAdvisorIds.includes(Number(c.asesor_id));
-                        if (belongsToTree) return true;
-                        if (ctx.allMyIds.includes(c.usuario_asignado_id) || ctx.allMyIds.includes(c.id)) return true;
-                        return false;
-                    });
-                } else if (ctx.isAsesor) {
-                    contacts = contacts.filter(c => {
-                        if (ctx.myLeaderIds && ctx.myLeaderIds.includes(c.id)) return true;
-                        const isMyPortfolio = ctx.allMyIds.includes(c.asesor_id) || 
-                                              ctx.allMyIds.includes(Number(c.asesor_id)) || 
-                                              ctx.allMyIds.includes(c.usuario_asignado_id);
-                        return isMyPortfolio;
-                    });
+                if (!isStaffDirectory) {
+                    if (ctx.isLider) {
+                        const teamAdvisorIds = contacts
+                            .filter(c => {
+                                const isAdvisor = (c.grupo || '').toUpperCase() === 'ASESORES' || (c.rol_asignado || '').toLowerCase() === 'asesores';
+                                const belongsToMe = ctx.allMyIds.includes(c.lider_id) || ctx.allMyIds.includes(Number(c.lider_id));
+                                return isAdvisor && belongsToMe;
+                            })
+                            .map(c => c.id);
+
+                        contacts = contacts.filter(c => {
+                            if (teamAdvisorIds.includes(c.id)) return true;
+                            const belongsToTree = ctx.allMyIds.includes(c.lider_id) || 
+                                                  ctx.allMyIds.includes(Number(c.lider_id)) || 
+                                                  teamAdvisorIds.includes(c.asesor_id) ||
+                                                  teamAdvisorIds.includes(Number(c.asesor_id));
+                            if (belongsToTree) return true;
+                            if (ctx.allMyIds.includes(c.usuario_asignado_id) || ctx.allMyIds.includes(c.id)) return true;
+                            return false;
+                        });
+                    } else if (ctx.isAsesor) {
+                        contacts = contacts.filter(c => {
+                            if (ctx.myLeaderIds && ctx.myLeaderIds.includes(c.id)) return true;
+                            const isMyPortfolio = ctx.allMyIds.includes(c.asesor_id) || 
+                                                  ctx.allMyIds.includes(Number(c.asesor_id)) || 
+                                                  ctx.allMyIds.includes(c.usuario_asignado_id);
+                            return isMyPortfolio;
+                        });
+                    }
                 }
             }
         }

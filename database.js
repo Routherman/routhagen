@@ -1770,7 +1770,11 @@ async function getUserPortfolioContext(clerkId, userId, userRoleName, codigoEmpr
     }
 
     const role = (userRoleName || user?.rol_nombre || '').toLowerCase();
-    const isMaster = role === 'master' || role === 'admin' || user?.email === 'colaboratium@gmail.com';
+    const isMaster = role === 'master' || role === 'admin' || role === 'main' || role === 'team' || 
+                     user?.email === 'colaboratium@gmail.com' || 
+                     user?.email === 'damduff@gmail.com' || 
+                     user?.email === 'routherman.contacto@gmail.com' ||
+                     user?.rol_id === 1 || user?.rol_id === 2;
     const isSoporte = role === 'soporte';
     const isLider = role.includes('lider');
     const isAsesor = role.includes('asesor');
