@@ -1344,6 +1344,25 @@ async function obtenerArbolDependencias(codigo_empresa) {
         [codigo_empresa]
     );
 
+    // Enriquecer con score si existe
+    try {
+        const [scores] = await pool.query(
+            "SELECT contacto_id, score_actual, rango FROM score_usuarios WHERE codigo_empresa = ?",
+            [codigo_empresa]
+        );
+        const map = {};
+        (scores || []).forEach(s => { if (s.contacto_id) map[s.contacto_id] = s; });
+        all.forEach(c => {
+            if (map[c.id]) {
+                c.score = map[c.id].score_actual;
+                c.rango = map[c.id].rango;
+            } else if (['ASESORES', 'LIDERES', 'TEAM', 'SOPORTE', 'CREDITOS'].includes((c.grupo || c.rol_asignado || '').toUpperCase())) {
+                c.score = 500;
+                c.rango = 'PLATA';
+            }
+        });
+    } catch(e) {}
+
     const lideres = all.filter(c => (c.grupo || '').toUpperCase() === 'LIDERES' || (c.rol_asignado || '').toLowerCase() === 'lideres');
     const asesores = all.filter(c => (c.grupo || '').toUpperCase() === 'ASESORES' || (c.rol_asignado || '').toLowerCase() === 'asesores');
     const inversores = all.filter(c => (c.grupo || '').toUpperCase() === 'INVERSORES' || (c.rol_asignado || '').toLowerCase() === 'inversores');

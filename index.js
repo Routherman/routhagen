@@ -75,6 +75,8 @@ app.use('/media', express.static(path.join(__dirname, 'public/media')));
 app.use('/api/media', express.static(path.join(__dirname, 'public/media')));
 app.use('/uploads', express.static(path.join(__dirname, 'public/uploads')));
 app.use('/api/uploads', express.static(path.join(__dirname, 'public/uploads')));
+app.use('/downloads', express.static(path.join(__dirname, 'public/downloads')));
+app.use('/api/downloads', express.static(path.join(__dirname, 'public/downloads')));
 app.use(bodyParser.json());
 
 const PORT = process.env.PORT || 8080;
@@ -2500,10 +2502,106 @@ app.get(['/api/empresas/:codigo/crm/contacts', '/api/empresas/:codigo/crm/contac
             }
         }
 
+        // Enriquecer contactos con Score y Rango de Rendimiento
+        if (contacts && contacts.length > 0 && db && db.pool) {
+            try {
+                const scoreService = require('./scoreService');
+                const [scores] = await db.pool.query(
+                    "SELECT contacto_id, score_actual, rango FROM score_usuarios WHERE codigo_empresa = ?",
+                    [req.params.codigo]
+                );
+                const scoreMap = {};
+                (scores || []).forEach(s => {
+                    if (s.contacto_id) scoreMap[s.contacto_id] = s;
+                });
+
+                contacts = contacts.map(c => {
+                    const sc = scoreMap[c.id];
+                    const isScoreRole = ['ASESORES', 'LIDERES', 'TEAM', 'SOPORTE', 'CREDITOS'].includes((c.grupo || c.rol_asignado || '').toUpperCase());
+                    const finalScore = sc ? sc.score_actual : (isScoreRole ? 500 : null);
+                    const finalRango = sc ? sc.rango : (isScoreRole ? 'PLATA' : null);
+                    return {
+                        ...c,
+                        score: finalScore,
+                        rango: finalRango,
+                        rangoMeta: finalScore !== null ? scoreService.calcularRango(finalScore) : null
+                    };
+                });
+            } catch (scErr) {
+                console.warn('Advertencia asociando scores a contactos:', scErr.message);
+            }
+        }
+
         res.json({ success: true, contacts });
     } catch (error) {
         console.error('Error obteniendo contactos CRM:', error);
         res.status(500).json({ success: false, error: 'Error obteniendo contactos CRM' });
+    }
+});
+
+// ---------------------------------------------------------
+// RUTAS DEL SISTEMA DE SCORE Y RENDIMIENTO (GAMIFICACIÓN)
+// ---------------------------------------------------------
+
+app.get('/api/empresas/:codigo/scores', async (req, res) => {
+    try {
+        const scoreService = require('./scoreService');
+        const { rol } = req.query;
+        const ranking = await scoreService.obtenerScoresRanking(db.pool, req.params.codigo, rol);
+        res.json({ success: true, scores: ranking });
+    } catch (error) {
+        console.error('Error obteniendo ranking de scores:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+app.get('/api/empresas/:codigo/scores/pdf-guia', (req, res) => {
+    try {
+        const scoreService = require('./scoreService');
+        res.setHeader('Content-Type', 'application/pdf');
+        res.setHeader('Content-Disposition', 'attachment; filename="Reglamento_Sistema_de_Puntos_Colaboratium.pdf"');
+        scoreService.generarPdfReglamentoScore(res);
+    } catch (error) {
+        console.error('Error generando PDF de score:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+app.get('/api/empresas/:codigo/scores/:id', async (req, res) => {
+    try {
+        const scoreService = require('./scoreService');
+        const detalle = await scoreService.obtenerScoreDetalle(db.pool, req.params.codigo, req.params.id);
+        if (!detalle) {
+            return res.status(404).json({ success: false, error: 'Score no encontrado' });
+        }
+        res.json({ success: true, ...detalle });
+    } catch (error) {
+        console.error('Error obteniendo detalle de score:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+app.post('/api/empresas/:codigo/scores/evento', async (req, res) => {
+    try {
+        const scoreService = require('./scoreService');
+        const { identificador, contactoId, usuarioId, nombre, rol, tipoEvento, puntos, referenciaTipo, referenciaId, descripcion } = req.body;
+        const resultado = await scoreService.registrarEventoScore(db.pool, {
+            codigoEmpresa: req.params.codigo,
+            identificador,
+            contactoId,
+            usuarioId,
+            nombre,
+            rol,
+            tipoEvento,
+            puntos,
+            referenciaTipo,
+            referenciaId,
+            descripcion
+        });
+        res.json(resultado);
+    } catch (error) {
+        console.error('Error registrando evento de score:', error);
+        res.status(500).json({ success: false, error: error.message });
     }
 });
 
@@ -3135,4 +3233,12 @@ app.listen(PORT, async () => {
     console.log(`🚀 Servidor de WhatsApp escuchando en el puerto ${PORT}`);
     await db.initDB();
     campaignScheduler.iniciarScheduler();
+    try {
+        const scoreService = require('./scoreService');
+        await scoreService.initScoreTables(db.pool);
+        await scoreService.seedInitialScores(db.pool, 'KRZMJI');
+        scoreService.ensurePdfReglamentoFisico();
+    } catch (scoreInitErr) {
+        console.warn('⚠️ No se pudo inicializar scoreService en app.listen:', scoreInitErr.message);
+    }
 });
