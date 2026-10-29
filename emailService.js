@@ -512,11 +512,21 @@ async function sendGenericEmail({ to, subject, html, text, attachments = [] }) {
  */
 async function sendMassEmailCampaign({ codigoEmpresa, campanaId, contacts = [], subject, htmlContent, attachments = [], humanPacing = true, startIndex = 0, selectedSlotIds = [] }) {
     const db = require('./database');
-    let enviados = 0;
-    let entregados = 0;
+    let enviados = startIndex;
+    let entregados = startIndex;
     const total = contacts.length;
 
-    console.log(`🚀 Iniciando despacho de campaña masiva (Total: ${total} destinatarios, Desde índice: ${startIndex}, Modo Humano: ${humanPacing})...`);
+    if (campanaId && startIndex > 0) {
+        try {
+            const [curRows] = await db.pool.query("SELECT enviados, entregados FROM campanas WHERE id = ?", [campanaId]);
+            if (curRows && curRows.length > 0) {
+                enviados = Math.max(startIndex, curRows[0].enviados || 0);
+                entregados = Math.max(startIndex, curRows[0].entregados || 0);
+            }
+        } catch(e) {}
+    }
+
+    console.log(`🚀 Iniciando/Reanudando despacho de campaña masiva (Total: ${total} destinatarios, Desde índice: ${startIndex}, Enviados previos: ${enviados}, Modo Humano: ${humanPacing})...`);
 
     // Consultar lista negra / desuscripciones para proteger reputación de Gmail (Minigun / CAN-SPAM)
     let setDesuscritos = new Set();

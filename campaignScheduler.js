@@ -3,44 +3,93 @@ const { sendMassEmailCampaign } = require('./emailService');
 
 let schedulerInterval = null;
 let isChecking = false;
+const activeCampaigns = new Set();
+
+function registerActiveCampaign(id) {
+    if (id) activeCampaigns.add(Number(id));
+}
+
+function unregisterActiveCampaign(id) {
+    if (id) activeCampaigns.delete(Number(id));
+}
 
 /**
- * Revisa en la base de datos si hay campañas programadas cuya fecha/hora ya haya llegado
+ * Revisa en la base de datos si hay campañas programadas y reanuda automáticamente campañas interrumpidas (Crash Recovery)
  */
 async function checkAndRunScheduledCampaigns() {
     if (isChecking) return;
     isChecking = true;
     try {
+        // 1. DISPARO DE CAMPAÑAS PROGRAMADAS
         const programadas = await db.obtenerCampanasProgramadas();
-        if (!programadas || programadas.length === 0) return;
-
         const now = Date.now();
 
-        for (const camp of programadas) {
-            const scheduledTime = new Date(camp.programada_para).getTime();
-            // Disparar si ya llegó la hora (con 2 segundos de tolerancia por sincronización de reloj)
-            if (scheduledTime <= now + 2000) {
-                console.log(`⏰ [Scheduler] Disparando automáticamente campaña programada #${camp.id} "${camp.nombre}" (${camp.tipo})...`);
+        if (programadas && programadas.length > 0) {
+            for (const camp of programadas) {
+                const scheduledTime = new Date(camp.programada_para).getTime();
+                // Disparar si ya llegó la hora (con 2 segundos de tolerancia por sincronización de reloj)
+                if (scheduledTime <= now + 2000) {
+                    console.log(`⏰ [Scheduler] Disparando automáticamente campaña programada #${camp.id} "${camp.nombre}" (${camp.tipo})...`);
 
-                // Bloqueo atómico para evitar disparos duplicados
-                const [updateResult] = await db.pool.query(
-                    "UPDATE campanas SET estado = 'en_progreso', ultimo_log = ? WHERE id = ? AND estado = 'programada'",
-                    [`Iniciada automáticamente por el Programador a las ${new Date().toLocaleTimeString('es-AR')}`, camp.id]
-                );
+                    // Bloqueo atómico para evitar disparos duplicados
+                    const [updateResult] = await db.pool.query(
+                        "UPDATE campanas SET estado = 'en_progreso', ultimo_log = ? WHERE id = ? AND estado = 'programada'",
+                        [`Iniciada automáticamente por el Programador a las ${new Date().toLocaleTimeString('es-AR')}`, camp.id]
+                    );
 
-                if (updateResult.affectedRows === 0) {
-                    // Ya fue ejecutada o cancelada por otro hilo
-                    continue;
+                    if (updateResult.affectedRows === 0) {
+                        // Ya fue ejecutada o cancelada por otro hilo
+                        continue;
+                    }
+
+                    registerActiveCampaign(camp.id);
+                    if (camp.tipo === 'email') {
+                        ejecutarCampanaEmail(camp).catch(err => {
+                            console.error(`❌ [Scheduler] Error ejecutando campaña email #${camp.id}:`, err);
+                        }).finally(() => {
+                            unregisterActiveCampaign(camp.id);
+                        });
+                    } else if (camp.tipo === 'whatsapp') {
+                        ejecutarCampanaWhatsApp(camp).catch(err => {
+                            console.error(`❌ [Scheduler] Error ejecutando campaña WhatsApp #${camp.id}:`, err);
+                        }).finally(() => {
+                            unregisterActiveCampaign(camp.id);
+                        });
+                    }
                 }
+            }
+        }
 
-                if (camp.tipo === 'email') {
-                    ejecutarCampanaEmail(camp).catch(err => {
-                        console.error(`❌ [Scheduler] Error ejecutando campaña email #${camp.id}:`, err);
-                    });
-                } else if (camp.tipo === 'whatsapp') {
-                    ejecutarCampanaWhatsApp(camp).catch(err => {
-                        console.error(`❌ [Scheduler] Error ejecutando campaña WhatsApp #${camp.id}:`, err);
-                    });
+        // 2. SUPERVISOR CRASH RECOVERY: Reanudar campañas 'en_progreso' que se hayan interrumpido (ej. reinicio de server)
+        const [enProgreso] = await db.pool.query(
+            "SELECT id, codigo_empresa, nombre, tipo, total_contactos, enviados, ultimo_indice_enviado FROM campanas WHERE estado = 'en_progreso'"
+        );
+
+        if (enProgreso && enProgreso.length > 0) {
+            for (const camp of enProgreso) {
+                const campId = Number(camp.id);
+                if (!activeCampaigns.has(campId)) {
+                    registerActiveCampaign(campId);
+                    console.log(`🔄 [Scheduler Watchdog] Campaña #${campId} "${camp.nombre}" estaba en progreso e inactiva. Reanudando despacho autónomo...`);
+
+                    const campFull = await db.obtenerCampanaPorId(campId);
+                    if (campFull) {
+                        if (campFull.tipo === 'email') {
+                            ejecutarCampanaEmail(campFull).catch(err => {
+                                console.error(`❌ [Watchdog] Error en recuperación de campaña email #${campId}:`, err);
+                            }).finally(() => {
+                                unregisterActiveCampaign(campId);
+                            });
+                        } else if (campFull.tipo === 'whatsapp') {
+                            ejecutarCampanaWhatsApp(campFull).catch(err => {
+                                console.error(`❌ [Watchdog] Error en recuperación de campaña WhatsApp #${campId}:`, err);
+                            }).finally(() => {
+                                unregisterActiveCampaign(campId);
+                            });
+                        }
+                    } else {
+                        unregisterActiveCampaign(campId);
+                    }
                 }
             }
         }
@@ -83,6 +132,15 @@ async function ejecutarCampanaEmail(camp) {
     const attachments = camp.archivos_adjuntos || [];
     const humanPacing = camp.modo_envio !== 'directo';
     const selectedSlotIds = config.selectedSlotIds || [];
+    const startIndex = camp.ultimo_indice_enviado || camp.enviados || 0;
+
+    if (startIndex >= contacts.length) {
+        await db.actualizarCampanaProgreso(camp.id, {
+            estado: 'completada',
+            ultimo_log: `Campaña completada exitosamente (${contacts.length} de ${contacts.length})`
+        });
+        return;
+    }
 
     await sendMassEmailCampaign({
         codigoEmpresa: camp.codigo_empresa,
@@ -92,7 +150,7 @@ async function ejecutarCampanaEmail(camp) {
         htmlContent,
         attachments,
         humanPacing,
-        startIndex: 0,
+        startIndex,
         selectedSlotIds
     });
 }
@@ -153,5 +211,7 @@ module.exports = {
     iniciarScheduler,
     checkAndRunScheduledCampaigns,
     ejecutarCampanaEmail,
-    ejecutarCampanaWhatsApp
+    ejecutarCampanaWhatsApp,
+    registerActiveCampaign,
+    unregisterActiveCampaign
 };

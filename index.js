@@ -1373,7 +1373,9 @@ app.post('/api/empresas/:codigo/campanas/email', async (req, res) => {
 
         // Despachar envíos en segundo plano (inmediato)
         setImmediate(async () => {
+            const { registerActiveCampaign, unregisterActiveCampaign } = require('./campaignScheduler');
             try {
+                registerActiveCampaign(campanaId);
                 await sendMassEmailCampaign({
                     codigoEmpresa: req.params.codigo,
                     campanaId,
@@ -1387,6 +1389,8 @@ app.post('/api/empresas/:codigo/campanas/email', async (req, res) => {
                 });
             } catch (err) {
                 console.error('Error ejecutando campaña de email:', err);
+            } finally {
+                unregisterActiveCampaign(campanaId);
             }
         });
 
@@ -1429,19 +1433,24 @@ app.post('/api/empresas/:codigo/campanas/:id/resume', async (req, res) => {
         });
 
         setImmediate(async () => {
+            const { registerActiveCampaign, unregisterActiveCampaign } = require('./campaignScheduler');
             try {
+                registerActiveCampaign(campana.id);
                 await sendMassEmailCampaign({
                     codigoEmpresa: req.params.codigo,
                     campanaId: campana.id,
                     contacts,
                     subject: campana.asunto_email || 'Convocatoria Colaboratium',
-                    htmlContent: campana.plantilla_contenido || '',
+                    htmlContent: campana.contenido_personalizado || campana.plantilla_contenido || '',
                     attachments: campana.archivos_adjuntos || [],
                     humanPacing: campana.modo_envio !== 'directo',
-                    startIndex
+                    startIndex,
+                    selectedSlotIds: campana.configuracion_envio?.selectedSlotIds || []
                 });
             } catch (err) {
                 console.error('Error reanudando campaña:', err);
+            } finally {
+                unregisterActiveCampaign(campana.id);
             }
         });
 
