@@ -19,6 +19,7 @@ const { processExcelContactsWithAI, normalizePhoneNumber } = require('./excelSer
 const { sendTicketEmail, sendMassEmailCampaign, sendGenericEmail } = require('./emailService');
 const { analyzeDeliverability, validateMergeVariables } = require('./emailOptimizer');
 const { summarizeConversationWithAI } = require('./aiRouter');
+const campaignScheduler = require('./campaignScheduler');
 
 const upload = multer({ dest: 'public/uploads/' });
 
@@ -1310,10 +1311,10 @@ app.post('/api/empresas/:codigo/campanas/email/test-send', async (req, res) => {
     }
 });
 
-// 4. Creación y Despacho Masivo con Resiliencia (ranaroussi/minigun)
+// 4. Creación y Despacho Masivo con Resiliencia (ranaroussi/minigun) y Programador Autónomo
 app.post('/api/empresas/:codigo/campanas/email', async (req, res) => {
     try {
-        const { campaignName, contactIds, subject, content, plantillaId, attachments, humanPacing, range, selectedSlotIds = [] } = req.body;
+        const { campaignName, contactIds, subject, content, plantillaId, attachments, humanPacing, range, selectedSlotIds = [], scheduledAt } = req.body;
         if (!campaignName || !subject || !content) {
             return res.status(400).json({ error: 'El nombre de campaña, asunto y contenido son obligatorios' });
         }
@@ -1335,7 +1336,10 @@ app.post('/api/empresas/:codigo/campanas/email', async (req, res) => {
         // Analizar puntuación de spam para trazabilidad
         const deliverability = analyzeDeliverability({ subject, htmlContent: content });
 
-        // Crear campaña en BD con punteros de recuperación
+        const isScheduled = !!scheduledAt;
+        const validScheduledDate = isScheduled ? new Date(scheduledAt) : null;
+
+        // Crear campaña en BD con punteros de recuperación y programación
         const campanaId = await db.crearCampanaCompleta(req.params.codigo, {
             nombre: campaignName,
             tipo: 'email',
@@ -1343,14 +1347,29 @@ app.post('/api/empresas/:codigo/campanas/email', async (req, res) => {
             asunto_email: subject,
             archivos_adjuntos: attachments || null,
             total_contactos: targetContacts.length,
-            estado: 'en_progreso',
+            estado: isScheduled ? 'programada' : 'en_progreso',
             modo_envio: humanPacing !== false ? 'humano' : 'directo',
             contactos_json: targetContacts.map(c => ({ id: c.id, nombre: c.nombre, email: c.email })),
             spam_score: deliverability.score,
-            rango_destinatarios: range || null
+            rango_destinatarios: range || null,
+            programada_para: validScheduledDate,
+            contenido_personalizado: content,
+            configuracion_envio: { humanPacing, selectedSlotIds, range, contactIds: targetContacts.map(c => c.id) }
         });
 
-        // Despachar envíos en segundo plano
+        if (isScheduled) {
+            return res.json({
+                success: true,
+                scheduled: true,
+                campanaId,
+                programada_para: validScheduledDate,
+                spamScore: deliverability.score,
+                totalContactos: targetContacts.length,
+                message: `⏰ Campaña programada para el ${validScheduledDate.toLocaleString('es-AR')} con ${targetContacts.length} contactos. Se disparará de forma autónoma.`
+            });
+        }
+
+        // Despachar envíos en segundo plano (inmediato)
         setImmediate(async () => {
             try {
                 await sendMassEmailCampaign({
@@ -1371,6 +1390,7 @@ app.post('/api/empresas/:codigo/campanas/email', async (req, res) => {
 
         res.json({
             success: true,
+            scheduled: false,
             campanaId,
             spamScore: deliverability.score,
             totalContactos: targetContacts.length,
@@ -1489,7 +1509,7 @@ app.get('/api/campanas/desuscribir', async (req, res) => {
 
 app.post('/api/empresas/:codigo/campanas/meta', async (req, res) => {
     try {
-        const { campaignName, contactIds, templateName, templateContent, attachments, messagesPerMinute = 10, plantillaId } = req.body;
+        const { campaignName, contactIds, templateName, templateContent, attachments, messagesPerMinute = 10, plantillaId, scheduledAt } = req.body;
         if (!campaignName) {
             return res.status(400).json({ error: 'El nombre de campaña es obligatorio' });
         }
@@ -1504,6 +1524,9 @@ app.post('/api/empresas/:codigo/campanas/meta', async (req, res) => {
             return res.status(400).json({ error: 'No se encontraron contactos para la campaña de WhatsApp' });
         }
 
+        const isScheduled = !!scheduledAt;
+        const validScheduledDate = isScheduled ? new Date(scheduledAt) : null;
+
         const campanaId = await db.crearCampanaCompleta(req.params.codigo, {
             nombre: campaignName,
             tipo: 'whatsapp',
@@ -1511,10 +1534,25 @@ app.post('/api/empresas/:codigo/campanas/meta', async (req, res) => {
             asunto_email: null,
             archivos_adjuntos: attachments || null,
             total_contactos: targetContacts.length,
-            estado: 'en_progreso'
+            estado: isScheduled ? 'programada' : 'en_progreso',
+            programada_para: validScheduledDate,
+            contenido_personalizado: templateContent || '',
+            configuracion_envio: { messagesPerMinute, contactIds: targetContacts.map(c => c.id) },
+            contactos_json: targetContacts.map(c => ({ id: c.id, nombre: c.nombre, telefono: c.telefono }))
         });
 
-        // Simulación o despacho en segundo plano
+        if (isScheduled) {
+            return res.json({
+                success: true,
+                scheduled: true,
+                campanaId,
+                programada_para: validScheduledDate,
+                totalContactos: targetContacts.length,
+                message: `⏰ Campaña de WhatsApp programada para el ${validScheduledDate.toLocaleString('es-AR')} con ${targetContacts.length} contactos. Se disparará de forma autónoma.`
+            });
+        }
+
+        // Simulación o despacho en segundo plano (inmediato)
         setImmediate(async () => {
             let enviados = 0;
             for (let i = 0; i < targetContacts.length; i++) {
@@ -1533,6 +1571,7 @@ app.post('/api/empresas/:codigo/campanas/meta', async (req, res) => {
 
         res.json({
             success: true,
+            scheduled: false,
             campanaId,
             totalContactos: targetContacts.length,
             message: `Campaña de WhatsApp iniciada para ${targetContacts.length} contactos`
@@ -1540,6 +1579,58 @@ app.post('/api/empresas/:codigo/campanas/meta', async (req, res) => {
     } catch (error) {
         console.error('Error iniciando campaña de WhatsApp Meta:', error);
         res.status(500).json({ error: 'Error iniciando campaña de WhatsApp' });
+    }
+});
+
+// Disparar inmediatamente una campaña programada
+app.post('/api/empresas/:codigo/campanas/:id/lanzar-ahora', async (req, res) => {
+    try {
+        const campana = await db.obtenerCampanaPorId(req.params.id);
+        if (!campana) return res.status(404).json({ error: 'Campaña no encontrada' });
+
+        await db.actualizarCampanaProgreso(campana.id, {
+            estado: 'en_progreso',
+            ultimo_log: `Lanzamiento anticipado por el usuario a las ${new Date().toLocaleTimeString('es-AR')}`
+        });
+
+        if (campana.tipo === 'email') {
+            setImmediate(() => campaignScheduler.ejecutarCampanaEmail(campana));
+        } else {
+            setImmediate(() => campaignScheduler.ejecutarCampanaWhatsApp(campana));
+        }
+
+        res.json({ success: true, message: `🚀 Campaña #${campana.id} iniciada de inmediato.` });
+    } catch (err) {
+        console.error('Error lanzando campaña de inmediato:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Cancelar una campaña programada
+app.post('/api/empresas/:codigo/campanas/:id/cancelar', async (req, res) => {
+    try {
+        await db.cancelarCampana(req.params.id);
+        res.json({ success: true, message: 'Campaña cancelada con éxito.' });
+    } catch (err) {
+        console.error('Error cancelando campaña:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Reprogramar fecha y hora de una campaña
+app.post('/api/empresas/:codigo/campanas/:id/reprogramar', async (req, res) => {
+    try {
+        const { scheduledAt } = req.body;
+        if (!scheduledAt) return res.status(400).json({ error: 'Debes indicar la nueva fecha y hora' });
+
+        await db.reprogramarCampana(req.params.id, scheduledAt);
+        res.json({ 
+            success: true, 
+            message: `Campaña reprogramada para el ${new Date(scheduledAt).toLocaleString('es-AR')}` 
+        });
+    } catch (err) {
+        console.error('Error reprogramando campaña:', err);
+        res.status(500).json({ error: err.message });
     }
 });
 
@@ -3015,4 +3106,5 @@ INSTRUCCIONES DE RESPUESTA:
 app.listen(PORT, async () => {
     console.log(`🚀 Servidor de WhatsApp escuchando en el puerto ${PORT}`);
     await db.initDB();
+    campaignScheduler.iniciarScheduler();
 });

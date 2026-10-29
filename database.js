@@ -325,6 +325,15 @@ async function initDB() {
             await pool.query("ALTER TABLE campanas ADD COLUMN contactos_json JSON DEFAULT NULL");
         } catch(e) {}
         try {
+            await pool.query("ALTER TABLE campanas ADD COLUMN programada_para DATETIME DEFAULT NULL");
+        } catch(e) {}
+        try {
+            await pool.query("ALTER TABLE campanas ADD COLUMN contenido_personalizado LONGTEXT DEFAULT NULL");
+        } catch(e) {}
+        try {
+            await pool.query("ALTER TABLE campanas ADD COLUMN configuracion_envio JSON DEFAULT NULL");
+        } catch(e) {}
+        try {
             await pool.query(`
                 CREATE TABLE IF NOT EXISTS email_desuscripciones (
                     id INT AUTO_INCREMENT PRIMARY KEY,
@@ -1504,14 +1513,39 @@ async function eliminarMedio(id) {
     return true;
 }
 
-async function crearCampanaCompleta(codigoEmpresa, { nombre, tipo = 'whatsapp', plantilla_id = null, asunto_email = null, archivos_adjuntos = null, total_contactos = 0, estado = 'en_progreso', modo_envio = 'humano', contactos_json = null, spam_score = 95, rango_destinatarios = null }) {
+async function crearCampanaCompleta(codigoEmpresa, { 
+    nombre, 
+    tipo = 'whatsapp', 
+    plantilla_id = null, 
+    asunto_email = null, 
+    archivos_adjuntos = null, 
+    total_contactos = 0, 
+    estado = 'en_progreso', 
+    modo_envio = 'humano', 
+    contactos_json = null, 
+    spam_score = 95, 
+    rango_destinatarios = null,
+    programada_para = null,
+    contenido_personalizado = null,
+    configuracion_envio = null
+}) {
     if (!pool) return null;
     const adjStr = archivos_adjuntos ? (typeof archivos_adjuntos === 'string' ? archivos_adjuntos : JSON.stringify(archivos_adjuntos)) : null;
     const contStr = contactos_json ? (typeof contactos_json === 'string' ? contactos_json : JSON.stringify(contactos_json)) : null;
+    const configStr = configuracion_envio ? (typeof configuracion_envio === 'string' ? configuracion_envio : JSON.stringify(configuracion_envio)) : null;
     const [res] = await pool.query(`
-        INSERT INTO campanas (codigo_empresa, nombre, tipo, plantilla_id, asunto_email, archivos_adjuntos, total_contactos, estado, enviados, entregados, respondidos, modo_envio, contactos_json, spam_score, ultimo_indice_enviado, rango_destinatarios)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 0, 0, ?, ?, ?, 0, ?)
-    `, [codigoEmpresa, nombre, tipo, plantilla_id, asunto_email, adjStr, total_contactos, estado, modo_envio, contStr, spam_score, rango_destinatarios]);
+        INSERT INTO campanas (
+            codigo_empresa, nombre, tipo, plantilla_id, asunto_email, archivos_adjuntos, 
+            total_contactos, estado, enviados, entregados, respondidos, modo_envio, 
+            contactos_json, spam_score, ultimo_indice_enviado, rango_destinatarios,
+            programada_para, contenido_personalizado, configuracion_envio
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 0, 0, ?, ?, ?, 0, ?, ?, ?, ?)
+    `, [
+        codigoEmpresa, nombre, tipo, plantilla_id, asunto_email, adjStr, 
+        total_contactos, estado, modo_envio, contStr, spam_score, rango_destinatarios,
+        programada_para ? new Date(programada_para) : null, contenido_personalizado, configStr
+    ]);
     return res.insertId;
 }
 
@@ -1528,6 +1562,22 @@ async function actualizarCampanaProgreso(campanaId, { enviados, entregados, resp
     if (updates.length === 0) return true;
     params.push(campanaId);
     await pool.query(`UPDATE campanas SET ${updates.join(', ')} WHERE id = ?`, params);
+    return true;
+}
+
+async function cancelarCampana(id) {
+    if (!pool) return false;
+    await pool.query("UPDATE campanas SET estado = 'cancelada', ultimo_log = 'Campaña cancelada por el usuario' WHERE id = ?", [id]);
+    return true;
+}
+
+async function reprogramarCampana(id, nuevaFecha) {
+    if (!pool) return false;
+    await pool.query("UPDATE campanas SET programada_para = ?, estado = 'programada', ultimo_log = ? WHERE id = ?", [
+        new Date(nuevaFecha),
+        `Reprogramada para el ${new Date(nuevaFecha).toLocaleString('es-AR')}`,
+        id
+    ]);
     return true;
 }
 
@@ -1589,7 +1639,41 @@ async function obtenerCampanas(codigoEmpresa) {
         if (typeof adj === 'string') {
             try { adj = JSON.parse(adj); } catch (e) { adj = []; }
         }
-        return { ...r, archivos_adjuntos: adj || [] };
+        let cont = r.contactos_json;
+        if (typeof cont === 'string') {
+            try { cont = JSON.parse(cont); } catch (e) { cont = []; }
+        }
+        let cfg = r.configuracion_envio;
+        if (typeof cfg === 'string') {
+            try { cfg = JSON.parse(cfg); } catch (e) { cfg = null; }
+        }
+        return { ...r, archivos_adjuntos: adj || [], contactos_json: cont || [], configuracion_envio: cfg || {} };
+    });
+}
+
+async function obtenerCampanasProgramadas() {
+    if (!pool) return [];
+    const [rows] = await pool.query(`
+        SELECT c.*, p.nombre as plantilla_nombre, p.contenido as plantilla_contenido 
+        FROM campanas c 
+        LEFT JOIN plantillas p ON c.plantilla_id = p.id
+        WHERE c.estado = 'programada' AND c.programada_para IS NOT NULL
+        ORDER BY c.programada_para ASC
+    `);
+    return rows.map(r => {
+        let adj = r.archivos_adjuntos;
+        if (typeof adj === 'string') {
+            try { adj = JSON.parse(adj); } catch (e) { adj = []; }
+        }
+        let cont = r.contactos_json;
+        if (typeof cont === 'string') {
+            try { cont = JSON.parse(cont); } catch (e) { cont = []; }
+        }
+        let cfg = r.configuracion_envio;
+        if (typeof cfg === 'string') {
+            try { cfg = JSON.parse(cfg); } catch (e) { cfg = null; }
+        }
+        return { ...r, archivos_adjuntos: adj || [], contactos_json: cont || [], configuracion_envio: cfg || {} };
     });
 }
 
@@ -1611,7 +1695,11 @@ async function obtenerCampanaPorId(id) {
     if (typeof cont === 'string') {
         try { cont = JSON.parse(cont); } catch (e) { cont = []; }
     }
-    return { ...r, archivos_adjuntos: adj || [], contactos_json: cont || [] };
+    let cfg = r.configuracion_envio;
+    if (typeof cfg === 'string') {
+        try { cfg = JSON.parse(cfg); } catch (e) { cfg = null; }
+    }
+    return { ...r, archivos_adjuntos: adj || [], contactos_json: cont || [], configuracion_envio: cfg || {} };
 }
 
 /**
@@ -1730,6 +1818,9 @@ module.exports = {
     actualizarCampanaProgreso,
     obtenerCampanas,
     obtenerCampanaPorId,
+    obtenerCampanasProgramadas,
+    cancelarCampana,
+    reprogramarCampana,
     crearFlujo,
     obtenerFlujos,
     obtenerFlujo,
