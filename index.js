@@ -2513,7 +2513,7 @@ app.post('/api/empresas/:codigo/crm/contacts', async (req, res) => {
         res.json({ success: true, id: insertId });
     } catch (error) {
         console.error('Error creando contacto CRM:', error);
-        res.status(500).json({ success: false, error: 'Error guardando contacto' });
+        res.status(500).json({ success: false, error: error.message || 'Error guardando contacto' });
     }
 });
 
@@ -2524,7 +2524,7 @@ app.put('/api/empresas/:codigo/crm/contacts/:id', async (req, res) => {
         else res.status(404).json({ success: false, error: 'Contacto no encontrado' });
     } catch (error) {
         console.error('Error actualizando contacto CRM:', error);
-        res.status(500).json({ success: false, error: 'Error actualizando contacto' });
+        res.status(500).json({ success: false, error: error.message || 'Error actualizando contacto' });
     }
 });
 

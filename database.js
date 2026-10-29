@@ -1246,6 +1246,22 @@ async function obtenerContactosCRM(codigo_empresa, grupo = null, search = '') {
     return rows;
 }
 
+function formatMetadataExtra(meta) {
+    if (!meta) return null;
+    if (typeof meta === 'object') return JSON.stringify(meta);
+    if (typeof meta === 'string') {
+        const trimmed = meta.trim();
+        if (!trimmed) return null;
+        try {
+            JSON.parse(trimmed);
+            return trimmed;
+        } catch(e) {
+            return JSON.stringify({ notas: trimmed });
+        }
+    }
+    return JSON.stringify({ valor: meta });
+}
+
 async function actualizarContactoCRM(id, codigo_empresa, data) {
     if (!pool) return false;
     const allowed = [
@@ -1258,7 +1274,11 @@ async function actualizarContactoCRM(id, codigo_empresa, data) {
     for (const [k, v] of Object.entries(data)) {
         if (allowed.includes(k)) {
             fields.push(`${k} = ?`);
-            values.push(k === 'metadata_extra' && typeof v === 'object' ? JSON.stringify(v) : v);
+            if (k === 'metadata_extra') {
+                values.push(formatMetadataExtra(v));
+            } else {
+                values.push(v === '' ? null : v);
+            }
         }
     }
     if (fields.length === 0) return false;
@@ -1356,7 +1376,7 @@ async function crearContactoCRM(codigo_empresa, data) {
         );
         if (byPhone && byPhone.length > 0) existingId = byPhone[0].id;
     }
-    if (!existingId && data.email) {
+    if (!existingId && data.email && data.email.trim()) {
         const [byEmail] = await pool.query(
             "SELECT id FROM contactos WHERE email = ? AND codigo_empresa = ? LIMIT 1",
             [data.email.trim().toLowerCase(), codigo_empresa]
@@ -1372,7 +1392,7 @@ async function crearContactoCRM(codigo_empresa, data) {
         return existingId;
     }
 
-    const metaStr = data.metadata_extra && typeof data.metadata_extra === 'object' ? JSON.stringify(data.metadata_extra) : data.metadata_extra;
+    const metaStr = formatMetadataExtra(data.metadata_extra);
     const [res] = await pool.query(`
         INSERT INTO contactos (telefono, nombre, codigo_empresa, email, dni, direccion, cbu, alias, banco, sucursal, grupo, instagram, facebook, linkedin, telegram, metadata_extra)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -1392,10 +1412,21 @@ async function crearContactoCRM(codigo_empresa, data) {
             telegram = VALUES(telegram),
             metadata_extra = VALUES(metadata_extra)
     `, [
-        cleanPhone || data.telefono, data.nombre || '', codigo_empresa, data.email || null,
-        data.dni || null, data.direccion || null, data.cbu || null, data.alias || null,
-        data.banco || null, data.sucursal || null, data.grupo || 'CLIENTES',
-        data.instagram || null, data.facebook || null, data.linkedin || null, data.telegram || null,
+        cleanPhone || data.telefono, 
+        data.nombre || '', 
+        codigo_empresa, 
+        data.email?.trim() || null,
+        data.dni?.trim() || null, 
+        data.direccion?.trim() || null, 
+        data.cbu?.trim() || null, 
+        data.alias?.trim() || null,
+        data.banco?.trim() || null, 
+        data.sucursal?.trim() || null, 
+        data.grupo || 'CLIENTES',
+        data.instagram?.trim() || null, 
+        data.facebook?.trim() || null, 
+        data.linkedin?.trim() || null, 
+        data.telegram?.trim() || null,
         metaStr || null
     ]);
     return res.insertId;
