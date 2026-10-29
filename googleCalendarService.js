@@ -97,7 +97,18 @@ async function getAvailableWebinarSlots(codigoEmpresa = 'KRZMJI', category = 'al
                 const ev = events[k];
                 if (ev && ev.type === 'VEVENT') {
                     const summary = (ev.summary || '').toLowerCase();
-                    const isRelevant = summary.includes('webinar') || summary.includes('capacitacion') || summary.includes('asesor') || summary.includes('lider') || summary.includes('líder') || summary.includes('presencial');
+                    const isRelevant = summary.includes('webinar') || 
+                                       summary.includes('capacitacion') || 
+                                       summary.includes('capacitación') || 
+                                       summary.includes('asesor') || 
+                                       summary.includes('lider') || 
+                                       summary.includes('líder') || 
+                                       summary.includes('presencial') || 
+                                       summary.includes('presentacion') || 
+                                       summary.includes('presentación') || 
+                                       summary.includes('reunion') || 
+                                       summary.includes('reunión') || 
+                                       summary.includes('colaboratium');
                     if (isRelevant) {
                         // Descartar eventos pasados (anteriores a hoy)
                         const eventEndDate = new Date(ev.end || ev.start);
@@ -122,6 +133,40 @@ async function getAvailableWebinarSlots(codigoEmpresa = 'KRZMJI', category = 'al
                     const horaInicio = start.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit', timeZone: 'America/Argentina/Buenos_Aires' });
                     const horaFin = end.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit', timeZone: 'America/Argentina/Buenos_Aires' });
 
+                    // Extraer enlace real de Google Meet desde las propiedades del evento iCal
+                    let meetLink = null;
+                    if (!isPresencial) {
+                        // 1. Campo nativo GOOGLE-CONFERENCE (ej: https://meet.google.com/udi-wdmc-vrx)
+                        if (ev['GOOGLE-CONFERENCE']) {
+                            const confVal = typeof ev['GOOGLE-CONFERENCE'] === 'string'
+                                ? ev['GOOGLE-CONFERENCE']
+                                : (ev['GOOGLE-CONFERENCE'].val || ev['GOOGLE-CONFERENCE'].value || '');
+                            if (confVal && String(confVal).startsWith('http')) {
+                                meetLink = String(confVal).trim();
+                            }
+                        }
+                        // 2. Extraer de description, location o url mediante regex de Google Meet
+                        if (!meetLink) {
+                            const textToSearch = [ev.description, ev.location, ev.url].filter(Boolean).join(' ');
+                            const meetMatch = textToSearch.match(/https?:\/\/meet\.google\.com\/[a-z0-9-]+/i);
+                            if (meetMatch) {
+                                meetLink = meetMatch[0].trim();
+                            }
+                        }
+                        // 3. Fallback a Zoom o Teams si estuviera presente
+                        if (!meetLink) {
+                            const textToSearch = [ev.description, ev.location, ev.url].filter(Boolean).join(' ');
+                            const anyConfMatch = textToSearch.match(/https?:\/\/[^\s<>'"]+(?:zoom\.us|teams\.microsoft\.com)[^\s<>'"]*/i);
+                            if (anyConfMatch) {
+                                meetLink = anyConfMatch[0].trim();
+                            }
+                        }
+                        // 4. Fallback si no tiene enlace asignado aún
+                        if (!meetLink) {
+                            meetLink = process.env.GOOGLE_MEET_DEFAULT_LINK || 'https://meet.google.com/new';
+                        }
+                    }
+
                     return {
                         id: index + 1,
                         uid: ev.uid,
@@ -130,7 +175,7 @@ async function getAvailableWebinarSlots(codigoEmpresa = 'KRZMJI', category = 'al
                         categoria: isLider ? 'LIDERES' : 'ASESORES',
                         fechaStr: fechaStr.charAt(0).toUpperCase() + fechaStr.slice(1),
                         horarioStr: `${horaInicio} a ${horaFin} hs`,
-                        meetLink: 'https://meet.google.com/new',
+                        meetLink: meetLink,
                         ubicacion: isPresencial ? 'Av. del Libertador 264, 1° Piso Contrafrente, Vicente López, Buenos Aires' : 'Google Meet',
                         cupos: isPresencial ? 15 : 25,
                         subscribers: []
@@ -595,12 +640,263 @@ async function processBooking({ slotChoice, customerName, customerEmail, custome
     };
 }
 
+/**
+ * Envía el enlace de acceso de la reunión de Meet a todos los suscriptores/inscriptos de una sesión.
+ * Soporta despacho por WhatsApp y por Email oficial de Colaboratium.
+ */
+async function sendMeetingLinkToSubscribers({ 
+    codigoEmpresa = 'KRZMJI', 
+    slotId, 
+    meetLinkOverride = null, 
+    customMessage = null, 
+    channels = ['whatsapp', 'email'], 
+    userId = null, 
+    userName = null, 
+    userRole = null 
+}) {
+    if (!slotId) {
+        return { success: false, error: 'Se requiere el ID del turno o sesión.' };
+    }
+
+    const slots = await getAvailableWebinarSlots(codigoEmpresa, 'all');
+    const slot = slots.find(s => 
+        String(s.id) === String(slotId) || 
+        String(s.dbId) === String(slotId) || 
+        s.uid === slotId
+    );
+
+    if (!slot) {
+        return { success: false, error: 'Sesión no encontrada en el calendario.' };
+    }
+
+    const subscribers = slot.subscribers || [];
+    if (subscribers.length === 0) {
+        return { success: false, error: 'No hay suscriptores inscriptos en esta sesión para enviar el enlace.' };
+    }
+
+    const effectiveMeetLink = meetLinkOverride || slot.meetLink || 'https://meet.google.com/new';
+    const isVirtual = slot.modalidad === 'VIRTUAL';
+
+    // Obtener credenciales de WhatsApp de la empresa
+    let phoneId = null;
+    let accessToken = null;
+    try {
+        const empresa = await db.obtenerEmpresa(codigoEmpresa);
+        let cv = empresa?.cuentas_vinculadas;
+        if (typeof cv === 'string') { try { cv = JSON.parse(cv); } catch(e){} }
+        phoneId = cv?.whatsapp?.phone_id || process.env.WAPP_PHONE_ID;
+        accessToken = cv?.whatsapp?.access_token || process.env.WAPP_ACCESS_TOKEN;
+    } catch(err) {
+        console.warn('⚠️ No se pudieron obtener credenciales de WhatsApp de la empresa:', err.message);
+        phoneId = process.env.WAPP_PHONE_ID;
+        accessToken = process.env.WAPP_ACCESS_TOKEN;
+    }
+
+    const { sendWhatsAppMessage } = require('./whatsappService');
+    const { sendGenericEmail } = require('./emailService');
+
+    let whatsappSent = 0;
+    let emailSent = 0;
+    const errors = [];
+
+    for (const sub of subscribers) {
+        const subName = sub.nombre || 'Asesor Candidato';
+        const cleanPhone = (sub.telefono || '').replace(/[^0-9]/g, '');
+        const cleanEmail = (sub.email || '').trim();
+
+        // 1. Envío por WhatsApp
+        if (channels.includes('whatsapp') && cleanPhone && phoneId && accessToken) {
+            try {
+                let wappText = '';
+                if (isVirtual) {
+                    wappText = `🚀 *¡Tu sesión de capacitación está por comenzar!*\n\n` +
+                        `Hola *${subName}*, te recordamos que en minutos inicia tu encuentro virtual:\n\n` +
+                        `📌 *${slot.titulo}*\n` +
+                        `📅 *Fecha:* ${slot.fechaStr}\n` +
+                        `⏰ *Horario:* ${slot.horarioStr}\n\n` +
+                        `💻 *Enlace a Google Meet:*\n` +
+                        `👉 ${effectiveMeetLink}\n\n` +
+                        (customMessage ? `💬 *Nota importante:* ${customMessage}\n\n` : '') +
+                        `ℹ️ _Te recomendamos ingresar 5 minutos antes para probar tu micrófono y cámara._\n\n` +
+                        `¡Te esperamos puntual!\n` +
+                        `*Colaboratium*`;
+                } else {
+                    wappText = `🏢 *¡Recordatorio de tu Reunión Presencial!*\n\n` +
+                        `Hola *${subName}*, te recordamos que en minutos inicia tu encuentro:\n\n` +
+                        `📌 *${slot.titulo}*\n` +
+                        `📅 *Fecha:* ${slot.fechaStr}\n` +
+                        `⏰ *Horario:* ${slot.horarioStr}\n` +
+                        `📍 *Lugar:* ${slot.ubicacion}\n` +
+                        `🗺️ *Mapa:* https://maps.google.com/?q=Av.+del+Libertador+264,+Vicente+Lopez\n\n` +
+                        (customMessage ? `💬 *Nota:* ${customMessage}\n\n` : '') +
+                        `¡Te esperamos en nuestras oficinas!\n` +
+                        `*Colaboratium*`;
+                }
+
+                const metaId = await sendWhatsAppMessage(cleanPhone, wappText, phoneId, accessToken);
+                if (sub.id && db && db.guardarMensaje) {
+                    try {
+                        await db.guardarMensaje(sub.id, metaId, 'SALIENTE', 'text', wappText);
+                    } catch(mErr) {
+                        console.warn('No se pudo persistir mensaje en BD:', mErr.message);
+                    }
+                }
+                whatsappSent++;
+            } catch (wErr) {
+                console.error(`❌ Error enviando WhatsApp a ${cleanPhone}:`, wErr.message);
+                errors.push({ sub: subName, channel: 'whatsapp', error: wErr.message });
+            }
+        }
+
+        // 2. Envío por Email Oficial
+        if (channels.includes('email') && cleanEmail && cleanEmail.includes('@') && !cleanEmail.includes('No registrado')) {
+            try {
+                const emailSubject = isVirtual
+                    ? `🚀 [Enlace de Acceso] Tu sesión en vivo: ${slot.titulo} (${slot.fechaStr} ${slot.horarioStr})`
+                    : `🏢 [Recordatorio de Acceso] Reunión Presencial: ${slot.titulo} (${slot.fechaStr})`;
+
+                const emailHtml = `
+                <!DOCTYPE html>
+                <html>
+                <head>
+                    <meta charset="utf-8">
+                    <style>
+                        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #0b0f17; color: #f1f5f9; padding: 20px; margin: 0; }
+                        .container { max-width: 600px; margin: 0 auto; background-color: #111827; border: 1px solid #1f2937; border-radius: 16px; overflow: hidden; box-shadow: 0 10px 25px rgba(0,0,0,0.5); }
+                        .header { background: linear-gradient(135deg, #2563eb, #4f46e5); padding: 32px 24px; text-align: center; }
+                        .title { font-size: 22px; font-weight: 800; color: #ffffff; margin: 0; }
+                        .badge { display: inline-block; background: rgba(255,255,255,0.2); backdrop-filter: blur(4px); color: #ffffff; padding: 4px 12px; border-radius: 9999px; font-size: 11px; font-weight: 700; text-transform: uppercase; margin-top: 10px; }
+                        .content { padding: 32px 24px; }
+                        .greeting { font-size: 16px; color: #cbd5e1; margin-bottom: 20px; }
+                        .info-card { background-color: #1e293b; border: 1px solid #334155; border-radius: 12px; padding: 20px; margin-bottom: 24px; }
+                        .info-row { display: flex; justify-content: space-between; margin-bottom: 10px; padding-bottom: 8px; border-bottom: 1px solid #334155; font-size: 13px; }
+                        .info-label { color: #94a3b8; font-weight: 600; }
+                        .info-val { color: #f8fafc; font-weight: 700; text-align: right; }
+                        .btn-cta { display: block; text-align: center; background: linear-gradient(135deg, #2563eb, #6366f1); color: #ffffff !important; padding: 16px 28px; border-radius: 12px; font-weight: 800; font-size: 15px; text-decoration: none; box-shadow: 0 4px 14px rgba(37, 99, 235, 0.4); margin: 24px 0; }
+                        .note-box { background: rgba(59, 130, 246, 0.1); border-left: 4px solid #3b82f6; padding: 14px; border-radius: 8px; font-size: 12px; color: #93c5fd; margin-bottom: 20px; }
+                        .footer { background-color: #0b0f17; padding: 20px; text-align: center; font-size: 11px; color: #64748b; border-top: 1px solid #1f2937; }
+                    </style>
+                </head>
+                <body>
+                    <div class="container">
+                        <div class="header">
+                            <h1 class="title">🚀 ¡Tu Sesión está por comenzar!</h1>
+                            <span class="badge">${isVirtual ? 'Google Meet Oficial' : 'Presencial'} • ${slot.categoria}</span>
+                        </div>
+                        <div class="content">
+                            <p class="greeting">Hola <strong>${subName}</strong>,</p>
+                            <p style="color: #94a3b8; font-size: 14px; line-height: 1.6;">
+                                Te enviamos el enlace de acceso prioritario para que puedas ingresar de inmediato a tu sesión programada con el equipo de Colaboratium.
+                            </p>
+
+                            <div class="info-card">
+                                <div class="info-row">
+                                    <span class="info-label">Evento</span>
+                                    <span class="info-val">${slot.titulo}</span>
+                                </div>
+                                <div class="info-row">
+                                    <span class="info-label">Fecha</span>
+                                    <span class="info-val">${slot.fechaStr}</span>
+                                </div>
+                                <div class="info-row">
+                                    <span class="info-label">Horario</span>
+                                    <span class="info-val">${slot.horarioStr}</span>
+                                </div>
+                                <div class="info-row" style="border-bottom: none; margin-bottom: 0; padding-bottom: 0;">
+                                    <span class="info-label">Modalidad</span>
+                                    <span class="info-val">${slot.modalidad}</span>
+                                </div>
+                            </div>
+
+                            ${customMessage ? `
+                            <div class="note-box">
+                                <strong>Nota del organizador:</strong> ${customMessage}
+                            </div>
+                            ` : ''}
+
+                            ${isVirtual ? `
+                            <a href="${effectiveMeetLink}" target="_blank" class="btn-cta">
+                                💻 Ingresar a la Sala Google Meet Ahora 👉
+                            </a>
+                            <p style="text-align: center; font-size: 11px; color: #64748b; margin-top: -12px;">
+                                Enlace directo: <a href="${effectiveMeetLink}" style="color: #60a5fa;">${effectiveMeetLink}</a>
+                            </p>
+                            ` : `
+                            <a href="https://maps.google.com/?q=Av.+del+Libertador+264,+Vicente+Lopez" target="_blank" class="btn-cta">
+                                📍 Ver Ubicación en Google Maps 👉
+                            </a>
+                            `}
+
+                            <div style="background-color: #1e293b; border-radius: 10px; padding: 14px; font-size: 12px; color: #cbd5e1; line-height: 1.5; margin-top: 20px;">
+                                💡 <strong>Recomendaciones para la sesión:</strong>
+                                <ul style="margin: 8px 0 0 0; padding-left: 20px;">
+                                    <li>Ingresar 5 minutos antes para verificar audio y video.</li>
+                                    <li>Contar con un dispositivo conectado a internet estable.</li>
+                                    <li>Tener a mano bolígrafo y cuaderno para tomar notas.</li>
+                                </ul>
+                            </div>
+                        </div>
+                        <div class="footer">
+                            Colaboratium Oficial • BCRA Nº 40.015 • Buenos Aires, Argentina<br>
+                            Este es un mensaje automático de recordatorio para participantes confirmados.
+                        </div>
+                    </div>
+                </body>
+                </html>
+                `;
+
+                await sendGenericEmail({
+                    to: cleanEmail,
+                    subject: emailSubject,
+                    html: emailHtml
+                });
+                emailSent++;
+            } catch (eErr) {
+                console.error(`❌ Error enviando Email a ${cleanEmail}:`, eErr.message);
+                errors.push({ sub: subName, channel: 'email', error: eErr.message });
+            }
+        }
+    }
+
+    // Registrar en auditoría
+    try {
+        if (db && db.registrarAuditLog) {
+            await db.registrarAuditLog({
+                codigo_empresa: codigoEmpresa,
+                usuario_id: userId,
+                usuario_nombre: userName,
+                rol: userRole,
+                accion: 'CALENDAR_MEET_LINK_SENT',
+                entidad: 'calendar_slot',
+                entidad_id: String(slot.id),
+                detalles: `Enlace de reunión enviado a ${subscribers.length} suscriptores (WhatsApp: ${whatsappSent}, Email: ${emailSent}) para "${slot.titulo}" (${slot.fechaStr}) - Sala: ${effectiveMeetLink}`,
+                google_scope: 'colaboratium@gmail.com'
+            });
+        }
+    } catch (auditErr) {
+        console.error('Error registrando audit log:', auditErr.message);
+    }
+
+    return {
+        success: true,
+        slotId: slot.id,
+        titulo: slot.titulo,
+        meetLink: effectiveMeetLink,
+        subscribersCount: subscribers.length,
+        whatsappSent,
+        emailSent,
+        errors: errors.length > 0 ? errors : undefined,
+        message: `Enlace enviado exitosamente (${whatsappSent} por WhatsApp, ${emailSent} por Email)`
+    };
+}
+
 module.exports = {
     getAvailableWebinarSlots,
     formatCalendarOptionsText,
     formatInteractiveCalendarList,
     getSubscriberProfile,
     processBooking,
+    sendMeetingLinkToSubscribers,
     DEFAULT_SLOTS
 };
 

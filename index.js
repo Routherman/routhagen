@@ -2931,6 +2931,34 @@ app.post('/api/empresas/:codigo/calendar/book', async (req, res) => {
         res.json(result);
     } catch (error) {
         console.error('Error reservando slot de capacitación:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+app.post('/api/empresas/:codigo/calendar/slots/:id/send-link', async (req, res) => {
+    try {
+        const { sendMeetingLinkToSubscribers } = require('./googleCalendarService');
+        const { meetLinkOverride, customMessage, channels, userId, userName, userRole } = req.body || {};
+        
+        const result = await sendMeetingLinkToSubscribers({
+            codigoEmpresa: req.params.codigo,
+            slotId: req.params.id,
+            meetLinkOverride,
+            customMessage,
+            channels: channels || ['whatsapp', 'email'],
+            userId,
+            userName,
+            userRole
+        });
+
+        if (!result.success) {
+            return res.status(400).json(result);
+        }
+
+        res.json(result);
+    } catch (error) {
+        console.error('Error enviando enlace a suscriptores:', error);
+        res.status(500).json({ success: false, error: error.message });
     }
 });
 
