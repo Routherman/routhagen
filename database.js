@@ -518,7 +518,7 @@ async function upsertContacto(telefono, nombre, codigo_empresa, email = null) {
             await pool.query(`UPDATE contactos SET ${updateFields.join(', ')} WHERE id = ?`, updateVals);
         }
 
-        const [rows] = await pool.query('SELECT id, estado_bot, nombre, telefono, email, grupo, rol_asignado FROM contactos WHERE id = ?', [contactId]);
+        const [rows] = await pool.query('SELECT * FROM contactos WHERE id = ?', [contactId]);
         return rows[0];
     }
 
@@ -530,7 +530,7 @@ async function upsertContacto(telefono, nombre, codigo_empresa, email = null) {
             email = IF(VALUES(email) IS NOT NULL AND VALUES(email) != '', VALUES(email), email)
     `, [cleanPhone, nombre, codigo_empresa, email]);
     
-    const [rows] = await pool.query('SELECT id, estado_bot, nombre, telefono, email, grupo, rol_asignado FROM contactos WHERE telefono = ? AND codigo_empresa = ?', [cleanPhone, codigo_empresa]);
+    const [rows] = await pool.query('SELECT * FROM contactos WHERE telefono = ? AND codigo_empresa = ?', [cleanPhone, codigo_empresa]);
     return rows[0];
 }
 

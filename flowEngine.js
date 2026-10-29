@@ -18,6 +18,18 @@ async function handleFlowEngine(dbContacto, cleanMessage, empresa, accessToken, 
     
     console.log(`[Flow] Iniciando motor para mensaje: "${userText}"`);
 
+    // Asegurar datos frescos del contacto desde la base de datos
+    try {
+        if (dbContacto && dbContacto.id && db && db.pool) {
+            const [freshRows] = await db.pool.query('SELECT * FROM contactos WHERE id = ?', [dbContacto.id]);
+            if (freshRows && freshRows.length > 0) {
+                dbContacto = freshRows[0];
+            }
+        }
+    } catch (e) {
+        console.warn('[Flow] Error refrescando contacto:', e.message);
+    }
+
     // 1. Cargar todos los flujos activos de la empresa
     const flujos = await db.obtenerFlujos(codigoEmpresa);
     const flujosActivos = flujos.filter(f => f.activo);
@@ -262,16 +274,35 @@ async function handleFlowEngine(dbContacto, cleanMessage, empresa, accessToken, 
                 const isCalendarNode = currentNode.id === 'node_a3_captura' || varName === 'datos_contacto_asesor';
                 if (isCalendarNode) {
                     const emailMatch = cleanMessage.contenido.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/);
-                    const slotChoiceMatch = cleanMessage.contenido.match(/slot_([1-6])|\b([1-6])\b/i);
-                    const slotChoice = slotChoiceMatch ? (slotChoiceMatch[1] || slotChoiceMatch[2]) : '1';
+                    const slotChoiceMatch = cleanMessage.contenido.match(/slot_([1-6])|\b([1-6])\b|opci[oó]n\s*([1-6])/i);
+                    let slotChoice = slotChoiceMatch ? (slotChoiceMatch[1] || slotChoiceMatch[2] || slotChoiceMatch[3]) : null;
 
-                    const detectedEmail = emailMatch ? emailMatch[0] : (dbContacto.email || '');
+                    let metaExtra = dbContacto.metadata_extra;
+                    if (typeof metaExtra === 'string') {
+                        try { metaExtra = JSON.parse(metaExtra); } catch(e){}
+                    }
+                    if (!slotChoice && metaExtra?.pending_slot_choice) {
+                        slotChoice = String(metaExtra.pending_slot_choice);
+                    }
+                    if (!slotChoice) slotChoice = '1';
+
+                    const detectedEmail = emailMatch ? emailMatch[0].toLowerCase().trim() : (dbContacto.email || '');
 
                     // Si no tiene email aún pero seleccionó un horario (muy común al tocar el list selector de WhatsApp)
                     if (!detectedEmail) {
                         const { getAvailableWebinarSlots } = require('./googleCalendarService');
                         const slots = await getAvailableWebinarSlots(codigoEmpresa, 'asesores');
                         const chosen = slots.find(s => s.id === parseInt(slotChoice, 10)) || slots[0];
+
+                        // Guardar la elección de slot en metadata_extra para recordarla cuando envíe el correo
+                        try {
+                            await db.actualizarContactoCRM(dbContacto.id, codigoEmpresa, {
+                                metadata_extra: {
+                                    ...(metaExtra || {}),
+                                    pending_slot_choice: slotChoice
+                                }
+                            });
+                        } catch (metaErr) {}
 
                         const promptForEmail = `¡Excelente elección! 📅 Reservaste tu turno para:\n*${chosen.titulo}*\n🗓️ ${chosen.fechaStr} (${chosen.horarioStr})\n\n👉 Para emitir tu invitación formal y enviarte el acceso a Google Meet o datos de recepción, por favor respóndeme con tu *Nombre completo* y tu *Correo electrónico* (ej. *Juan Pérez juan@gmail.com*):`;
 
@@ -285,6 +316,7 @@ async function handleFlowEngine(dbContacto, cleanMessage, empresa, accessToken, 
                         .replace(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g, '')
                         .replace(/slot_[1-6]|[1-6]/gi, '')
                         .replace(/^(mi nombre es|soy|nombre:)\s*/i, '')
+                        .replace(/[,\-;]/g, ' ')
                         .trim();
                     if (!detectedName || detectedName.length < 2) detectedName = dbContacto.nombre || 'Asesor Candidato';
 
@@ -664,14 +696,15 @@ async function handleFlowEngine(dbContacto, cleanMessage, empresa, accessToken, 
                 const emailMatch = cleanMessage.contenido?.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/);
                 const slotChoiceMatch = cleanMessage.contenido?.match(/slot_([1-6])|\b([1-6])\b|opci[oó]n\s*([1-6])/i);
                 
-                // Si el mensaje entrante ya contiene un correo electrónico para agendar directo
-                if (emailMatch) {
-                    const detectedEmail = emailMatch[0];
+                // Si el mensaje entrante ya contiene un correo electrónico o el contacto ya tiene email y envió un turno
+                const detectedEmail = emailMatch ? emailMatch[0].toLowerCase().trim() : (dbContacto.email || '');
+                if (detectedEmail && (slotChoiceMatch || emailMatch)) {
                     const slotChoice = slotChoiceMatch ? (slotChoiceMatch[1] || slotChoiceMatch[2] || slotChoiceMatch[3]) : '1';
                     let detectedName = cleanMessage.contenido
                         .replace(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g, '')
                         .replace(/slot_[1-6]|[1-6]/gi, '')
                         .replace(/^(mi nombre es|soy|nombre:)\s*/i, '')
+                        .replace(/[,\-;]/g, ' ')
                         .trim();
                     if (!detectedName || detectedName.length < 2) detectedName = dbContacto.nombre || 'Asesor Candidato';
 

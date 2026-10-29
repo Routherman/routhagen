@@ -181,10 +181,35 @@ async function routeAiMessage(userMessage, history = [], empresaData = {}) {
     const customPrompt = empresaData.prompt_ia || 'Eres el Asistente Oficial de Colaboratium.';
     const customKnowledge = empresaData.conocimiento_ia ? `\nBASE DE CONOCIMIENTO:\n${empresaData.conocimiento_ia}` : '';
 
+    let liveSlotsContext = '';
+    try {
+        const { getAvailableWebinarSlots } = require('./googleCalendarService');
+        const slotsAsesores = await getAvailableWebinarSlots(codigoEmpresa, 'asesores');
+        const slotsLideres = await getAvailableWebinarSlots(codigoEmpresa, 'lideres');
+        
+        const formatSlots = (slots) => (slots && slots.length > 0)
+            ? slots.map(s => `• Opción ${s.id}: ${s.titulo} - ${s.fechaStr} a las ${s.horarioStr} (${s.modalidad}${s.modalidad === 'VIRTUAL' && s.meetLink ? ' - Meet: ' + s.meetLink : ''})`).join('\n')
+            : 'Sin eventos programados actualmente.';
+            
+        liveSlotsContext = `\n\n[CALENDARIO OFICIAL EN VIVO DE WEBINARS Y REUNIONES]:
+OPCIONES ASESORES COMERCIALES:
+${formatSlots(slotsAsesores)}
+
+OPCIONES LÍDERES DE EQUIPO:
+${formatSlots(slotsLideres)}
+
+REGLAS ESTRICTAS DE FECHAS (PROHIBICIÓN ABSOLUTA DE ALUCINAR):
+- PROHIBIDO INVENTAR FECHAS O DÍAS FICTICIOS (como "Lunes 4 de noviembre" u otros). Ofrece o confirma ÚNICAMENTE las opciones del calendario oficial anterior.
+- Si el usuario dice "1" o "slot_1" o una opción, confirma la fecha EXACTA que figura en el listado anterior.
+- Si el usuario ya dio su elección y su email, confirma la opción oficial elegida indicándole que recibirá la invitación a su correo.`;
+    } catch (e) {
+        console.warn('Error inyectando slots de calendario en aiRouter:', e.message);
+    }
+
     const messages = [
         {
             role: 'system',
-            content: `${customPrompt}${customKnowledge}
+            content: `${customPrompt}${customKnowledge}${liveSlotsContext}
 
 REGLAS DE DERIVACIÓN Y RESPUESTA OBLIGATORIA:
 1. Si no puedes resolver la consulta o el usuario requiere atención humana, incluye [HANDOFF].
@@ -194,7 +219,7 @@ REGLAS DE DERIVACIÓN Y RESPUESTA OBLIGATORIA:
    • Solo si es un problema técnico específico (olvido de contraseña, error en la plataforma, falla del sistema) se deriva a [ROLE:Soporte].
    • Solo trámites formales de alta o constancia de CBU institucional van a [ROLE:Administracion].
 4. PROHIBIDO TABLAS MARKDOWN: NUNCA utilices tablas de markdown (| col1 | col2 |) porque WhatsApp no las soporta y se muestran como texto roto e ilegible. Si presentas horarios o comparativas, usa viñetas (•), negritas (*) y saltos de línea claros y limpios.
-5. Cuando el usuario pregunte por horarios o capacitaciones, dale las opciones numeradas de forma clara y amigable invitándolo a responder con el número de opción y su email.`
+5. Cuando el usuario pregunte por horarios o capacitaciones, dale las opciones numeradas del CALENDARIO OFICIAL de forma clara y amigable invitándolo a responder con el número de opción y su email. NUNCA inventes fechas.`
         }
     ];
 
