@@ -117,7 +117,14 @@ class B2BPlaywrightCrawler {
                     for (const r of rows) {
                         const ofName = r['Oficina'] || '';
                         if (ofName) {
-                            const slug = ofName.toLowerCase().replace(/re\/max\s*/i, '').replace(/remax\s*/i, '').trim().replace(/\s+/g, '-');
+                            const slug = ofName.toLowerCase()
+                                .replace(/re\/max\s*/i, '')
+                                .replace(/remax\s*/i, '')
+                                .normalize('NFD').replace(/[\u0300-\u036f]/g, "")
+                                .replace(/ñ/g, 'n')
+                                .trim()
+                                .replace(/[^a-z0-9]+/g, '-')
+                                .replace(/^-+|-+$/g, '');
                             if (slug && !officeList.some(o => o.slug === slug)) {
                                 officeList.push({ name: ofName, slug, city: r['Ciudad'], province: r['Provincia'] });
                             }
@@ -127,18 +134,24 @@ class B2BPlaywrightCrawler {
             } catch(e) {}
         }
 
-        // 3. Fallback de slugs clave de Argentina
+        // 3. Slugs oficiales confirmados adicionales de RE/MAX Argentina
         const popularSlugs = [
-            'alfa', '197', 'acqua', 'alfil', 'parque', 'total', 'norte', 'puerto', 'elite', 'action',
-            'actitud', 'beach', 'blue', 'cimientos', 'class', 'data-lagos', 'dreams', 'duo', 'espacio',
+            'alfa', '197', 'acqua', 'alfil', 'parque', 'total-i', 'norte', 'puerto', 'elite', 'action',
+            'actitud', 'beach', 'blue', 'cimientos', 'class', 'class-ii', 'data-lagos', 'dreams', 'duo', 'espacio',
             'estilo', 'estudio', 'friends', 'grammar', 'namai', 'naval', 'potencia', 'remeros', 'summit',
-            'vanguardia', 'vita', 'ayres', 'buró', 'chacras', 'concord', 'delta', 'focus', 'horizonte',
-            'impacto', 'innovar', 'libertad', 'magnolia', 'milenio', 'nexus', 'oasis', 'palermo', 'recoleta',
-            'belgrano', 'caballito', 'puerto-madero', 'olivos', 'san-isidro', 'tigre', 'pilar', 'nordelta'
+            'vanguardia', 'vita', 'ayres', 'buro', 'chacras', 'concord', 'delta', 'focus', 'horizonte',
+            'impacto', 'innovar', 'libertad', 'magnolia', 'milenio', 'nexus', 'oasis', 'power', 'eximia',
+            'net', 'time', 'heart', 'free', 'uno-iv', 'terra', 'terrunos', 'pacara', 'faro', 'impulso',
+            'eclipse', 'energy', 'estero', 'excelencia', 'exclusivo', 'extremo', 'fin-del-mundo', 'flor',
+            'forever', 'fortaleza', 'forum', 'ilusion', 'invictus', 'iron', 'la-vie', 'litoral', 'metro',
+            'metropolitano', 'mirage', 'modo', 'nativo', 'new', 'oportunidades', 'platino-iii', 'pora',
+            'premium-ii', 'premium-v', 'raices', 'rio', 'roble-ii', 'signature', 'sinergia', 'social',
+            'solutions', 'splendid', 'stage', 'supera', 'surf', 'teatro', 'titanium', 'towers', 'ultra',
+            'unidos', 'uno', 'up', 'urbana', 'vip', 'vanguard', 'vendimia', 'village', 'vision'
         ];
         for (const s of popularSlugs) {
             if (!officeList.some(o => o.slug === s)) {
-                officeList.push({ name: `REMAX ${s.charAt(0).toUpperCase() + s.slice(1)}`, slug: s });
+                officeList.push({ name: `REMAX ${s.charAt(0).toUpperCase() + s.slice(1).replace('-', ' ')}`, slug: s });
             }
         }
 
@@ -385,6 +398,26 @@ class B2BPlaywrightCrawler {
                 }
 
                 await this.page.waitForTimeout(1500);
+
+                // Clic en 'Ver todos' / 'Ver más' para desplegar la plantilla completa del equipo
+                try {
+                    const expanded = await this.page.evaluate(() => {
+                        const btns = Array.from(document.querySelectorAll('button, a'));
+                        const btn = btns.find(b => {
+                            const t = (b.innerText || '').trim().toLowerCase();
+                            return t === 'ver todos' || t === 'ver mas' || t === 'ver más' || t === 'ver equipo';
+                        });
+                        if (btn) {
+                            btn.click();
+                            return true;
+                        }
+                        return false;
+                    });
+                    if (expanded) {
+                        this.addLog(`Oficina ${cp.target_name}: Desplegando equipo completo con "Ver todos"...`);
+                        await this.page.waitForTimeout(2500);
+                    }
+                } catch(e) {}
 
                 // Obtener enlaces a perfiles de agentes en la página de la oficina
                 const agentLinks = await this.page.$$eval('a', as => {
