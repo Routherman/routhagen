@@ -3093,7 +3093,7 @@ app.post('/api/empresas/:codigo/calendar/slots/:id/send-link', async (req, res) 
             slotId: req.params.id,
             meetLinkOverride,
             customMessage,
-            channels: channels || ['whatsapp', 'email'],
+            channels: (channels && Array.isArray(channels) && channels.length > 0) ? channels : ['email'],
             userId,
             userName,
             userRole
