@@ -399,14 +399,11 @@ class B2BPlaywrightCrawler {
 
                 await this.page.waitForTimeout(1500);
 
-                // Clic en 'Ver todos' / 'Ver más' para desplegar la plantilla completa del equipo
+                // Clic específicamente en 'Ver todos' para desplegar la plantilla completa del equipo
                 try {
                     const expanded = await this.page.evaluate(() => {
                         const btns = Array.from(document.querySelectorAll('button, a'));
-                        const btn = btns.find(b => {
-                            const t = (b.innerText || '').trim().toLowerCase();
-                            return t === 'ver todos' || t === 'ver mas' || t === 'ver más' || t === 'ver equipo';
-                        });
+                        const btn = btns.find(b => (b.innerText || '').trim().toLowerCase() === 'ver todos');
                         if (btn) {
                             btn.click();
                             return true;
@@ -415,7 +412,7 @@ class B2BPlaywrightCrawler {
                     });
                     if (expanded) {
                         this.addLog(`Oficina ${cp.target_name}: Desplegando equipo completo con "Ver todos"...`);
-                        await this.page.waitForTimeout(2500);
+                        await this.page.waitForTimeout(3000);
                     }
                 } catch(e) {}
 
@@ -423,7 +420,7 @@ class B2BPlaywrightCrawler {
                 const agentLinks = await this.page.$$eval('a', as => {
                     return Array.from(new Set(
                         as.map(a => a.href)
-                          .filter(h => h && h.includes('remax.com.ar/agent/'))
+                          .filter(h => h && h.includes('/agent/'))
                     ));
                 });
 
