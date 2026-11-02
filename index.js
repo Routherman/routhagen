@@ -1280,6 +1280,10 @@ app.post('/api/empresas/:codigo/campanas/email/test-send', async (req, res) => {
         .replace(/\{\{detalles_encuentro\}\}/gi, dynamicSlotsHtml)
         .replace(/\{\{detallesencuentro\}\}/gi, dynamicSlotsHtml)
         .replace(/\{\{opciones_calendario\}\}/gi, dynamicSlotsHtml)
+        .replace(/\{\{First Name\}\}/g, 'Damián')
+        .replace(/\{\{Last Name\}\}/g, 'Duff')
+        .replace(/\{\{Office\}\}/g, 'RE/MAX Total')
+        .replace(/\{\{Company\}\}/g, 'RE/MAX Argentina')
         .replace(/\{\{1\}\}/g, fechaSlot)
         .replace(/\{\{2\}\}/g, horaSlot)
         .replace(/\{\{3\}\}/g, duracionSlot)
@@ -1293,7 +1297,12 @@ app.post('/api/empresas/:codigo/campanas/email/test-send', async (req, res) => {
             );
         }
 
-        const testSubject = `[TEST PRUEBA 1-CLIC] ${subject.replace(/\{\{nombre\}\}/gi, 'Damián')}`;
+        const testSubject = `[TEST PRUEBA 1-CLIC] ${subject
+            .replace(/\{\{nombre\}\}/gi, 'Damián')
+            .replace(/\{\{First Name\}\}/g, 'Damián')
+            .replace(/\{\{Last Name\}\}/g, 'Duff')
+            .replace(/\{\{Office\}\}/g, 'RE/MAX Total')
+            .replace(/\{\{Company\}\}/g, 'RE/MAX Argentina')}`;
 
         const result = await sendGenericEmail({
             to: testEmail,
@@ -1321,11 +1330,31 @@ app.post('/api/empresas/:codigo/campanas/email', async (req, res) => {
             return res.status(400).json({ error: 'El nombre de campaña, asunto y contenido son obligatorios' });
         }
 
-        // Obtener contactos destinatarios
+        // Obtener contactos destinatarios (incluyendo prospectos B2B si fueron seleccionados)
         const allContacts = await db.obtenerContactosCRM(req.params.codigo);
-        let targetContacts = allContacts;
+        let b2bProspectsRows = [];
+        try {
+            const [b2bRows] = await db.pool.query('SELECT * FROM b2b_prospects WHERE codigo_empresa = ? AND email IS NOT NULL AND campaign_status != "OPT_OUT_BAJA"', [req.params.codigo]);
+            b2bProspectsRows = (b2bRows || []).map(p => ({
+                id: `b2b_${p.id}`,
+                nombre: `${p.first_name || ''} ${p.last_name || ''}`.trim() || p.company_or_board || 'Contacto B2B',
+                first_name: p.first_name,
+                last_name: p.last_name,
+                office_name: p.office_name,
+                company_or_board: p.company_or_board,
+                email: p.email,
+                telefono: p.phone_e164 || p.phone_raw,
+                grupo: p.detected_role === 'LIDER_BROKER_POTENCIAL' ? 'B2B_LIDERES' : 'B2B_ASESORES',
+                detected_role: p.detected_role,
+                source_layer: p.source_layer,
+                isB2B: true
+            }));
+        } catch (e) {}
+
+        const combinedPool = [...allContacts, ...b2bProspectsRows];
+        let targetContacts = combinedPool;
         if (contactIds && Array.isArray(contactIds) && contactIds.length > 0) {
-            targetContacts = allContacts.filter(c => contactIds.includes(c.id));
+            targetContacts = combinedPool.filter(c => contactIds.includes(c.id) || contactIds.includes(Number(c.id)) || contactIds.includes(String(c.id)));
         }
 
         // Filtrar contactos con email válido
@@ -1350,9 +1379,16 @@ app.post('/api/empresas/:codigo/campanas/email', async (req, res) => {
             archivos_adjuntos: attachments || null,
             total_contactos: targetContacts.length,
             estado: isScheduled ? 'programada' : 'en_progreso',
-            modo_envio: humanPacing !== false ? 'humano' : 'directo',
-            contactos_json: targetContacts.map(c => ({ id: c.id, nombre: c.nombre, email: c.email })),
-            spam_score: deliverability.score,
+            contactos_json: targetContacts.map(c => ({
+                id: c.id,
+                nombre: c.nombre,
+                first_name: c.first_name,
+                last_name: c.last_name,
+                office_name: c.office_name,
+                company_or_board: c.company_or_board,
+                email: c.email,
+                telefono: c.telefono
+            })),
             rango_destinatarios: range || null,
             programada_para: validScheduledDate,
             contenido_personalizado: content,
@@ -3239,6 +3275,191 @@ INSTRUCCIONES DE RESPUESTA:
     } catch (error) {
         console.error('Error en Copiloto Chat:', error);
         res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+// -------------------------------------------------------------
+// MÓDULO B2B: MOTOR DE EXTRACCIÓN Y GESTIÓN DE PROSPECTOS
+// -------------------------------------------------------------
+const b2bService = require('./b2bProspectsService');
+
+// 1. Obtener prospectos B2B
+app.get('/api/b2b-prospects', async (req, res) => {
+    try {
+        const codigoEmpresa = req.query.codigoEmpresa || 'KRZMJI';
+        const result = await b2bService.getProspects(codigoEmpresa, req.query);
+        res.json({ success: true, ...result });
+    } catch (e) {
+        console.error('Error en GET /api/b2b-prospects:', e);
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
+
+// 2. Obtener KPIs de prospectos B2B
+app.get('/api/b2b-prospects/kpis', async (req, res) => {
+    try {
+        const codigoEmpresa = req.query.codigoEmpresa || 'KRZMJI';
+        const kpis = await b2bService.getKPIs(codigoEmpresa);
+        res.json({ success: true, kpis });
+    } catch (e) {
+        console.error('Error en GET /api/b2b-prospects/kpis:', e);
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
+
+// 3. Generar Lote Seguro para Gmail (CSV con throttling anti-spam)
+app.post('/api/b2b-prospects/export-gmail-batch', async (req, res) => {
+    try {
+        const codigoEmpresa = req.body.codigoEmpresa || 'KRZMJI';
+        const result = await b2bService.generateGmailBatch({
+            ...req.body,
+            codigoEmpresa
+        });
+        res.json(result);
+    } catch (e) {
+        console.error('Error en POST /api/b2b-prospects/export-gmail-batch:', e);
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
+
+// 4. Importar datos manuales (CSV / JSON)
+app.post('/api/b2b-prospects/import', async (req, res) => {
+    try {
+        const { items, sourceLayer } = req.body;
+        const codigoEmpresa = req.body.codigoEmpresa || 'KRZMJI';
+        if (!Array.isArray(items) || items.length === 0) {
+            return res.status(400).json({ success: false, message: 'Se requiere un array de items' });
+        }
+        const result = await b2bService.importManualData(items, sourceLayer || 'CAPA_1_REMAX', codigoEmpresa);
+        res.json({ success: true, ...result });
+    } catch (e) {
+        console.error('Error en POST /api/b2b-prospects/import:', e);
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
+
+// 5. Convertir Prospecto B2B en Asesor Activo
+app.post('/api/b2b-prospects/:id/convert-to-advisor', async (req, res) => {
+    try {
+        const codigoEmpresa = req.body.codigoEmpresa || 'KRZMJI';
+        const result = await b2bService.convertToActiveAdvisor(req.params.id, codigoEmpresa);
+        res.json(result);
+    } catch (e) {
+        console.error('Error en POST convert-to-advisor:', e);
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
+
+// 6. Registrar baja / Opt-Out
+app.post('/api/b2b-prospects/:id/opt-out', async (req, res) => {
+    try {
+        const codigoEmpresa = req.body.codigoEmpresa || 'KRZMJI';
+        const success = await b2bService.recordOptOut(req.body.email, req.params.id, codigoEmpresa);
+        res.json({ success });
+    } catch (e) {
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
+
+// 7. Enlace público de baja Opt-Out Ley 25.326
+app.get('/api/b2b-prospects/opt-out', async (req, res) => {
+    try {
+        const { email, token } = req.query;
+        if (email) {
+            await b2bService.recordOptOut(email, token, 'KRZMJI');
+        }
+        res.send(`
+            <!DOCTYPE html>
+            <html lang="es">
+            <head>
+                <meta charset="UTF-8">
+                <title>Baja Confirmada • Colaboratium</title>
+                <style>
+                    body { font-family: sans-serif; background: #201E1E; color: #FEFEFE; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; }
+                    .card { background: #2A2828; border: 1px solid #A28444; border-radius: 16px; padding: 40px; max-width: 480px; text-align: center; box-shadow: 0 10px 30px rgba(0,0,0,0.5); }
+                    h1 { color: #A28444; margin-bottom: 12px; font-size: 22px; }
+                    p { color: #ccc; font-size: 14px; line-height: 1.6; }
+                </style>
+            </head>
+            <body>
+                <div class="card">
+                    <h1>Baja de Contacto Confirmada</h1>
+                    <p>Conforme a la Ley 25.326 y la Disposición DNPDP 4/2009, tu dirección <strong>${email || 'asociada'}</strong> ha sido retirada y bloqueada permanentemente de nuestras bases de difusión comercial.</p>
+                    <p style="font-size: 12px; color: #888; margin-top: 24px;">Global Loan S.A. — Registro BCRA Nº 40.015</p>
+                </div>
+            </body>
+            </html>
+        `);
+    } catch (e) {
+        res.status(500).send('Error procesando solicitud');
+    }
+});
+
+// 8. Importar Lotes 1 y 2 de RE/MAX desde Excel
+app.post('/api/b2b-prospects/import-lotes', async (req, res) => {
+    try {
+        const codigoEmpresa = req.body.codigoEmpresa || 'KRZMJI';
+        const result = await b2bService.importRemaxLotesExcel(undefined, codigoEmpresa);
+        res.json(result);
+    } catch (e) {
+        console.error('Error en POST /api/b2b-prospects/import-lotes:', e);
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
+
+// 9. Playwright Stealth Crawler Autónomo (Control en Segundo Plano)
+const b2bCrawler = require('./b2bPlaywrightCrawler');
+
+app.post('/api/b2b-prospects/crawler/start', async (req, res) => {
+    try {
+        const result = await b2bCrawler.start(req.body);
+        res.json(result);
+    } catch (e) {
+        console.error('Error al iniciar crawler:', e);
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
+
+app.post('/api/b2b-prospects/crawler/pause', async (req, res) => {
+    try {
+        const result = await b2bCrawler.pause();
+        res.json(result);
+    } catch (e) {
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
+
+app.post('/api/b2b-prospects/crawler/resume', async (req, res) => {
+    try {
+        const result = await b2bCrawler.resume();
+        res.json(result);
+    } catch (e) {
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
+
+app.post('/api/b2b-prospects/crawler/stop', async (req, res) => {
+    try {
+        const result = await b2bCrawler.stop();
+        res.json(result);
+    } catch (e) {
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
+
+app.get('/api/b2b-prospects/crawler/status', (req, res) => {
+    res.json({ success: true, ...b2bCrawler.getStatus() });
+});
+
+// 10. Ejecutar Scraper en tiempo real (Capa 1 o Capa 2)
+app.post('/api/b2b-prospects/run-scraper', async (req, res) => {
+    try {
+        const { layer = 'CAPA_1_REMAX' } = req.body;
+        // Inicia el crawler autónomo Playwright Stealth en segundo plano
+        const crawlRes = await b2bCrawler.start({ layer, codigoEmpresa: req.body.codigoEmpresa || 'KRZMJI' });
+        res.json(crawlRes);
+    } catch (e) {
+        res.status(500).json({ success: false, error: e.message });
     }
 });
 

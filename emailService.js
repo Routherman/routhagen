@@ -615,6 +615,10 @@ async function sendMassEmailCampaign({ codigoEmpresa, campanaId, contacts = [], 
 
         // Reemplazo dinámico de variables
         const nombre = contact.nombre || 'Estimado/a';
+        const firstName = contact.first_name || (nombre ? nombre.split(' ')[0] : 'Estimado/a');
+        const lastName = contact.last_name || (nombre ? nombre.split(' ').slice(1).join(' ') : '');
+        const office = contact.office_name || contact.company_or_board || 'tu oficina';
+        const company = contact.company_or_board || 'RE/MAX';
         const rol = contact.grupo || contact.rol_asignado || 'Colaborador';
         const telefono = contact.telefono || '';
         const backendUrl = process.env.BACKEND_URL || 'http://localhost:8080';
@@ -635,6 +639,10 @@ async function sendMassEmailCampaign({ codigoEmpresa, campanaId, contacts = [], 
         }
 
         let personalizedHtml = baseContent
+            .replace(/\{\{First Name\}\}/gi, firstName)
+            .replace(/\{\{Last Name\}\}/gi, lastName)
+            .replace(/\{\{Office\}\}/gi, office)
+            .replace(/\{\{Company\}\}/gi, company)
             .replace(/\{\{nombre\}\}/gi, nombre)
             .replace(/\{\{email\}\}/gi, targetEmail)
             .replace(/\{\{rol\}\}/gi, rol)
@@ -662,6 +670,10 @@ async function sendMassEmailCampaign({ codigoEmpresa, campanaId, contacts = [], 
         }
 
         const personalizedSubject = subject
+            .replace(/\{\{First Name\}\}/gi, firstName)
+            .replace(/\{\{Last Name\}\}/gi, lastName)
+            .replace(/\{\{Office\}\}/gi, office)
+            .replace(/\{\{Company\}\}/gi, company)
             .replace(/\{\{nombre\}\}/gi, nombre)
             .replace(/\{\{rol\}\}/gi, rol)
             .replace(/\{\{fecha\}\}/gi, fechaSlot)

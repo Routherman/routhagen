@@ -108,8 +108,24 @@ const incomingMessageWorker = new Worker('incoming-messages', async (job) => {
                 ? flujosActivos.map(f => `- Flujo: "${f.nombre}" | Palabra Clave: "${f.trigger_keyword}"`).join('\n')
                 : 'No hay flujos automáticos activos.';
 
-            // 3. Información del contacto
-            const contactInfo = `Nombre/Remitente: ${dbContacto.nombre || cleanMessage.remitente}\nTeléfono: ${dbContacto.identificador_valor}`;
+            // 3. Información del contacto y verificación B2B
+            let b2bContext = '';
+            try {
+                const phoneDigits = (cleanMessage.identificador?.valor || '').replace(/\D/g, '');
+                if (phoneDigits.length >= 8) {
+                    const last8 = phoneDigits.slice(-8);
+                    const [b2bMatches] = await db.pool.query(
+                        'SELECT first_name, last_name, company_or_board, office_name, detected_role, assigned_bot_flow FROM b2b_prospects WHERE phone_e164 LIKE ? OR phone_raw LIKE ? LIMIT 1',
+                        [`%${last8}%`, `%${last8}%`]
+                    );
+                    if (b2bMatches && b2bMatches.length > 0) {
+                        const bp = b2bMatches[0];
+                        b2bContext = `\n[PROSPECTO B2B IDENTIFICADO]: ${bp.first_name} ${bp.last_name} de ${bp.office_name || bp.company_or_board}. Rol: ${bp.detected_role}. FLUJO BOT: ${bp.assigned_bot_flow}.\n`;
+                    }
+                }
+            } catch (b2bErr) {}
+
+            const contactInfo = `Nombre/Remitente: ${dbContacto.nombre || cleanMessage.remitente}\nTeléfono: ${dbContacto.identificador_valor}${b2bContext}`;
 
             // 4. Integrar todo en el prompt de la IA
             const contextoAdicional = `
@@ -132,18 +148,27 @@ ${flujosString}
 
             let aiResponse = await processMessageWithAI(cleanMessage.contenido, history, empresaContext);
             
-            // Extraer Rol asignado
+            // Extraer Rol / Sector de derivación
             const roleMatch = aiResponse.match(/\[ROLE:(.*?)\]/i);
+            let targetDepartment = null;
             if (roleMatch) {
-                const rolName = roleMatch[1].trim();
-                await db.actualizarAsignacionContacto(dbContacto.id, rolName);
+                targetDepartment = roleMatch[1].trim();
+                const currentGrp = (dbContacto.grupo || '').toUpperCase();
+                const isAsesor = currentGrp === 'ASESORES' || (dbContacto.rol_asignado || '').toLowerCase() === 'asesores';
+                const isInversor = currentGrp === 'INVERSORES' || (dbContacto.rol_asignado || '').toLowerCase() === 'inversores';
+
+                // Solo actualizar el rol del contacto si no es ya un Asesor o Inversor catalogado
+                if (!isAsesor && !isInversor) {
+                    await db.actualizarAsignacionContacto(dbContacto.id, targetDepartment);
+                    dbContacto.rol_asignado = targetDepartment;
+                }
                 aiResponse = aiResponse.replace(/\[ROLE:.*?\]/ig, '').trim();
-                console.log(`✅ [WORKER] Chat asignado al rol: ${rolName}`);
+                console.log(`✅ [WORKER] Consulta enrutada hacia sector: ${targetDepartment}`);
             }
             
             if (aiResponse.includes('[HANDOFF]')) {
                 console.log('⚠️ [WORKER] La IA derivó el chat a un humano. Guardando nuevo estado...');
-                await db.actualizarEstadoBot(dbContacto.id, 'HANDOFF');
+                await db.actualizarEstadoBot(dbContacto.id, 'HANDOFF', `Derivación por IA a operador humano (${targetDepartment || 'Soporte'})`);
                 
                 // Limpiamos la etiqueta para no mostrarla al usuario final
                 let msgToUser = aiResponse.replace(/\[HANDOFF\]/g, '').trim();
