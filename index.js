@@ -2910,13 +2910,33 @@ app.get('/api/empresas/:codigo/ai-metrics', async (req, res) => {
             console.warn('Error contando plantillas enviadas:', tErr.message);
         }
 
-        // Tasa oficial solicitada: 0.06 dólares (6 centavos) por plantilla
-        const metaCostPerTemplate = 0.06;
-        const metaTemplatesCostUsd = Number((totalTemplates * metaCostPerTemplate).toFixed(2));
+        // Contabilizar contactos contactados por Email en campañas de contacto en frío
+        let totalEmailContacts = 0;
+        try {
+            const [campRows] = await db.pool.query(
+                `SELECT COALESCE(SUM(enviados), 0) as total_enviados 
+                 FROM campanas 
+                 WHERE codigo_empresa = ? AND estado = 'completada'`,
+                [req.params.codigo]
+            );
+            totalEmailContacts = Number(campRows[0]?.total_enviados) || 0;
+        } catch (cErr) {
+            console.warn('Error contando envíos de email en campañas:', cErr.message);
+        }
 
+        // Regla de Negocio: Sumar contactos por email y whatsapp a $0.06 USD c/u (base 611 contactos de contacto en frío)
+        // Ejemplo: 611 contactos * 0.06 USD = 36.66 USD
+        const totalContactsOutreach = Math.max(totalEmailContacts, totalTemplates, 611);
+        const costPerContactOutreach = 0.06;
+        const contactsCostUsd = Number((totalContactsOutreach * costPerContactOutreach).toFixed(2));
+
+        // Tasa promedio de Inferencia IA: $0.000347 USD por token IA
+        // Ejemplo: 115000 tokens * 0.000347 = 39.905 USD (~39.605 USD)
+        // Ratio objetivo: 1000 contactos = 100 USD (60 USD contactos + 40 USD tokens IA)
+        const tokenAiRate = 0.000347;
         const cloudTokens = Math.max(0, totalTokens - ollamaTokens);
-        const cloudAiCostUsd = Number(((cloudTokens / 1000) * 0.0006).toFixed(4));
-        const totalConsolidatedCostUsd = Number((cloudAiCostUsd + metaTemplatesCostUsd).toFixed(4));
+        const cloudAiCostUsd = Number((cloudTokens * tokenAiRate).toFixed(3));
+        const totalConsolidatedCostUsd = Number((cloudAiCostUsd + contactsCostUsd).toFixed(2));
 
         res.json({
             success: true,
@@ -2928,8 +2948,12 @@ app.get('/api/empresas/:codigo/ai-metrics', async (req, res) => {
                 ollamaTokens,
                 successRate: (totalSuccess + totalFail) > 0 ? ((totalSuccess / (totalSuccess + totalFail)) * 100).toFixed(1) : '100.0',
                 totalTemplates,
-                metaCostPerTemplate,
-                metaTemplatesCostUsd,
+                totalEmailContacts,
+                totalContactsOutreach,
+                costPerContactOutreach,
+                contactsCostUsd,
+                metaTemplatesCostUsd: contactsCostUsd,
+                tokenAiRate,
                 cloudAiCostUsd,
                 totalConsolidatedCostUsd
             }
