@@ -177,7 +177,8 @@ class B2BProspectsService {
             );
             if (byPhone && byPhone.length > 0) existingId = byPhone[0].id;
         }
-        if (!existingId && data.source_url) {
+        // Solo matchear por source_url si es una URL específica de perfil individual de agente, no un padrón general
+        if (!existingId && data.source_url && (data.source_url.includes('/agente/') || data.source_url.includes('/perfil/'))) {
             const [byUrl] = await pool.query(
                 'SELECT id FROM b2b_prospects WHERE source_url = ? AND codigo_empresa = ? LIMIT 1',
                 [data.source_url, codigoEmpresa]
@@ -200,7 +201,29 @@ class B2BProspectsService {
         const brokerOwnerName = data.broker_owner_name || null;
         const city = data.city || null;
         const province = data.province || null;
-        const metaStr = data.metadata_extra ? (typeof data.metadata_extra === 'string' ? data.metadata_extra : JSON.stringify(data.metadata_extra)) : null;
+
+        const segmentoOrigen = data.segmento_origen || (
+            sourceLayer === 'CAPA_1_REMAX' ? 'FRANQUICIA_INMOBILIARIA' :
+            sourceLayer === 'CAPA_2_PADRONES_CORREDORES' ? 'CORREDORES_MATRICULADOS' :
+            sourceLayer === 'CAPA_3_PREVISIONALISTAS' ? 'ABOGADOS_PREVISIONALISTAS' :
+            sourceLayer === 'CAPA_5_PAS' ? 'PRODUCTOR_SEGUROS_PAS' : 'GENERAL'
+        );
+
+        const plantillaSugerida = data.plantilla_sugerida || (
+            segmentoOrigen === 'FRANQUICIA_INMOBILIARIA' ? 'PLANTILLA_FRANQUICIAS' :
+            segmentoOrigen === 'CORREDORES_MATRICULADOS' ? 'PLANTILLA_CORREDORES_MATRICULADOS' :
+            segmentoOrigen === 'ABOGADOS_PREVISIONALISTAS' ? 'PLANTILLA_PREVISIONAL' :
+            segmentoOrigen === 'PRODUCTOR_SEGUROS_PAS' ? 'PLANTILLA_PRODUCTORES_SEGUROS' : 'PLANTILLA_GENERAL'
+        );
+
+        // Ensure metadata_extra also contains the origin and template
+        let metaObj = {};
+        if (data.metadata_extra) {
+            metaObj = typeof data.metadata_extra === 'string' ? JSON.parse(data.metadata_extra) : { ...data.metadata_extra };
+        }
+        metaObj.origen_segmento = metaObj.origen_segmento || segmentoOrigen;
+        metaObj.plantilla_sugerida = metaObj.plantilla_sugerida || plantillaSugerida;
+        const metaStr = JSON.stringify(metaObj);
 
         if (existingId) {
             await pool.query(`
@@ -219,13 +242,15 @@ class B2BProspectsService {
                     city = COALESCE(?, city),
                     province = COALESCE(?, province),
                     source_layer = ?,
+                    segmento_origen = COALESCE(?, segmento_origen),
+                    plantilla_sugerida = COALESCE(?, plantilla_sugerida),
                     source_url = COALESCE(?, source_url),
                     metadata_extra = COALESCE(?, metadata_extra)
                 WHERE id = ? AND codigo_empresa = ?
             `, [
                 firstName, lastName, email, domain, phoneRaw, phoneE164,
                 detectedRole, assignedBotFlow, companyOrBoard, officeName, brokerOwnerName,
-                city, province, sourceLayer, sourceUrl, metaStr, existingId, codigoEmpresa
+                city, province, sourceLayer, segmentoOrigen, plantillaSugerida, sourceUrl, metaStr, existingId, codigoEmpresa
             ]);
             return { id: existingId, action: 'UPDATED' };
         }
@@ -235,13 +260,13 @@ class B2BProspectsService {
                 id, codigo_empresa, first_name, last_name, email, email_domain,
                 phone_raw, phone_e164, detected_role, assigned_bot_flow,
                 company_or_board, office_name, broker_owner_name, city, province,
-                source_layer, source_url, campaign_status, metadata_extra
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'NUEVO', ?)
+                source_layer, segmento_origen, plantilla_sugerida, source_url, campaign_status, metadata_extra
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'NUEVO', ?)
         `, [
             id, codigoEmpresa, firstName, lastName, email, domain,
             phoneRaw, phoneE164, detectedRole, assignedBotFlow,
             companyOrBoard, officeName, brokerOwnerName, city, province,
-            sourceLayer, sourceUrl, metaStr
+            sourceLayer, segmentoOrigen, plantillaSugerida, sourceUrl, metaStr
         ]);
 
         return { id, action: 'INSERTED' };
@@ -259,6 +284,8 @@ class B2BProspectsService {
             city,
             office,
             status,
+            segmento,
+            plantilla,
             search,
             limit = 50,
             offset = 0
@@ -270,6 +297,14 @@ class B2BProspectsService {
         if (layer && layer !== 'ALL') {
             query += ' AND source_layer = ?';
             params.push(layer);
+        }
+        if (segmento && segmento !== 'ALL') {
+            query += ' AND segmento_origen = ?';
+            params.push(segmento);
+        }
+        if (plantilla && plantilla !== 'ALL') {
+            query += ' AND plantilla_sugerida = ?';
+            params.push(plantilla);
         }
         if (role && role !== 'ALL') {
             query += ' AND detected_role = ?';
@@ -306,6 +341,8 @@ class B2BProspectsService {
         let countQuery = 'SELECT COUNT(*) as total FROM b2b_prospects WHERE codigo_empresa = ?';
         const countParams = [codigoEmpresa];
         if (layer && layer !== 'ALL') { countQuery += ' AND source_layer = ?'; countParams.push(layer); }
+        if (segmento && segmento !== 'ALL') { countQuery += ' AND segmento_origen = ?'; countParams.push(segmento); }
+        if (plantilla && plantilla !== 'ALL') { countQuery += ' AND plantilla_sugerida = ?'; countParams.push(plantilla); }
         if (role && role !== 'ALL') { countQuery += ' AND detected_role = ?'; countParams.push(role); }
         if (province && province !== 'ALL') { countQuery += ' AND province = ?'; countParams.push(province); }
         if (city && city !== 'ALL') { countQuery += ' AND city = ?'; countParams.push(city); }
@@ -368,6 +405,7 @@ class B2BProspectsService {
             maxPerDomain = 40,
             totalBatchSize = 50,
             targetRole = null, // 'ASESOR_POTENCIAL' o 'LIDER_BROKER_POTENCIAL' o null
+            targetSegment = null, // 'FRANQUICIA_INMOBILIARIA', 'CORREDORES_MATRICULADOS', 'PRODUCTOR_SEGUROS_PAS' o null
             webinarDate = 'Lunes 3 de Noviembre',
             webinarTime = '10:00',
             webinarTitle = 'Reunión Informativa Red de Asesores Independientes',
@@ -389,6 +427,11 @@ class B2BProspectsService {
         if (targetRole && targetRole !== 'ALL') {
             query += ' AND detected_role = ?';
             params.push(targetRole);
+        }
+
+        if (targetSegment && targetSegment !== 'ALL') {
+            query += ' AND segmento_origen = ?';
+            params.push(targetSegment);
         }
 
         // Orden aleatorio/rotativo para mezclar oficinas
@@ -477,6 +520,8 @@ class B2BProspectsService {
             'Office',
             'City',
             'Role_Type',
+            'Segmento_Origen',
+            'Plantilla_Sugerida',
             'Webinar_Date',
             'Webinar_Time',
             'Webinar_Title',
@@ -492,7 +537,7 @@ class B2BProspectsService {
 
         const rows = [headers.join(',')];
         for (const p of selected) {
-            const roleTypeDesc = p.detected_role === 'LIDER_BROKER_POTENCIAL' ? 'Broker / Martillero' : 'Asesor Inmobiliario';
+            const roleTypeDesc = p.detected_role === 'LIDER_BROKER_POTENCIAL' ? 'Broker / Martillero' : 'Asesor';
             const optOutUrl = `${optOutBaseUrl}?email=${encodeURIComponent(p.email)}&token=${p.id}`;
             const row = [
                 escapeCSV(p.first_name),
@@ -501,6 +546,8 @@ class B2BProspectsService {
                 escapeCSV(p.office_name || p.company_or_board || 'Red Inmobiliaria'),
                 escapeCSV(p.city || 'Argentina'),
                 escapeCSV(roleTypeDesc),
+                escapeCSV(p.segmento_origen || 'FRANQUICIA_INMOBILIARIA'),
+                escapeCSV(p.plantilla_sugerida || 'PLANTILLA_FRANQUICIAS'),
                 escapeCSV(webinarDate),
                 escapeCSV(webinarTime),
                 escapeCSV(webinarTitle),
