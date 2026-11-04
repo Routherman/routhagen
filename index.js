@@ -2081,7 +2081,7 @@ app.get('/api/empresas/:codigo/tickets', async (req, res) => {
 
 app.post('/api/empresas/:codigo/tickets', async (req, res) => {
     try {
-        const { contacto_id, customer_number, customer_name, status, summary, assigned_to_user_id, assigned_to_name } = req.body;
+        const { contacto_id, customer_number, customer_name, status, summary, assigned_to_user_id, assigned_to_name, priority, category, internal_notes } = req.body;
         const insertId = await db.crearTicket(
             req.params.codigo,
             contacto_id || null,
@@ -2090,12 +2090,141 @@ app.post('/api/empresas/:codigo/tickets', async (req, res) => {
             status || 'open',
             summary || null,
             assigned_to_user_id || null,
-            assigned_to_name || null
+            assigned_to_name || null,
+            priority || 'media',
+            category || 'General',
+            internal_notes || null
         );
         res.json({ success: true, id: insertId });
     } catch (error) {
         console.error('Error creando ticket:', error);
         res.status(500).json({ success: false, error: 'Error creando ticket' });
+    }
+});
+
+// Endpoint para reportar problema con captura, sector y trazabilidad de usuario
+app.post('/api/empresas/:codigo/tickets/report-problem', uploadMedia.single('screenshot'), async (req, res) => {
+    try {
+        const { sector, descripcion, urgencia, user_name, user_email, clerk_id, path_origen } = req.body;
+        const codigo = req.params.codigo;
+        
+        let screenshotUrl = null;
+        if (req.file) {
+            screenshotUrl = `/media/${req.file.filename}`;
+        }
+
+        const customerName = user_name || 'Usuario';
+        const customerNumber = user_email || 'Sin email';
+        const summary = `[INCIDENCIA] ${sector ? `(${sector}) ` : ''}${descripcion || 'Sin descripción'}`;
+        const priority = (urgencia || 'media').toLowerCase();
+        const category = 'Reporte de Problema';
+
+        let internalNotes = `Reportado por: ${customerName} (${customerNumber})\nClerk ID: ${clerk_id || 'N/A'}\nSector Derivado: ${sector || 'General'}\nUrgencia: ${priority.toUpperCase()}\nFecha/Hora: ${new Date().toLocaleString('es-AR')}`;
+        if (path_origen) {
+            internalNotes += `\nPantalla Origen: ${path_origen}`;
+        }
+        if (screenshotUrl) {
+            internalNotes += `\nCaptura adjunta: ${screenshotUrl}`;
+        }
+
+        const ticketId = await db.crearTicket(
+            codigo,
+            null, // contacto_id
+            customerNumber,
+            customerName,
+            'open',
+            summary,
+            null, // assigned_to_user_id
+            sector || 'Soporte',
+            priority,
+            category,
+            internalNotes
+        );
+
+        // Registrar en Audit Logs
+        try {
+            await db.registrarAuditLog({
+                codigo_empresa: codigo,
+                usuario_nombre: customerName,
+                rol: sector || 'Soporte',
+                accion: 'REPORTE_PROBLEMA',
+                entidad: 'tickets',
+                entidad_id: String(ticketId),
+                detalles: `Problema reportado por ${customerName} (${customerNumber}) para ${sector || 'Soporte'}: "${descripcion}". Urgencia: ${priority}`
+            });
+        } catch (auditErr) {
+            console.warn('Audit log error en reporte de problema:', auditErr.message);
+        }
+
+        res.json({
+            success: true,
+            ticketId,
+            screenshotUrl,
+            message: 'Incidencia reportada correctamente'
+        });
+    } catch (error) {
+        console.error('❌ Error creando reporte de problema:', error);
+        res.status(500).json({ success: false, error: 'Error al reportar el problema' });
+    }
+});
+
+// Endpoint para solicitud de credenciales / primer acceso de empresa o individuo
+app.post('/api/onboarding/request-access', async (req, res) => {
+    try {
+        const { tipo, nombre, email, telefono, cuit, rubro, direccion, detalles } = req.body;
+        const targetCodigo = 'KRZMJI'; // Empresa oficial Colaboratium
+
+        const summary = `[SOLICITUD ACCESO] ${tipo === 'empresa' ? 'Empresa' : 'Individuo'}: ${nombre} (${email})`;
+        const internalNotes = `--- SOLICITUD DE ACCESO CRM ---
+Tipo: ${tipo === 'empresa' ? 'Nueva Empresa' : 'Individuo / Asesor Independiente'}
+Nombre / Razón Social: ${nombre}
+Email de Contacto: ${email}
+Teléfono: ${telefono}
+CUIT / DNI: ${cuit || 'No especificado'}
+Rubro: ${rubro || 'General'}
+Dirección: ${direccion || 'No especificada'}
+Detalles / Necesidad: ${detalles || 'Ninguno'}
+Fecha: ${new Date().toLocaleString('es-AR')}`;
+
+        // 1. Crear ticket URGENTE en Colaboratium para Master
+        const ticketId = await db.crearTicket(
+            targetCodigo,
+            null,
+            email,
+            nombre,
+            'open',
+            summary,
+            null,
+            'Master / Admin',
+            'urgente',
+            'Solicitud de Cuenta / Onboarding',
+            internalNotes
+        );
+
+        // 2. Enviar email a colaboratium@gmail.com
+        try {
+            const emailService = require('./emailService');
+            await emailService.sendTicketEmail({
+                id: ticketId,
+                customer_name: nombre,
+                customer_number: email,
+                status: 'open',
+                priority: 'urgente',
+                summary,
+                internal_notes: internalNotes
+            }, 'colaboratium@gmail.com');
+        } catch (mailErr) {
+            console.warn('⚠️ No se pudo enviar email de notificación:', mailErr.message);
+        }
+
+        res.json({
+            success: true,
+            ticketId,
+            message: 'Solicitud registrada correctamente. Se notificó al equipo Master con prioridad urgente.'
+        });
+    } catch (error) {
+        console.error('❌ Error en solicitud de acceso:', error);
+        res.status(500).json({ success: false, error: 'Error al procesar solicitud de acceso' });
     }
 });
 
@@ -3531,5 +3660,14 @@ app.listen(PORT, async () => {
         scoreService.ensurePdfReglamentoFisico();
     } catch (scoreInitErr) {
         console.warn('⚠️ No se pudo inicializar scoreService en app.listen:', scoreInitErr.message);
+    }
+
+    try {
+        if (process.env.TELEGRAM_BOT_TOKEN) {
+            const telegramTunnel = require('./telegramTunnel');
+            telegramTunnel.startTelegramPolling();
+        }
+    } catch (tgErr) {
+        console.warn('⚠️ No se pudo inicializar telegramTunnel:', tgErr.message);
     }
 });
