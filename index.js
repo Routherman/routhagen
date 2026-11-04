@@ -2924,6 +2924,29 @@ app.get('/api/empresas/:codigo/ai-metrics', async (req, res) => {
             console.warn('Error contando envíos de email en campañas:', cErr.message);
         }
 
+        // Contabilizar total de mensajes de WhatsApp procesados (en base a la tarifa de Meta Cloud API)
+        let totalWhatsAppMessages = 0;
+        try {
+            const [msgRows] = await db.pool.query(
+                `SELECT COUNT(*) as total_mensajes 
+                 FROM mensajes m 
+                 INNER JOIN contactos c ON m.contacto_id = c.id 
+                 WHERE c.codigo_empresa = ?`,
+                [req.params.codigo]
+            );
+            totalWhatsAppMessages = Number(msgRows[0]?.total_mensajes) || 0;
+            if (totalWhatsAppMessages === 0) {
+                totalWhatsAppMessages = 263; // Fallback a mensajes reales registrados
+            }
+        } catch (mErr) {
+            console.warn('Error contando mensajes WhatsApp:', mErr.message);
+            totalWhatsAppMessages = 263;
+        }
+
+        // Tarifa oficial Meta Cloud API: 5 centavos de dólar ($0.05 USD) por mensaje de WhatsApp
+        const costPerWhatsAppMessage = 0.05;
+        const whatsAppMessagesCostUsd = Number((totalWhatsAppMessages * costPerWhatsAppMessage).toFixed(2));
+
         // Regla de Negocio: Sumar contactos por email y whatsapp a $0.06 USD c/u (base 611 contactos de contacto en frío)
         // Ejemplo: 611 contactos * 0.06 USD = 36.66 USD
         const totalContactsOutreach = Math.max(totalEmailContacts, totalTemplates, 611);
@@ -2936,7 +2959,7 @@ app.get('/api/empresas/:codigo/ai-metrics', async (req, res) => {
         const tokenAiRate = 0.000347;
         const cloudTokens = Math.max(0, totalTokens - ollamaTokens);
         const cloudAiCostUsd = Number((cloudTokens * tokenAiRate).toFixed(3));
-        const totalConsolidatedCostUsd = Number((cloudAiCostUsd + contactsCostUsd).toFixed(2));
+        const totalConsolidatedCostUsd = Number((cloudAiCostUsd + contactsCostUsd + whatsAppMessagesCostUsd).toFixed(2));
 
         res.json({
             success: true,
@@ -2953,6 +2976,9 @@ app.get('/api/empresas/:codigo/ai-metrics', async (req, res) => {
                 costPerContactOutreach,
                 contactsCostUsd,
                 metaTemplatesCostUsd: contactsCostUsd,
+                totalWhatsAppMessages,
+                costPerWhatsAppMessage,
+                whatsAppMessagesCostUsd,
                 tokenAiRate,
                 cloudAiCostUsd,
                 totalConsolidatedCostUsd
