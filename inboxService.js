@@ -11,7 +11,7 @@ function getImapClient() {
     if (!gmailPass) {
         throw new Error("No hay contraseña de aplicación configurada en SMTP_PASS");
     }
-    return new ImapFlow({
+    const client = new ImapFlow({
         host: "imap.gmail.com",
         port: 993,
         secure: true,
@@ -21,6 +21,13 @@ function getImapClient() {
         },
         logger: false
     });
+
+    // Capturar evento 'error' en ImapFlow para evitar crash por ECONNRESET/ETIMEDOUT de Gmail
+    client.on('error', (err) => {
+        console.warn(`[ImapFlow Warning] Evento de error en socket IMAP (${err.code || err.message}). Manejado de forma resiliente.`);
+    });
+
+    return client;
 }
 
 function getNodemailerTransport() {
@@ -39,11 +46,14 @@ const db = require('./database');
  * Obtiene la lista de correos recientes del Inbox de Gmail y vincula datos de CRM de contactos
  */
 async function getInboxEmails(limit = 35, codigoEmpresa = 'KRZMJI') {
-    const client = getImapClient();
-    await client.connect();
-    const lock = await client.getMailboxLock("INBOX");
+    let client = null;
+    let lock = null;
 
     try {
+        client = getImapClient();
+        await client.connect();
+        lock = await client.getMailboxLock("INBOX");
+
         const status = await client.status("INBOX", { messages: true, unseen: true });
         const total = status.messages || 0;
         const startSeq = Math.max(1, total - limit);
@@ -124,8 +134,12 @@ async function getInboxEmails(limit = 35, codigoEmpresa = 'KRZMJI') {
             account: gmailUser
         };
     } finally {
-        lock.release();
-        await client.logout();
+        if (lock) {
+            try { lock.release(); } catch (e) {}
+        }
+        if (client) {
+            try { await client.logout(); } catch (e) {}
+        }
     }
 }
 
@@ -133,11 +147,14 @@ async function getInboxEmails(limit = 35, codigoEmpresa = 'KRZMJI') {
  * Descarga y parsea el cuerpo completo de un correo por su UID
  */
 async function getEmailBody(uid) {
-    const client = getImapClient();
-    await client.connect();
-    const lock = await client.getMailboxLock("INBOX");
+    let client = null;
+    let lock = null;
 
     try {
+        client = getImapClient();
+        await client.connect();
+        lock = await client.getMailboxLock("INBOX");
+
         const msg = await client.download(uid, undefined, { uid: true });
         if (!msg || !msg.content) {
             return { success: false, error: "Mensaje no encontrado" };
@@ -162,8 +179,12 @@ async function getEmailBody(uid) {
             }
         };
     } finally {
-        lock.release();
-        await client.logout();
+        if (lock) {
+            try { lock.release(); } catch (e) {}
+        }
+        if (client) {
+            try { await client.logout(); } catch (e) {}
+        }
     }
 }
 

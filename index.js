@@ -3,7 +3,13 @@ const bodyParser = require('body-parser');
 const path = require('path');
 require('dotenv').config({ path: path.join(__dirname, '.env') });
 
-
+// Protección de resiliencia: Evitar que caídas transitorias de sockets (ECONNRESET, TLS) tumben el servidor
+process.on('uncaughtException', (err) => {
+    console.error('[UNCAUGHT EXCEPTION PREVENTED]:', err.code || err.message, err.stack?.split('\n')?.[1] || '');
+});
+process.on('unhandledRejection', (reason) => {
+    console.warn('[UNHANDLED REJECTION PREVENTED]:', reason?.message || reason);
+});
 
 const { processMessageWithAI, summarizeDocument } = require('./groqService');
 const { sendWhatsAppMessage, sendWhatsAppTemplate, downloadWhatsAppMedia } = require('./whatsappService');
