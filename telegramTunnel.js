@@ -14,18 +14,37 @@ const Groq = require('groq-sdk');
 
 const TELEGRAM_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const GROQ_TOKEN = process.env.GROQ_TOKEN;
-const ALLOWED_USER = process.env.TELEGRAM_ALLOWED_USER || ''; // ID o teléfono
+const TARGET_PHONE = '1136822400';
+const AUTH_FILE = path.join(__dirname, 'telegram_auth.json');
 const WORKSPACE_DIR = path.resolve(__dirname, '..');
 
 if (!TELEGRAM_TOKEN) {
     console.warn('⚠️ [TELEGRAM TUNNEL] TELEGRAM_BOT_TOKEN no configurado en .env.');
-    console.warn('ℹ️ Crea tu bot con @BotFather en Telegram y coloca TELEGRAM_BOT_TOKEN=tu_token en backend/.env');
+    console.warn('ℹ️ Coloca TELEGRAM_BOT_TOKEN en backend/.env con el formato 123456789:ABCDefgh...');
 }
 
 const groq = GROQ_TOKEN ? new Groq({ apiKey: GROQ_TOKEN }) : null;
 
+// Funciones de autenticación y persistencia
+function getAuthData() {
+    try {
+        if (fs.existsSync(AUTH_FILE)) {
+            return JSON.parse(fs.readFileSync(AUTH_FILE, 'utf8'));
+        }
+    } catch (e) {}
+    return { authorized_chat_id: null, phone: TARGET_PHONE };
+}
+
+function saveAuthData(data) {
+    try {
+        fs.writeFileSync(AUTH_FILE, JSON.stringify(data, null, 2), 'utf8');
+    } catch (e) {
+        console.error('Error guardando telegram_auth.json:', e);
+    }
+}
+
 // Enviar mensaje de texto a Telegram
-async function sendTelegramMessage(chatId, text, parseMode = 'HTML') {
+async function sendTelegramMessage(chatId, text, parseMode = 'HTML', replyMarkup = null) {
     if (!TELEGRAM_TOKEN) return;
     const url = `https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage`;
     
@@ -36,20 +55,24 @@ async function sendTelegramMessage(chatId, text, parseMode = 'HTML') {
         chunks.push(text.substring(i, i + maxLen));
     }
 
-    for (const chunk of chunks) {
+    for (let idx = 0; idx < chunks.length; idx++) {
+        const payload = {
+            chat_id: chatId,
+            text: chunks[idx],
+            parse_mode: parseMode
+        };
+        // Solo adjuntar reply_markup en el último chunk
+        if (replyMarkup && idx === chunks.length - 1) {
+            payload.reply_markup = replyMarkup;
+        }
+
         try {
-            await axios.post(url, {
-                chat_id: chatId,
-                text: chunk,
-                parse_mode: parseMode
-            }, { timeout: 15000 });
+            await axios.post(url, payload, { timeout: 15000 });
         } catch (err) {
             // Fallback sin parse_mode si falla el formateo HTML
             try {
-                await axios.post(url, {
-                    chat_id: chatId,
-                    text: chunk
-                }, { timeout: 15000 });
+                delete payload.parse_mode;
+                await axios.post(url, payload, { timeout: 15000 });
             } catch (fallbackErr) {
                 console.error('Error enviando mensaje a Telegram:', fallbackErr.message);
             }
@@ -122,11 +145,10 @@ function executeShellCommand(command, cwd = WORKSPACE_DIR) {
 
 // Procesar instrucción recibida (texto o audio transcrito)
 async function processInstruction(chatId, instruction, userName = '') {
-    console.log(`🤖 [TELEGRAM] Instrucción recibida de ${userName}: "${instruction}"`);
+    console.log(`🤖 [TELEGRAM] Instrucción de ${userName}: "${instruction}"`);
 
-    await sendTelegramMessage(chatId, `⏳ <b>Procesando orden con Antigravity / Routh Agent:</b>\n<i>"${instruction}"</i>`);
+    await sendTelegramMessage(chatId, `⏳ <b>Procesando orden con Antigravity:</b>\n<i>"${instruction}"</i>`);
 
-    // Comandos directos o scripts de la app
     let commandToRun = '';
     const cleanInst = instruction.trim();
 
@@ -138,20 +160,26 @@ async function processInstruction(chatId, instruction, userName = '') {
         commandToRun = 'cd frontend; npm run build';
     } else if (cleanInst.toLowerCase().includes('status') || cleanInst.toLowerCase().includes('estado')) {
         commandToRun = 'git status; node -v';
+    } else if (cleanInst.toLowerCase() === 'hola' || cleanInst.toLowerCase() === 'buenas') {
+        await sendTelegramMessage(
+            chatId, 
+            `👋 <b>¡Hola! Conexión activa con Antigravity & Routh Agent</b>\n\nCelular autorizado: <code>${TARGET_PHONE}</code>\nWorkspace: <code>${WORKSPACE_DIR}</code>\n\n¿Qué cambios deseas realizar hoy? Puedes escribirme o enviarme un audio de voz.`
+        );
+        return;
     } else {
-        // Enviar a la IA / agente para análisis y respuesta
+        // Enviar al Router Multi-IA de Colaboratium
         try {
             const aiRouter = require('./aiRouter');
             const aiResponse = await aiRouter.routeAiMessage(
-                `Eres el asistente técnico de Antigravity en Colaboratium conectado por Telegram al celular del creador (1136822400). Responde de forma concisa, técnica y accionable:\n\nUsuario solicita: "${instruction}"`,
+                `Eres el asistente técnico de Antigravity en Colaboratium conectado por Telegram al celular de Ignacio (1136822400). Responde de forma concisa, técnica y orientada a desarrollo:\n\nUsuario solicita: "${instruction}"`,
                 [],
                 { nombre: 'Colaboratium Admin', codigo: 'KRZMJI' }
             );
 
-            await sendTelegramMessage(chatId, `<b>Respuesta de Antigravity IA:</b>\n\n${aiResponse.content || aiResponse}`);
+            await sendTelegramMessage(chatId, `<b>Antigravity IA:</b>\n\n${aiResponse.content || aiResponse}`);
             return;
         } catch (aiErr) {
-            commandToRun = `echo "Instruccion recibida: ${cleanInst.replace(/"/g, '')}"`;
+            commandToRun = `echo "Instrucción recibida: ${cleanInst.replace(/"/g, '')}"`;
         }
     }
 
@@ -159,7 +187,7 @@ async function processInstruction(chatId, instruction, userName = '') {
         await sendTelegramMessage(chatId, `⚙️ <b>Ejecutando en consola:</b>\n<code>${commandToRun}</code>`);
         const result = await executeShellCommand(commandToRun);
 
-        let reply = `<b>Resultado (${result.duration}s):</b>\n`;
+        let reply = `<b>Consola (${result.duration}s):</b>\n`;
         if (result.stdout) {
             reply += `<pre>${result.stdout.substring(0, 3000)}</pre>\n`;
         }
@@ -181,7 +209,7 @@ async function startTelegramPolling() {
         return;
     }
 
-    console.log('🚀 [TELEGRAM TUNNEL] Conectado y escuchando mensajes y audios para Antigravity...');
+    console.log('🚀 [TELEGRAM TUNNEL] Conectado y escuchando exclusivamente para celular ' + TARGET_PHONE + '...');
     let offset = 0;
 
     while (true) {
@@ -196,9 +224,76 @@ async function startTelegramPolling() {
                 if (!msg) continue;
 
                 const chatId = msg.chat.id;
-                const userName = msg.from.first_name || msg.from.username || 'Celular 1136822400';
+                const userName = msg.from.first_name || msg.from.username || 'Celular ' + TARGET_PHONE;
+                let auth = getAuthData();
 
-                // Caso 1: Mensaje de Voz / Audio
+                // 1. Caso: Contacto compartido (verificación oficial de número de teléfono)
+                if (msg.contact) {
+                    const rawPhone = String(msg.contact.phone_number || '').replace(/\D/g, '');
+                    console.log(`📱 Contacto recibido: ${rawPhone}`);
+                    if (rawPhone.includes(TARGET_PHONE) || TARGET_PHONE.includes(rawPhone) || rawPhone.endsWith(TARGET_PHONE)) {
+                        auth.authorized_chat_id = chatId;
+                        auth.phone = rawPhone;
+                        auth.verified_at = new Date().toISOString();
+                        saveAuthData(auth);
+
+                        await sendTelegramMessage(
+                            chatId, 
+                            `✅ <b>¡Identidad Verificada!</b>\nEl celular <b>+${rawPhone}</b> ha sido autenticado como el único administrador autorizado para este túnel de Antigravity.\n\nYa puedes enviarme texto o audios de voz con tus pedidos para la app.`,
+                            'HTML',
+                            { remove_keyboard: true }
+                        );
+                        continue;
+                    } else {
+                        await sendTelegramMessage(chatId, `⛔ <b>Acceso denegado:</b> El número +${rawPhone} no coincide con el celular autorizado (${TARGET_PHONE}).`);
+                        continue;
+                    }
+                }
+
+                // 2. Comprobación de seguridad: Si no está verificado el chat_id
+                const isAuthorized = auth.authorized_chat_id && auth.authorized_chat_id === chatId;
+
+                // Si aún no hay ningún chat_id registrado y el usuario escribe "hola" o envía mensaje
+                if (!isAuthorized) {
+                    // Si el usuario escribe /auth o incluye su número
+                    const text = (msg.text || '').trim();
+                    if (text.includes(TARGET_PHONE) || text === '/auth' || !auth.authorized_chat_id) {
+                        // Si no había chat_id previo, registrar este chat como el del creador
+                        auth.authorized_chat_id = chatId;
+                        auth.phone = TARGET_PHONE;
+                        auth.verified_at = new Date().toISOString();
+                        saveAuthData(auth);
+                        console.log(`🔐 Chat ID ${chatId} autenticado automáticamente para ${TARGET_PHONE}`);
+
+                        await sendTelegramMessage(
+                            chatId,
+                            `✅ <b>¡Conexión Establecida con Antigravity!</b>\n\nTu chat ha quedado vinculado exclusivamente a tu celular <b>${TARGET_PHONE}</b>.\nCualquier mensaje o audio de voz que envíes se procesará directamente en tu proyecto.`,
+                            'HTML',
+                            { remove_keyboard: true }
+                        );
+
+                        // Si envió "hola", responder inmediatamente
+                        if (text.toLowerCase().includes('hola')) {
+                            await processInstruction(chatId, 'hola', userName);
+                        }
+                        continue;
+                    } else {
+                        // Rechazar acceso a terceros
+                        await sendTelegramMessage(
+                            chatId,
+                            `⛔ <b>Acceso Restringido</b>\nEste bot es un túnel privado exclusivo para el teléfono <b>${TARGET_PHONE}</b>.`,
+                            'HTML',
+                            {
+                                keyboard: [[{ text: `📱 Autenticar mi número (${TARGET_PHONE})`, request_contact: true }]],
+                                resize_keyboard: true,
+                                one_time_keyboard: true
+                            }
+                        );
+                        continue;
+                    }
+                }
+
+                // 3. Caso: Mensaje de Voz / Audio desde el teléfono autorizado
                 if (msg.voice || msg.audio) {
                     const fileId = msg.voice ? msg.voice.file_id : msg.audio.file_id;
                     await sendTelegramMessage(chatId, '🎙️ <i>Audio recibido. Transcribiendo con Groq Whisper v3...</i>');
@@ -214,12 +309,12 @@ async function startTelegramPolling() {
                         await sendTelegramMessage(chatId, `❌ Error transcribiendo audio: ${audioErr.message}`);
                     }
                 }
-                // Caso 2: Mensaje de Texto
+                // 4. Caso: Mensaje de Texto desde el teléfono autorizado
                 else if (msg.text) {
                     const text = msg.text.trim();
 
                     if (text === '/start') {
-                        await sendTelegramMessage(chatId, `👋 <b>¡Hola! Conexión activa con Antigravity & Routh Agent</b>\n\nPuedes enviarme:\n• <b>Texto:</b> Pidiendo cambios o instrucciones para la app.\n• <b>Audios de voz:</b> Los transcribo con Whisper e inicio la tarea.\n• <b>/cmd &lt;comando&gt;:</b> Ejecuta comandos directos y devuelve la salida de consola.\n\nEcosistema: <code>c:\\Users\\Administrador\\Desktop\\Routh-Agent</code>`);
+                        await sendTelegramMessage(chatId, `👋 <b>¡Hola! Conexión activa con Antigravity & Routh Agent</b>\n\nPuedes enviarme:\n• <b>Texto:</b> Pidiendo cambios o instrucciones para la app.\n• <b>Audios de voz:</b> Los transcribo con Whisper e inicio la tarea.\n• <b>/cmd &lt;comando&gt;:</b> Ejecuta comandos directos y devuelve la salida de consola.\n\nEcosistema: <code>${WORKSPACE_DIR}</code>`);
                     } else {
                         await processInstruction(chatId, text, userName);
                     }
