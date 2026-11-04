@@ -839,7 +839,7 @@ async function obtenerUsuariosPorEmpresa(codigo_empresa) {
         SELECT u.*, r.nombre as rol_nombre, r.privilegios as rol_privilegios 
         FROM users u 
         LEFT JOIN roles r ON u.rol_id = r.id 
-        WHERE u.codigo_empresa = ? 
+        WHERE UPPER(u.codigo_empresa) = UPPER(?) 
         ORDER BY u.creado_en DESC
     `, [codigo_empresa]);
     return rows;
@@ -887,9 +887,12 @@ async function crearEmpresa(clerkId, nombre, telefono, email, direccion, cuentas
 async function unirseEmpresa(clerkId, codigo) {
     if (!pool) return false;
     
-    const [empresas] = await pool.query('SELECT * FROM empresas WHERE codigo = ?', [codigo]);
+    const cleanCodigo = (codigo || '').trim().toUpperCase();
+    const [empresas] = await pool.query('SELECT * FROM empresas WHERE UPPER(codigo) = ?', [cleanCodigo]);
     if (empresas.length === 0) return false; // La empresa no existe
     
+    const empresaRealCodigo = empresas[0].codigo;
+
     // Obtener los datos del usuario que se está uniendo
     const [users] = await pool.query('SELECT * FROM users WHERE clerk_id = ?', [clerkId]);
     const user = users[0];
@@ -898,28 +901,40 @@ async function unirseEmpresa(clerkId, codigo) {
 
     let targetRoleId = null;
     if (adminEmails.includes(userEmail)) {
-        const [masterRoles] = await pool.query('SELECT id FROM roles WHERE codigo_empresa = ? AND nombre = "master"', [codigo]);
+        const [masterRoles] = await pool.query('SELECT id FROM roles WHERE UPPER(codigo_empresa) = UPPER(?) AND LOWER(nombre) = "master"', [empresaRealCodigo]);
         if (masterRoles.length > 0) targetRoleId = masterRoles[0].id;
+    } else {
+        // Por defecto asignar rol Asesor / Asesores si existe en la empresa, o dejarlo sin rol (null) pendiente de asignación
+        const [asesorRoles] = await pool.query(
+            'SELECT id FROM roles WHERE UPPER(codigo_empresa) = UPPER(?) AND LOWER(nombre) IN ("asesores", "asesor") ORDER BY id ASC LIMIT 1',
+            [empresaRealCodigo]
+        );
+        if (asesorRoles.length > 0) {
+            targetRoleId = asesorRoles[0].id;
+        } else {
+            targetRoleId = null;
+        }
     }
 
-    // Actualizar usuario: si NO es admin, queda SIN ROL (targetRoleId = null)
-    await pool.query('UPDATE users SET codigo_empresa = ?, rol_id = ? WHERE clerk_id = ?', [codigo, targetRoleId, clerkId]);
+    // Actualizar usuario: si NO es admin, queda con rol Asesor o sin rol (targetRoleId = null)
+    await pool.query('UPDATE users SET codigo_empresa = ?, rol_id = ? WHERE clerk_id = ?', [empresaRealCodigo, targetRoleId, clerkId]);
     
-    // Si NO es admin, generar automáticamente un ticket en Helpdesk para asignación de rol
+    // Si NO es admin, generar automáticamente un ticket en Helpdesk para asignación o confirmación de rol
     if (!adminEmails.includes(userEmail)) {
         const userName = `${user?.first_name || ''} ${user?.last_name || ''}`.trim() || userEmail;
+        const roleMsg = targetRoleId ? 'Asignado con rol Asesor por defecto.' : 'Sin rol asignado (pendiente de aprobación por Master).';
         await crearTicket(
-            codigo,
+            empresaRealCodigo,
             null, // contacto_id
             userEmail, // customer_number
             userName, // customer_name
             'open', // status
-            `Asignación de Rol para nuevo usuario: ${userName} (${userEmail})`, // summary
+            `Nuevo usuario registrado: ${userName} (${userEmail})`, // summary
             null, // assigned_to_user_id
             'Master / Admin', // assigned_to_name
             'alta', // priority
             'Asignación de Roles', // category
-            `Nuevo usuario registrado en la empresa ${codigo}. Por favor asignar rol correspondiente en la sección Equipo & Roles.`
+            `Nuevo usuario registrado en la empresa ${empresaRealCodigo}. ${roleMsg} Puede confirmar o reasignar su rol en la sección Equipo & Roles.`
         );
     }
     return true;
@@ -1057,7 +1072,8 @@ async function eliminarRol(id, codigo_empresa) {
  */
 async function asignarRolAUsuario(userId, rolId, codigo_empresa) {
     if (!pool) return false;
-    await pool.query('UPDATE users SET rol_id = ? WHERE id = ? AND codigo_empresa = ?', [rolId, userId, codigo_empresa]);
+    const finalRolId = (rolId !== '' && rolId !== null && rolId !== undefined && rolId !== 'null') ? Number(rolId) : null;
+    await pool.query('UPDATE users SET rol_id = ? WHERE id = ? AND UPPER(codigo_empresa) = UPPER(?)', [finalRolId, userId, codigo_empresa]);
     return true;
 }
 
