@@ -158,8 +158,8 @@ async function processInstruction(chatId, instruction, userName = '') {
         commandToRun = cleanInst;
     } else if (cleanInst.toLowerCase().includes('compilar') || cleanInst.toLowerCase().includes('build')) {
         commandToRun = 'cd frontend; npm run build';
-    } else if (cleanInst.toLowerCase().includes('status') || cleanInst.toLowerCase().includes('estado')) {
-        commandToRun = 'git status; node -v';
+    } else if (cleanInst.toLowerCase() === 'status' || cleanInst.toLowerCase() === 'estado' || cleanInst.toLowerCase() === '/status') {
+        commandToRun = 'Write-Host "=== BACKEND ==="; cd backend; git status -s; cd ..; Write-Host ""; Write-Host "=== FRONTEND ==="; cd frontend; git status -s; cd ..; Write-Host ""; Write-Host "Node: $(node -v)"';
     } else if (cleanInst.toLowerCase() === 'hola' || cleanInst.toLowerCase() === 'buenas') {
         await sendTelegramMessage(
             chatId, 
@@ -181,6 +181,12 @@ async function processInstruction(chatId, instruction, userName = '') {
         } catch (aiErr) {
             commandToRun = `echo "Instrucción recibida: ${cleanInst.replace(/"/g, '')}"`;
         }
+    }
+
+    // Inteligencia para comandos Git en estructura multi-repositorio (backend + frontend)
+    if (commandToRun && /^git\s+/i.test(commandToRun.trim()) && !commandToRun.includes('cd backend') && !commandToRun.includes('cd frontend')) {
+        const gitSubcmd = commandToRun.trim();
+        commandToRun = `Write-Host "=== BACKEND ==="; cd backend; ${gitSubcmd}; cd ..; Write-Host ""; Write-Host "=== FRONTEND ==="; cd frontend; ${gitSubcmd}; cd ..`;
     }
 
     if (commandToRun) {
