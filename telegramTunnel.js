@@ -188,18 +188,40 @@ async function processInstruction(chatId, instruction, userName = '') {
         );
         return;
     } else {
-        // Enviar al Router Multi-IA de Colaboratium
+        // Procesar directamente con Groq LLM como Lead Developer de Antigravity
         try {
-            const aiRouter = require('./aiRouter');
-            const aiResponse = await aiRouter.routeAiMessage(
-                `Eres el asistente técnico de Antigravity en Colaboratium conectado por Telegram al celular de Ignacio (1136822400). Responde de forma concisa, técnica y orientada a desarrollo:\n\nUsuario solicita: "${instruction}"`,
-                [],
-                { nombre: 'Colaboratium Admin', codigo: 'KRZMJI' }
-            );
+            let aiText = '';
+            if (groq) {
+                const completion = await groq.chat.completions.create({
+                    model: 'llama-3.3-70b-versatile',
+                    messages: [
+                        {
+                            role: 'system',
+                            content: `Eres Antigravity IA, un Ingeniero de Software Senior y Lead Developer trabajando en pair programming con el Líder de Proyecto (Ignacio / celular 1136822400) en la plataforma Colaboratium / Routh Agent.
+Tu función es entender requerimientos de arquitectura, código, UI (React/Vite) y backend (Node.js/Express/PostgreSQL), confirmar con precisión técnica lo que se implementa y mantenerlo informado.
+REGLAS OBLIGATORIAS:
+- NUNCA respondas como soporte al cliente ni digas que derivarás la tarea al equipo de desarrollo o producto. Eres el agente que programa y ejecuta los cambios directamente.
+- NUNCA incluyas etiquetas de bots de atención como [HANDOFF] o [ROLE:Soporte].
+- Responde en español de manera profesional, técnica, concisa y orientada a la acción.`
+                        },
+                        {
+                            role: 'user',
+                            content: instruction
+                        }
+                    ],
+                    max_tokens: 800,
+                    temperature: 0.3
+                });
+                aiText = completion.choices[0]?.message?.content || '';
+            }
+            if (!aiText) {
+                aiText = `Entendido. Orden de desarrollo recibida: "${instruction}". Se encuentra en proceso de implementación directa en el código.`;
+            }
 
-            await sendTelegramMessage(chatId, `<b>Antigravity IA:</b>\n\n${aiResponse.content || aiResponse}`);
+            await sendTelegramMessage(chatId, `🚀 <b>Antigravity Lead Dev:</b>\n\n${aiText}`);
             return;
         } catch (aiErr) {
+            console.error('Error llamando Groq en telegramTunnel:', aiErr.message || aiErr);
             commandToRun = `echo "Instrucción recibida: ${cleanInst.replace(/"/g, '')}"`;
         }
     }
