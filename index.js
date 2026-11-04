@@ -2790,6 +2790,34 @@ app.post('/api/empresas/:codigo/scores/evento', async (req, res) => {
     }
 });
 
+app.get('/api/empresas/:codigo/scores/reglas', (req, res) => {
+    try {
+        const scoreService = require('./scoreService');
+        res.json({ success: true, reglas: scoreService.REGLAS_SCORE_2026 });
+    } catch (error) {
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+app.put('/api/empresas/:codigo/scores/:id/disponibilidad', async (req, res) => {
+    try {
+        const scoreService = require('./scoreService');
+        const { horario_inicio, horario_fin, dias_laborales, disponibilidad_activa } = req.body;
+        const result = await scoreService.actualizarDisponibilidad(db.pool, {
+            codigoEmpresa: req.params.codigo,
+            identificador: req.params.id,
+            horario_inicio,
+            horario_fin,
+            dias_laborales,
+            disponibilidad_activa
+        });
+        res.json({ success: true, ...result });
+    } catch (error) {
+        console.error('Error actualizando disponibilidad:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
 app.post('/api/empresas/:codigo/crm/contacts', async (req, res) => {
     try {
         const insertId = await db.crearContactoCRM(req.params.codigo, req.body);

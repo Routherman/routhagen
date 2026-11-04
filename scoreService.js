@@ -86,10 +86,28 @@ async function initScoreTables(pool) {
                 volumen_cartera DECIMAL(14,2) DEFAULT 0,
                 reclamos_abiertos INT DEFAULT 0,
                 tasa_resolucion_pct DECIMAL(5,2) DEFAULT 100.00,
+                horario_inicio VARCHAR(10) DEFAULT '09:00',
+                horario_fin VARCHAR(10) DEFAULT '18:00',
+                dias_laborales VARCHAR(100) DEFAULT 'Lunes a Viernes',
+                disponibilidad_activa TINYINT(1) DEFAULT 1,
                 actualizado_en TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
                 UNIQUE KEY uk_empresa_identificador (codigo_empresa, identificador)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
         `);
+
+        // Migración retrocompatible en caso de tabla existente
+        try {
+            await pool.query("ALTER TABLE score_usuarios ADD COLUMN horario_inicio VARCHAR(10) DEFAULT '09:00'");
+        } catch (e) {}
+        try {
+            await pool.query("ALTER TABLE score_usuarios ADD COLUMN horario_fin VARCHAR(10) DEFAULT '18:00'");
+        } catch (e) {}
+        try {
+            await pool.query("ALTER TABLE score_usuarios ADD COLUMN dias_laborales VARCHAR(100) DEFAULT 'Lunes a Viernes'");
+        } catch (e) {}
+        try {
+            await pool.query("ALTER TABLE score_usuarios ADD COLUMN disponibilidad_activa TINYINT(1) DEFAULT 1");
+        } catch (e) {}
 
         await pool.query(`
             CREATE TABLE IF NOT EXISTS score_historial_eventos (
@@ -350,10 +368,131 @@ async function obtenerScoreDetalle(pool, codigoEmpresa = 'KRZMJI', identificador
 }
 
 /**
- * Genera el documento PDF oficial del Reglamento y Sistema de Medición de Score
+ * Diccionario oficial de Reglas de Puntuación Colaboratium 2026 (Disponibilidad Declarada)
+ */
+const REGLAS_SCORE_2026 = {
+    // 01. Regla de oro temporal
+    DISPONIBILIDAD: {
+        descripcion: 'Los tiempos solo cuentan en el horario que cada persona informó como disponible. Si llega una consulta fuera de ese horario, el tiempo comienza a contar cuando vuelve a estar disponible.'
+    },
+    // 02. Asesores Comerciales
+    ASESORES: {
+        RESPUESTA_MENOR_5MIN: { puntos: 15, tipo: 'SUMA', desc: 'Respuesta inicial al Lead en < 5 minutos desde la asignación' },
+        RESPUESTA_5_A_15MIN: { puntos: 8, tipo: 'SUMA', desc: 'Respuesta entre 5 y 15 minutos desde la asignación' },
+        ASISTENCIA_WEBINAR_LEAD: { puntos: 20, tipo: 'SUMA', desc: 'Lead derivado que asiste y participa de Webinar / Meet' },
+        INVERSION_CERRADA: { puntos: 50, tipo: 'SUMA', desc: 'Inversión cerrada y liquidada con éxito por el inversor' },
+        REINVERSION_CONFIRMADA: { puntos: 35, tipo: 'SUMA', desc: 'Reinversión confirmada (renovación de capital / retención)' },
+        FICHA_CRM_VALIDADA: { puntos: 10, tipo: 'SUMA', desc: 'Ficha CRM 100% validada (DNI, CBU/Alias, Perfil Inversor)' },
+        LEAD_SIN_CONTACTO_1H: { puntos: -10, tipo: 'RESTA', desc: 'Lead asignado sin contactar tras más de 1 hora' },
+        LEAD_SIN_CONTACTO_24H: { puntos: -40, tipo: 'RESTA', desc: 'Lead sin contactar tras 24 hs (Reasignación automática)' },
+        RECLAMO_INVERSOR_ABIERTO: { puntos: -30, tipo: 'RESTA', desc: 'Ticket de reclamo abierto por un inversor de su cartera' },
+        AUSENTISMO_REUNION: { puntos: -50, tipo: 'RESTA', desc: 'Ausentismo en reunión o webinar confirmado con candidatos' }
+    },
+    // 03. Líderes de Equipo
+    LIDERES: {
+        SOPORTE_ASESOR_MENOR_15MIN: { puntos: 10, tipo: 'SUMA', desc: 'Respuesta y soporte a consultas de sus asesores en < 15 minutos' },
+        PRIMERA_COLOCACION_ASESOR: { puntos: 30, tipo: 'SUMA', desc: 'Asesor de su equipo que concreta su primera colocación' },
+        META_MENSUAL_EQUIPO: { puntos: 100, tipo: 'SUMA', desc: 'Equipo que alcanza o supera la meta mensual estipulada' },
+        DICTADO_WEBINAR_COACHING: { puntos: 25, tipo: 'SUMA', desc: 'Dictado de Webinar de Capacitación o Coaching grupal' },
+        CONSULTA_INTERNA_SIN_RESPUESTA_4H: { puntos: -20, tipo: 'RESTA', desc: 'Asesor con consulta interna sin respuesta por más de 4 horas' },
+        ASESORES_INACTIVOS_14D: { puntos: -15, tipo: 'RESTA', desc: 'Asesores inactivos (>14 días sin actividad) sin gestión documentada' },
+        CAMBIO_LIDER_DESATENCION: { puntos: -50, tipo: 'RESTA', desc: 'Solicitud formal de cambio de líder por desatención' }
+    },
+    // 04. Roles Operativos del Team
+    TEAM: {
+        SOPORTE_FCR: { puntos: 20, tipo: 'SUMA', desc: '[SOPORTE] Resolución de ticket en primer contacto (FCR)' },
+        SOPORTE_RESPUESTA_MENOR_3MIN: { puntos: 10, tipo: 'SUMA', desc: '[SOPORTE] Tiempo de primera respuesta < 3 minutos en Helpdesk' },
+        SOPORTE_5_ESTRELLAS: { puntos: 15, tipo: 'SUMA', desc: '[SOPORTE] Calificación de 5 estrellas en encuesta de satisfacción' },
+        SOPORTE_TICKET_VENCIDO_SLA: { puntos: -20, tipo: 'RESTA', desc: '[SOPORTE] Ticket vencido fuera del SLA estipulado (<2 hs)' },
+        CREDITOS_ACREDITACION_MENOR_30MIN: { puntos: 15, tipo: 'SUMA', desc: '[CRÉDITOS] Conciliación y acreditación de fondos en < 30 minutos' },
+        CREDITOS_SEMANA_CERO_DISCREPANCIAS: { puntos: 50, tipo: 'SUMA', desc: '[CRÉDITOS] Semana completa con 0 discrepancias bancarias' },
+        CREDITOS_ERROR_LIQUIDACION: { puntos: -60, tipo: 'RESTA', desc: '[CRÉDITOS] Error en carga de CBU o liquidación que genere reclamo' },
+        COMPLIANCE_KYC_MENOR_2H: { puntos: 10, tipo: 'SUMA', desc: '[COMPLIANCE] Validación y aprobación de legajo KYC en < 2 horas' },
+        COMPLIANCE_APROBACION_NEGLIGENTE: { puntos: -50, tipo: 'RESTA', desc: '[COMPLIANCE] Aprobación negligente de legajo adulterado o inválido' }
+    }
+};
+
+/**
+ * Calcula los minutos efectivos transcurridos respetando la Disponibilidad Declarada:
+ * Los tiempos solo cuentan en el horario que cada persona informó como disponible.
+ * Si llega una consulta fuera de ese horario, el tiempo comienza a contar cuando vuelve a estar disponible.
+ */
+function calcularMinutosEfectivos(fechaAsignacion, fechaRespuesta = new Date(), horario = {}) {
+    const inicioStr = horario.horario_inicio || '09:00';
+    const finStr = horario.horario_fin || '18:00';
+    const [startH, startM] = inicioStr.split(':').map(Number);
+    const [endH, endM] = finStr.split(':').map(Number);
+
+    const asigDate = new Date(fechaAsignacion);
+    const respDate = new Date(fechaRespuesta);
+
+    let effectiveStart = new Date(asigDate);
+    const asigHour = asigDate.getHours() + asigDate.getMinutes() / 60;
+    const startHour = startH + startM / 60;
+    const endHour = endH + endM / 60;
+
+    // Si llegó después del fin de jornada, pasa al inicio del día siguiente disponible
+    if (asigHour >= endHour) {
+        effectiveStart.setDate(effectiveStart.getDate() + 1);
+        effectiveStart.setHours(startH, startM, 0, 0);
+    } else if (asigHour < startHour) {
+        effectiveStart.setHours(startH, startM, 0, 0);
+    }
+
+    // Si es fin de semana (sábado=6, domingo=0), trasladar al lunes al inicio de jornada
+    if (effectiveStart.getDay() === 6) {
+        effectiveStart.setDate(effectiveStart.getDate() + 2);
+        effectiveStart.setHours(startH, startM, 0, 0);
+    } else if (effectiveStart.getDay() === 0) {
+        effectiveStart.setDate(effectiveStart.getDate() + 1);
+        effectiveStart.setHours(startH, startM, 0, 0);
+    }
+
+    const diffMs = Math.max(0, respDate.getTime() - effectiveStart.getTime());
+    return Math.round(diffMs / 60000);
+}
+
+/**
+ * Actualiza el horario de disponibilidad declarada de un usuario o asesor
+ */
+async function actualizarDisponibilidad(pool, {
+    codigoEmpresa = 'KRZMJI',
+    identificador,
+    horario_inicio = '09:00',
+    horario_fin = '18:00',
+    dias_laborales = 'Lunes a Viernes',
+    disponibilidad_activa = 1
+}) {
+    if (!pool || !identificador) return { success: false, error: 'Identificador requerido' };
+    const idKey = identificador.startsWith('contacto_') || identificador.startsWith('user_') ? identificador : `contacto_${identificador}`;
+    await pool.query(`
+        UPDATE score_usuarios 
+        SET horario_inicio = ?, horario_fin = ?, dias_laborales = ?, disponibilidad_activa = ?, actualizado_en = CURRENT_TIMESTAMP
+        WHERE codigo_empresa = ? AND identificador = ?
+    `, [horario_inicio, horario_fin, dias_laborales, disponibilidad_activa ? 1 : 0, codigoEmpresa, idKey]);
+    return { success: true, horario_inicio, horario_fin, dias_laborales, disponibilidad_activa };
+}
+
+/**
+ * Genera o envía el documento PDF oficial del Reglamento y Sistema de Medición de Score
  * y lo envía por stream o lo guarda en el filesystem
  */
 function generarPdfReglamentoScore(streamOrRes) {
+    // Si existe el PDF oficial de 2 páginas con Disponibilidad Declarada en RAG o public, entregarlo directamente
+    const ragPdf = path.join(__dirname, '..', 'RAG', 'Colaboratium Reglamento Score 2026 Disponibilidad Declarada.pdf');
+    const publicPdf = path.join(__dirname, 'public', 'downloads', 'Reglamento_Sistema_de_Puntos_Colaboratium.pdf');
+    const sourcePdf = (fs.existsSync(ragPdf) && fs.statSync(ragPdf).size > 50000) ? ragPdf : ((fs.existsSync(publicPdf) && fs.statSync(publicPdf).size > 50000) ? publicPdf : null);
+
+    if (sourcePdf) {
+        if (typeof streamOrRes.sendFile === 'function') {
+            return streamOrRes.sendFile(sourcePdf);
+        }
+        if (typeof streamOrRes.pipe === 'function') {
+            const readStream = fs.createReadStream(sourcePdf);
+            return readStream.pipe(streamOrRes);
+        }
+    }
+
     const doc = new PDFDocument({
         size: 'A4',
         margin: 40,
@@ -361,7 +500,7 @@ function generarPdfReglamentoScore(streamOrRes) {
             Title: 'Reglamento Oficial - Sistema de Puntuación y Rendimiento 360°',
             Author: 'Colaboratium Dirección Central',
             Subject: 'Métricas, KPIs y Beneficios para Asesores, Líderes y Team Operativo',
-            Keywords: 'Colaboratium, Score, Rendimiento, Asesores, Líderes, SLA'
+            Keywords: 'Colaboratium, Score, Rendimiento, Asesores, Líderes, SLA, Disponibilidad Declarada'
         }
     });
 
@@ -664,6 +803,14 @@ function ensurePdfReglamentoFisico() {
             fs.mkdirSync(publicDir, { recursive: true });
         }
         const filePath = path.join(publicDir, 'Reglamento_Sistema_de_Puntos_Colaboratium.pdf');
+        const ragPdf = path.join(__dirname, '..', 'RAG', 'Colaboratium Reglamento Score 2026 Disponibilidad Declarada.pdf');
+
+        if (fs.existsSync(ragPdf) && fs.statSync(ragPdf).size > 50000) {
+            fs.copyFileSync(ragPdf, filePath);
+            console.log(`✅ [SCORE PDF]: Archivo oficial con Disponibilidad Declarada sincronizado (${fs.statSync(filePath).size} bytes) en: ${filePath}`);
+            return;
+        }
+
         const writeStream = fs.createWriteStream(filePath);
         generarPdfReglamentoScore(writeStream);
         console.log(`✅ [SCORE PDF]: Archivo físico generado en: ${filePath}`);
@@ -680,5 +827,8 @@ module.exports = {
     obtenerScoresRanking,
     obtenerScoreDetalle,
     generarPdfReglamentoScore,
-    ensurePdfReglamentoFisico
+    ensurePdfReglamentoFisico,
+    calcularMinutosEfectivos,
+    actualizarDisponibilidad,
+    REGLAS_SCORE_2026
 };

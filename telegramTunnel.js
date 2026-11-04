@@ -143,9 +143,30 @@ function executeShellCommand(command, cwd = WORKSPACE_DIR) {
     });
 }
 
+function recordTelegramTask(instruction, author = 'Ignacio (1136822400)') {
+    const tasksFile = path.join(__dirname, 'telegram_tasks.json');
+    let tasks = [];
+    try {
+        if (fs.existsSync(tasksFile)) tasks = JSON.parse(fs.readFileSync(tasksFile, 'utf8'));
+    } catch(e) {}
+    const newTask = {
+        id: Date.now(),
+        fecha: new Date().toISOString(),
+        autor: author,
+        solicitud: instruction,
+        estado: 'REGISTRADA'
+    };
+    tasks.unshift(newTask);
+    try {
+        fs.writeFileSync(tasksFile, JSON.stringify(tasks.slice(0, 100), null, 2), 'utf8');
+    } catch(e) {}
+    return newTask;
+}
+
 // Procesar instrucción recibida (texto o audio transcrito)
 async function processInstruction(chatId, instruction, userName = '') {
     console.log(`🤖 [TELEGRAM] Instrucción de ${userName}: "${instruction}"`);
+    recordTelegramTask(instruction, userName);
 
     await sendTelegramMessage(chatId, `⏳ <b>Procesando orden con Antigravity:</b>\n<i>"${instruction}"</i>`);
 
