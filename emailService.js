@@ -548,7 +548,10 @@ async function sendMassEmailCampaign({ codigoEmpresa, campanaId, contacts = [], 
     const { getAvailableWebinarSlots } = require('./googleCalendarService');
     let calendarSlots = [];
     try {
-        calendarSlots = await getAvailableWebinarSlots(codigoEmpresa, 'asesores');
+        const allSlots = await getAvailableWebinarSlots(codigoEmpresa, null);
+        const customSlots = (allSlots || []).filter(s => s.isCustom || s.dbId || (s.id >= 5 && s.id <= 8));
+        calendarSlots = customSlots.length > 0 ? customSlots : (allSlots || []);
+
         if (selectedSlotIds && selectedSlotIds.length > 0) {
             const filtered = calendarSlots.filter(s => selectedSlotIds.includes(s.id) || selectedSlotIds.includes(String(s.id)) || selectedSlotIds.includes(Number(s.id)));
             if (filtered.length > 0) {
@@ -621,6 +624,7 @@ async function sendMassEmailCampaign({ codigoEmpresa, campanaId, contacts = [], 
         const company = contact.company_or_board || 'RE/MAX';
         const rol = contact.grupo || contact.rol_asignado || 'Colaborador';
         const telefono = contact.telefono || '';
+        const city = contact.city || contact.localidad || 'Buenos Aires';
         const backendUrl = process.env.BACKEND_URL || 'http://localhost:8080';
         const enlaceBaja = `${backendUrl}/api/campanas/desuscribir?email=${encodeURIComponent(targetEmail)}&empresa=${encodeURIComponent(codigoEmpresa)}`;
 
@@ -643,6 +647,7 @@ async function sendMassEmailCampaign({ codigoEmpresa, campanaId, contacts = [], 
             .replace(/\{\{Last Name\}\}/gi, lastName)
             .replace(/\{\{Office\}\}/gi, office)
             .replace(/\{\{Company\}\}/gi, company)
+            .replace(/\{\{City\}\}/gi, city)
             .replace(/\{\{nombre\}\}/gi, nombre)
             .replace(/\{\{email\}\}/gi, targetEmail)
             .replace(/\{\{rol\}\}/gi, rol)
@@ -674,6 +679,7 @@ async function sendMassEmailCampaign({ codigoEmpresa, campanaId, contacts = [], 
             .replace(/\{\{Last Name\}\}/gi, lastName)
             .replace(/\{\{Office\}\}/gi, office)
             .replace(/\{\{Company\}\}/gi, company)
+            .replace(/\{\{City\}\}/gi, city)
             .replace(/\{\{nombre\}\}/gi, nombre)
             .replace(/\{\{rol\}\}/gi, rol)
             .replace(/\{\{fecha\}\}/gi, fechaSlot)
