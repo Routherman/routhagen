@@ -143,30 +143,150 @@ function executeShellCommand(command, cwd = WORKSPACE_DIR) {
     });
 }
 
-function recordTelegramTask(instruction, author = 'Ignacio (1136822400)') {
+const RAG_DIR = path.join(WORKSPACE_DIR, 'RAG');
+const RAG_LOG_FILE = path.join(RAG_DIR, 'log.txt');
+
+function appendToRagLog({ id, fecha, autor, tipo, solicitud, estado, respuesta, duracion }) {
+    try {
+        if (!fs.existsSync(RAG_DIR)) {
+            fs.mkdirSync(RAG_DIR, { recursive: true });
+        }
+        const fechaObj = fecha ? new Date(fecha) : new Date();
+        const fechaLegible = fechaObj.toLocaleString('es-AR', { timeZone: 'America/Argentina/Buenos_Aires' });
+        
+        const lineas = [
+            `================================================================================`,
+            `📅 [${fechaLegible}] | PEDIDO #${id} | ESTADO: ${estado}`,
+            `👤 AUTOR: ${autor || 'Ignacio (1136822400)'} | TIPO: ${tipo || 'TEXTO'}`,
+            `📝 SOLICITUD:`,
+            `"${(solicitud || '').trim()}"`
+        ];
+        if (respuesta) {
+            lineas.push(``, `🤖 RESPUESTA / RESOLUCIÓN ANTIGRAVITY:`, respuesta.trim());
+        }
+        if (duracion) {
+            lineas.push(`⏱️ TIEMPO DE RESPUESTA: ${duracion}s`);
+        }
+        lineas.push(`================================================================================\n`);
+
+        fs.appendFileSync(RAG_LOG_FILE, lineas.join('\n'), 'utf8');
+    } catch (e) {
+        console.error('Error escribiendo en RAG/log.txt:', e.message);
+    }
+}
+
+function recordTelegramTask(instruction, author = 'Ignacio (1136822400)', tipo = 'TEXTO') {
     const tasksFile = path.join(__dirname, 'telegram_tasks.json');
     let tasks = [];
     try {
         if (fs.existsSync(tasksFile)) tasks = JSON.parse(fs.readFileSync(tasksFile, 'utf8'));
     } catch(e) {}
+    const taskId = Date.now();
     const newTask = {
-        id: Date.now(),
+        id: taskId,
         fecha: new Date().toISOString(),
         autor: author,
+        tipo: tipo,
         solicitud: instruction,
-        estado: 'REGISTRADA'
+        estado: 'PROCESANDO'
     };
     tasks.unshift(newTask);
     try {
         fs.writeFileSync(tasksFile, JSON.stringify(tasks.slice(0, 100), null, 2), 'utf8');
     } catch(e) {}
+
+    // Registrar en RAG/log.txt
+    appendToRagLog({
+        id: taskId,
+        fecha: newTask.fecha,
+        autor: author,
+        tipo: tipo,
+        solicitud: instruction,
+        estado: '⏳ RECIBIDO Y PROCESANDO'
+    });
+
     return newTask;
 }
 
+function resolveTelegramTask(taskId, respuesta, duracion = null, estado = '✅ RESUELTO POR ANTIGRAVITY') {
+    const tasksFile = path.join(__dirname, 'telegram_tasks.json');
+    try {
+        if (fs.existsSync(tasksFile)) {
+            let tasks = JSON.parse(fs.readFileSync(tasksFile, 'utf8'));
+            const idx = tasks.findIndex(t => t.id === taskId);
+            if (idx !== -1) {
+                tasks[idx].estado = estado;
+                tasks[idx].respuesta = respuesta;
+                if (duracion) tasks[idx].duracion = duracion;
+                fs.writeFileSync(tasksFile, JSON.stringify(tasks, null, 2), 'utf8');
+            }
+        }
+    } catch(e) {}
+
+    // Actualizar en RAG/log.txt
+    appendToRagLog({
+        id: taskId,
+        fecha: new Date().toISOString(),
+        autor: 'Antigravity Lead Dev',
+        tipo: 'RESOLUCIÓN',
+        solicitud: `Actualización de resolución para Pedido #${taskId}`,
+        estado: estado,
+        respuesta: respuesta,
+        duracion: duracion
+    });
+}
+
+async function callDeveloperLLM(systemPrompt, userInstruction) {
+    const messages = [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userInstruction }
+    ];
+
+    if (groq) {
+        const candidateModels = ['openai/gpt-oss-120b', 'llama-3.1-8b-instant', 'llama3-70b-8192', 'llama-3.3-70b-versatile'];
+        for (const model of candidateModels) {
+            try {
+                const completion = await groq.chat.completions.create({
+                    model,
+                    messages,
+                    max_tokens: 800,
+                    temperature: 0.3
+                });
+                const txt = completion.choices[0]?.message?.content;
+                if (txt) return txt;
+            } catch (err) {
+                console.warn(`[TELEGRAM TUNNEL] Groq ${model} falló: ${err.message}`);
+            }
+        }
+    }
+
+    if (process.env.CEREBRAS_API_KEY) {
+        try {
+            const cres = await axios.post('https://api.cerebras.ai/v1/chat/completions', {
+                model: 'llama3.1-8b',
+                messages,
+                max_tokens: 800,
+                temperature: 0.3
+            }, {
+                headers: { 'Authorization': `Bearer ${process.env.CEREBRAS_API_KEY}` },
+                timeout: 10000
+            });
+            const ctxt = cres.data?.choices?.[0]?.message?.content;
+            if (ctxt) return ctxt;
+        } catch(e) {
+            console.warn(`[TELEGRAM TUNNEL] Cerebras falló: ${e.message}`);
+        }
+    }
+
+    return `Entendido. Orden de desarrollo recibida: "${userInstruction}". Se encuentra en proceso de implementación directa en el código.`;
+}
+
 // Procesar instrucción recibida (texto o audio transcrito)
-async function processInstruction(chatId, instruction, userName = '') {
-    console.log(`🤖 [TELEGRAM] Instrucción de ${userName}: "${instruction}"`);
-    recordTelegramTask(instruction, userName);
+async function processInstruction(chatId, instruction, userName = '', tipo = 'TEXTO') {
+    console.log(`🤖 [TELEGRAM] Instrucción de ${userName} (${tipo}): "${instruction}"`);
+    const task = recordTelegramTask(instruction, userName, tipo);
+    const taskId = task.id;
+    const startTime = Date.now();
 
     await sendTelegramMessage(chatId, `⏳ <b>Procesando orden con Antigravity:</b>\n<i>"${instruction}"</i>`);
 
@@ -182,46 +302,28 @@ async function processInstruction(chatId, instruction, userName = '') {
     } else if (cleanInst.toLowerCase() === 'status' || cleanInst.toLowerCase() === 'estado' || cleanInst.toLowerCase() === '/status') {
         commandToRun = 'Write-Host "=== BACKEND ==="; cd backend; git status -s; cd ..; Write-Host ""; Write-Host "=== FRONTEND ==="; cd frontend; git status -s; cd ..; Write-Host ""; Write-Host "Node: $(node -v)"';
     } else if (cleanInst.toLowerCase() === 'hola' || cleanInst.toLowerCase() === 'buenas') {
-        await sendTelegramMessage(
-            chatId, 
-            `👋 <b>¡Hola! Conexión activa con Antigravity & Routh Agent</b>\n\nCelular autorizado: <code>${TARGET_PHONE}</code>\nWorkspace: <code>${WORKSPACE_DIR}</code>\n\n¿Qué cambios deseas realizar hoy? Puedes escribirme o enviarme un audio de voz.`
-        );
+        const reply = `👋 <b>¡Hola! Conexión activa con Antigravity & Routh Agent</b>\n\nCelular autorizado: <code>${TARGET_PHONE}</code>\nWorkspace: <code>${WORKSPACE_DIR}</code>\n\n¿Qué cambios deseas realizar hoy? Puedes escribirme o enviarme un audio de voz.`;
+        await sendTelegramMessage(chatId, reply);
+        resolveTelegramTask(taskId, 'Saludo inicial respondido y conexión confirmada.', '0.1', '✅ RESUELTO POR ANTIGRAVITY');
         return;
     } else {
         // Procesar directamente con Groq LLM como Lead Developer de Antigravity
         try {
-            let aiText = '';
-            if (groq) {
-                const completion = await groq.chat.completions.create({
-                    model: 'llama-3.3-70b-versatile',
-                    messages: [
-                        {
-                            role: 'system',
-                            content: `Eres Antigravity IA, un Ingeniero de Software Senior y Lead Developer trabajando en pair programming con el Líder de Proyecto (Ignacio / celular 1136822400) en la plataforma Colaboratium / Routh Agent.
+            const systemPrompt = `Eres Antigravity IA, un Ingeniero de Software Senior y Lead Developer trabajando en pair programming con el Líder de Proyecto (Ignacio / celular 1136822400) en la plataforma Colaboratium / Routh Agent.
 Tu función es entender requerimientos de arquitectura, código, UI (React/Vite) y backend (Node.js/Express/PostgreSQL), confirmar con precisión técnica lo que se implementa y mantenerlo informado.
 REGLAS OBLIGATORIAS:
 - NUNCA respondas como soporte al cliente ni digas que derivarás la tarea al equipo de desarrollo o producto. Eres el agente que programa y ejecuta los cambios directamente.
 - NUNCA incluyas etiquetas de bots de atención como [HANDOFF] o [ROLE:Soporte].
-- Responde en español de manera profesional, técnica, concisa y orientada a la acción.`
-                        },
-                        {
-                            role: 'user',
-                            content: instruction
-                        }
-                    ],
-                    max_tokens: 800,
-                    temperature: 0.3
-                });
-                aiText = completion.choices[0]?.message?.content || '';
-            }
-            if (!aiText) {
-                aiText = `Entendido. Orden de desarrollo recibida: "${instruction}". Se encuentra en proceso de implementación directa en el código.`;
-            }
+- Responde en español de manera profesional, técnica, concisa y orientada a la acción.`;
+
+            const aiText = await callDeveloperLLM(systemPrompt, instruction);
+            const durationSec = ((Date.now() - startTime) / 1000).toFixed(1);
+            resolveTelegramTask(taskId, aiText, durationSec, '✅ RESUELTO POR ANTIGRAVITY');
 
             await sendTelegramMessage(chatId, `🚀 <b>Antigravity Lead Dev:</b>\n\n${aiText}`);
             return;
         } catch (aiErr) {
-            console.error('Error llamando Groq en telegramTunnel:', aiErr.message || aiErr);
+            console.error('Error llamando LLM en telegramTunnel:', aiErr.message || aiErr);
             commandToRun = `echo "Instrucción recibida: ${cleanInst.replace(/"/g, '')}"`;
         }
     }
@@ -246,6 +348,13 @@ REGLAS OBLIGATORIAS:
         if (result.error && !result.stderr) {
             reply += `❌ <b>Error:</b> ${result.error}\n`;
         }
+
+        resolveTelegramTask(
+            taskId, 
+            `Comando: ${commandToRun}\nSalida:\n${result.stdout || result.stderr || 'Ejecutado sin salida.'}`, 
+            result.duration, 
+            result.error && !result.stdout ? '⚠️ ERROR EN CONSOLA' : '✅ EJECUTADO EN CONSOLA'
+        );
 
         await sendTelegramMessage(chatId, reply);
     }
@@ -352,7 +461,7 @@ async function startTelegramPolling() {
                         const transcription = await transcribeAudio(audioPath);
 
                         await sendTelegramMessage(chatId, `🗣️ <b>Transcripción:</b> <i>"${transcription}"</i>`);
-                        await processInstruction(chatId, transcription, userName);
+                        await processInstruction(chatId, transcription, userName, 'AUDIO_VOZ');
                     } catch (audioErr) {
                         console.error('Error procesando audio de Telegram:', audioErr);
                         await sendTelegramMessage(chatId, `❌ Error transcribiendo audio: ${audioErr.message}`);
@@ -365,7 +474,7 @@ async function startTelegramPolling() {
                     if (text === '/start') {
                         await sendTelegramMessage(chatId, `👋 <b>¡Hola! Conexión activa con Antigravity & Routh Agent</b>\n\nPuedes enviarme:\n• <b>Texto:</b> Pidiendo cambios o instrucciones para la app.\n• <b>Audios de voz:</b> Los transcribo con Whisper e inicio la tarea.\n• <b>/cmd &lt;comando&gt;:</b> Ejecuta comandos directos y devuelve la salida de consola.\n\nEcosistema: <code>${WORKSPACE_DIR}</code>`);
                     } else {
-                        await processInstruction(chatId, text, userName);
+                        await processInstruction(chatId, text, userName, 'TEXTO');
                     }
                 }
             }
