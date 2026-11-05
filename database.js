@@ -346,6 +346,21 @@ async function initDB() {
             await pool.query("ALTER TABLE campanas ADD COLUMN configuracion_envio JSON DEFAULT NULL");
         } catch(e) {}
         try {
+            await pool.query("ALTER TABLE contactos ADD COLUMN asistencia VARCHAR(30) DEFAULT 'PENDIENTE'");
+        } catch(e) {}
+        try {
+            await pool.query("ALTER TABLE contactos ADD COLUMN nota_asistencia TEXT NULL");
+        } catch(e) {}
+        try {
+            await pool.query("ALTER TABLE contactos ADD COLUMN asistencia_actualizada_en DATETIME NULL");
+        } catch(e) {}
+        try {
+            await pool.query("ALTER TABLE contactos ADD COLUMN linea_wa VARCHAR(50) DEFAULT NULL");
+        } catch(e) {}
+        try {
+            await pool.query("ALTER TABLE contactos ADD COLUMN canal VARCHAR(50) DEFAULT 'WhatsApp'");
+        } catch(e) {}
+        try {
             await pool.query(`
                 CREATE TABLE IF NOT EXISTS email_desuscripciones (
                     id INT AUTO_INCREMENT PRIMARY KEY,

@@ -1303,11 +1303,12 @@ app.post('/api/empresas/:codigo/campanas/email/test-send', async (req, res) => {
             processedContent = `<div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; font-size: 15px; line-height: 1.6; color: #1e293b; max-width: 600px; margin: 0 auto; padding: 24px; background-color: #ffffff; border-radius: 12px; border: 1px solid #e2e8f0;">${processedContent.replace(/\n/g, '<br>')}</div>`;
         }
 
+        const includeBanner = req.body.includeBanner !== false;
         let personalizedHtml = `
-            <div style="background:#fef3c7;border:1px solid #f59e0b;color:#92400e;padding:12px 18px;border-radius:10px;margin-bottom:20px;font-family:sans-serif;font-size:13px;line-height:1.5;">
+            ${includeBanner ? `<div style="background:#fef3c7;border:1px solid #f59e0b;color:#92400e;padding:12px 18px;border-radius:10px;margin-bottom:20px;font-family:sans-serif;font-size:13px;line-height:1.5;">
                 <strong>🧪 TEST DE ENVÍO DE 1 CLIC (Pre-flight Mail-Merge):</strong><br>
                 Este correo es una prueba de previsualización directa despachada a <code>${testEmail}</code> con turnos sincronizados en vivo desde el calendario oficial.
-            </div>
+            </div>` : ''}
             ${processedContent}
         `
         .replace(/\{\{nombre\}\}/gi, sampleNombre)
@@ -1325,10 +1326,11 @@ app.post('/api/empresas/:codigo/campanas/email/test-send', async (req, res) => {
         .replace(/\{\{First Name\}\}/g, 'Damián')
         .replace(/\{\{Last Name\}\}/g, 'Duff')
         .replace(/\{\{Office\}\}/g, 'RE/MAX Total')
+        .replace(/\{\{City\}\}/g, 'Vicente López')
         .replace(/\{\{Company\}\}/g, 'RE/MAX Argentina')
         .replace(/\{\{1\}\}/g, fechaSlot)
         .replace(/\{\{2\}\}/g, horaSlot)
-        .replace(/\{\{3\}\}/g, duracionSlot)
+        .replace(/\{\{3\}\}/g, '40 minutos')
         .replace(/\{\{4\}\}/g, enlaceRegistro)
         .replace(/\{\{5\}\}/g, enlaceBaja);
 
@@ -1339,12 +1341,14 @@ app.post('/api/empresas/:codigo/campanas/email/test-send', async (req, res) => {
             );
         }
 
-        const testSubject = `[TEST PRUEBA 1-CLIC] ${subject
+        const isCleanSubject = req.body.cleanSubject === true;
+        const testSubject = (isCleanSubject ? '' : '[TEST PRUEBA 1-CLIC] ') + subject
             .replace(/\{\{nombre\}\}/gi, 'Damián')
             .replace(/\{\{First Name\}\}/g, 'Damián')
             .replace(/\{\{Last Name\}\}/g, 'Duff')
             .replace(/\{\{Office\}\}/g, 'RE/MAX Total')
-            .replace(/\{\{Company\}\}/g, 'RE/MAX Argentina')}`;
+            .replace(/\{\{City\}\}/g, 'Vicente López')
+            .replace(/\{\{Company\}\}/g, 'RE/MAX Argentina');
 
         const result = await sendGenericEmail({
             to: testEmail,
@@ -3311,6 +3315,27 @@ app.get('/api/empresas/:codigo/calendar/subscriber/:id', async (req, res) => {
         res.json({ success: true, ...profile });
     } catch (error) {
         console.error('Error obteniendo perfil del inscripto:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+// Marcar Asistencia Manual y Nota sobre la Participación
+app.post('/api/empresas/:codigo/calendar/subscribers/:id/attendance', async (req, res) => {
+    try {
+        const { updateSubscriberAttendance } = require('./googleCalendarService');
+        const { asistencia, nota, usuarioNombre } = req.body || {};
+
+        const result = await updateSubscriberAttendance({
+            codigoEmpresa: req.params.codigo,
+            contactId: req.params.id,
+            asistencia,
+            nota,
+            usuarioNombre: usuarioNombre || 'Administrador'
+        });
+
+        res.json(result);
+    } catch (error) {
+        console.error('Error actualizando asistencia de inscripto:', error);
         res.status(500).json({ success: false, error: error.message });
     }
 });

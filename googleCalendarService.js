@@ -280,7 +280,11 @@ async function getAvailableWebinarSlots(codigoEmpresa = 'KRZMJI', category = 'al
                     ticket_status: c.ticket_status || 'pending_auth',
                     ticket_summary: c.ticket_summary,
                     total_mensajes: msgMap[c.id] || 0,
-                    canal: 'WhatsApp'
+                    canal: 'WhatsApp',
+                    asistencia: c.asistencia || meta.asistencia || 'PENDIENTE',
+                    nota_asistencia: c.nota_asistencia || meta.nota_asistencia || '',
+                    asistencia_actualizada_en: c.asistencia_actualizada_en || meta.asistencia_actualizada_en || null,
+                    asistencia_registrada_por: meta.asistencia_registrada_por || null
                 };
             });
 
@@ -890,6 +894,59 @@ async function sendMeetingLinkToSubscribers({
     };
 }
 
+/**
+ * Permite marcar asistencia manualmente y agregar nota sobre la participación
+ */
+async function updateSubscriberAttendance({ codigoEmpresa, contactId, asistencia, nota = '', usuarioNombre = 'Administrador' }) {
+    if (!db || !db.pool) throw new Error("Base de datos no inicializada");
+
+    const validAsistencias = ['ASISTIO', 'NO_ASISTIO', 'PENDIENTE'];
+    const finalAsistencia = validAsistencias.includes(String(asistencia || '').toUpperCase()) 
+        ? String(asistencia).toUpperCase() 
+        : 'PENDIENTE';
+
+    // 1. Obtener metadata previa del contacto
+    const [cRows] = await db.pool.query(
+        "SELECT id, metadata_extra FROM contactos WHERE id = ? AND codigo_empresa = ?",
+        [contactId, codigoEmpresa]
+    );
+    if (!cRows || cRows.length === 0) {
+        throw new Error("Inscripto no encontrado en contactos");
+    }
+
+    let meta = cRows[0].metadata_extra;
+    if (typeof meta === 'string') {
+        try { meta = JSON.parse(meta); } catch(e) { meta = {}; }
+    } else if (!meta) {
+        meta = {};
+    }
+
+    meta.asistencia = finalAsistencia;
+    meta.nota_asistencia = (nota || '').trim();
+    meta.asistencia_actualizada_en = new Date().toISOString();
+    meta.asistencia_registrada_por = usuarioNombre;
+
+    // 2. Actualizar contacto
+    await db.pool.query(
+        `UPDATE contactos 
+         SET asistencia = ?, 
+             nota_asistencia = ?, 
+             asistencia_actualizada_en = NOW(),
+             metadata_extra = ?
+         WHERE id = ? AND codigo_empresa = ?`,
+        [finalAsistencia, (nota || '').trim(), JSON.stringify(meta), contactId, codigoEmpresa]
+    );
+
+    return {
+        success: true,
+        contactId,
+        asistencia: finalAsistencia,
+        nota_asistencia: (nota || '').trim(),
+        asistencia_actualizada_en: meta.asistencia_actualizada_en,
+        asistencia_registrada_por: usuarioNombre
+    };
+}
+
 module.exports = {
     getAvailableWebinarSlots,
     formatCalendarOptionsText,
@@ -897,6 +954,7 @@ module.exports = {
     getSubscriberProfile,
     processBooking,
     sendMeetingLinkToSubscribers,
+    updateSubscriberAttendance,
     DEFAULT_SLOTS
 };
 
