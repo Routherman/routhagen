@@ -3563,6 +3563,124 @@ app.post('/api/b2b-prospects/:id/convert-to-advisor', async (req, res) => {
     }
 });
 
+// 5b. Incorporar masivamente o individualmente prospectos B2B a la Agenda CRM con Capas 1 a 5
+app.post('/api/b2b-prospects/sync-to-crm', async (req, res) => {
+    try {
+        const codigoEmpresa = req.body.codigoEmpresa || 'KRZMJI';
+        const result = await b2bService.incorporateToCRM({
+            ...req.body,
+            codigoEmpresa
+        });
+        res.json(result);
+    } catch (e) {
+        console.error('Error en POST /api/b2b-prospects/sync-to-crm:', e);
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
+
+// 5c. Resumen de distribución por Capas del 1 al 5 y estado de incorporación CRM
+app.get('/api/b2b-prospects/layers-summary', async (req, res) => {
+    try {
+        const codigoEmpresa = req.query.codigoEmpresa || 'KRZMJI';
+        const summary = await b2bService.getLayersSummary(codigoEmpresa);
+        res.json({ success: true, summary });
+    } catch (e) {
+        console.error('Error en GET /api/b2b-prospects/layers-summary:', e);
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
+
+// 5d. Lanzador Directo de Campaña B2B (WhatsApp o Email)
+app.post('/api/b2b-prospects/launch-campaign', async (req, res) => {
+    try {
+        const codigoEmpresa = req.body.codigoEmpresa || 'KRZMJI';
+        const {
+            prospectIds,
+            filters,
+            canal = 'whatsapp',
+            targetCapa = 'AUTO',
+            plantillaId,
+            customSubject,
+            customContent,
+            campaignName
+        } = req.body;
+
+        // 1. Asegurar incorporación a CRM para trazabilidad
+        const crmSyncResult = await b2bService.incorporateToCRM({
+            prospectIds,
+            targetCapa,
+            filters,
+            codigoEmpresa
+        });
+
+        // 2. Obtener los contactos resultantes en CRM
+        let query = `
+            SELECT * FROM contactos 
+            WHERE codigo_empresa = ? 
+              AND metadata_extra LIKE '%"origen_b2b":true%'
+        `;
+        const params = [codigoEmpresa];
+        if (Array.isArray(prospectIds) && prospectIds.length > 0) {
+            query += ` AND (${prospectIds.map(() => 'metadata_extra LIKE ?').join(' OR ')})`;
+            prospectIds.forEach(id => params.push(`%"${id}"%`));
+        }
+        const [targetContacts] = await db.pool.query(query, params);
+
+        if (!targetContacts || targetContacts.length === 0) {
+            return res.status(400).json({
+                success: false,
+                message: 'No se encontraron contactos calificados para lanzar la campaña.'
+            });
+        }
+
+        // 3. Buscar plantilla si se especificó
+        let plantilla = null;
+        if (plantillaId) {
+            const [pRows] = await db.pool.query(
+                'SELECT * FROM plantillas WHERE (id = ? OR nombre = ?) AND codigo_empresa = ?',
+                [plantillaId, plantillaId, codigoEmpresa]
+            );
+            if (pRows && pRows.length > 0) plantilla = pRows[0];
+        }
+
+        const nombreCamp = campaignName || `Campaña B2B (${canal.toUpperCase()}) - ${new Date().toLocaleDateString('es-AR')}`;
+
+        // 4. Crear registro formal de campaña
+        const campanaId = await db.crearCampanaCompleta(codigoEmpresa, {
+            nombre: nombreCamp,
+            tipo: canal,
+            plantilla_id: plantilla?.id || null,
+            plantilla_nombre: plantilla?.nombre || 'Plantilla B2B',
+            plantilla_contenido: customContent || plantilla?.contenido || '',
+            asunto_email: customSubject || plantilla?.asunto || 'Oportunidad de Alianza • Colaboratium',
+            contenido_personalizado: customContent || plantilla?.contenido || '',
+            contactos_json: targetContacts,
+            total_contactos: targetContacts.length,
+            enviados: 0,
+            fallidos: 0,
+            estado: 'en_progreso',
+            modo_envio: 'pacing',
+            configuracion_envio: {
+                source: 'B2B_LAUNCHER',
+                targetCapa,
+                totalAudiencia: targetContacts.length
+            }
+        });
+
+        res.json({
+            success: true,
+            campanaId,
+            crmSyncResult,
+            totalContacts: targetContacts.length,
+            canal,
+            message: `🚀 Campaña "${nombreCamp}" iniciada exitosamente con ${targetContacts.length} contactos B2B sincronizados en el CRM.`
+        });
+    } catch (e) {
+        console.error('Error en POST /api/b2b-prospects/launch-campaign:', e);
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
+
 // 6. Registrar baja / Opt-Out
 app.post('/api/b2b-prospects/:id/opt-out', async (req, res) => {
     try {

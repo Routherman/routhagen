@@ -823,6 +823,216 @@ class B2BProspectsService {
             return { success: false, error: e.message };
         }
     }
+
+    /**
+     * Incorporación Masiva o Individual a la Agenda CRM con Capas del 1 al 5
+     * Identifica el origen (Capa 1 a 5), asigna la plantilla y etiquetas correspondientes,
+     * inserta/actualiza en la tabla `contactos` y marca en `b2b_prospects`.
+     */
+    async incorporateToCRM(options = {}) {
+        const pool = await this.getPool();
+        const {
+            prospectIds = [],
+            targetCapa = 'AUTO', // 'AUTO' | 'CAPA_1_REMAX' | 'CAPA_2_PADRONES_CORREDORES' | 'CAPA_3_PREVISIONALISTAS' | 'CAPA_4_DESARROLLADORES' | 'CAPA_5_PAS'
+            filters = null,
+            codigoEmpresa = 'KRZMJI'
+        } = options;
+
+        // Metadatos oficiales de las Capas 1 al 5
+        const LAYERS_CONFIG = {
+            'CAPA_1_REMAX': {
+                num: 1,
+                nombre: 'Capa 1: Franquicias Inmobiliarias (RE/MAX, C21)',
+                tag: 'CAPA_1_FRANQUICIAS',
+                segmento: 'FRANQUICIA_INMOBILIARIA',
+                templateEmail: 'Prospección Fría: Agentes Inmobiliarios RE/MAX (Flujo 2 - Capa 1)',
+                templateWhatsapp: 'Prospección WhatsApp: Agentes Franquicias (Capa 1)',
+                templateLeaderEmail: 'Prospección Fría: Broker / Martillero RE/MAX (Flujo 3)'
+            },
+            'CAPA_2_PADRONES_CORREDORES': {
+                num: 2,
+                nombre: 'Capa 2: Corredores Matriculados Independientes',
+                tag: 'CAPA_2_CORREDORES',
+                segmento: 'CORREDORES_MATRICULADOS',
+                templateEmail: 'Prospección Fría: Corredores Matriculados (Capa 2)',
+                templateWhatsapp: 'Prospección WhatsApp: Corredores Matriculados (Capa 2)',
+                templateLeaderEmail: 'Prospección Fría: Corredores Matriculados (Capa 2)'
+            },
+            'CAPA_3_PREVISIONALISTAS': {
+                num: 3,
+                nombre: 'Capa 3: Abogados y Gestores Previsionales',
+                tag: 'CAPA_3_PREVISIONAL',
+                segmento: 'ABOGADOS_PREVISIONALISTAS',
+                templateEmail: 'Prospección Fría: Abogados y Gestores Previsionales (Capa 3)',
+                templateWhatsapp: 'Prospección WhatsApp: Previsionales (Capa 3)',
+                templateLeaderEmail: 'Prospección Fría: Abogados y Gestores Previsionales (Capa 3)'
+            },
+            'CAPA_4_DESARROLLADORES': {
+                num: 4,
+                nombre: 'Capa 4: Desarrolladores Urbanos y Fideicomisos',
+                tag: 'CAPA_4_DESARROLLADORES',
+                segmento: 'DESARROLLADORES_URBANOS',
+                templateEmail: 'Prospección Fría: Desarrolladores Urbanos y Fideicomisos (Capa 4)',
+                templateWhatsapp: 'Prospección WhatsApp: Desarrolladores Urbanos (Capa 4)',
+                templateLeaderEmail: 'Prospección Fría: Desarrolladores Urbanos y Fideicomisos (Capa 4)'
+            },
+            'CAPA_5_PAS': {
+                num: 5,
+                nombre: 'Capa 5: Productores Asesores de Seguros (PAS)',
+                tag: 'CAPA_5_SEGUROS_PAS',
+                segmento: 'PRODUCTOR_SEGUROS_PAS',
+                templateEmail: 'Prospección Fría: Productores Asesores de Seguros PAS (Capa 5)',
+                templateWhatsapp: 'Prospección WhatsApp: Productores Seguros PAS (Capa 5)',
+                templateLeaderEmail: 'Prospección Fría: Productores Asesores de Seguros PAS (Capa 5)'
+            }
+        };
+
+        // 1. Obtener los prospectos a incorporar
+        let targets = [];
+        if (Array.isArray(prospectIds) && prospectIds.length > 0) {
+            const [rows] = await pool.query(
+                'SELECT * FROM b2b_prospects WHERE codigo_empresa = ? AND id IN (?)',
+                [codigoEmpresa, prospectIds]
+            );
+            targets = rows;
+        } else if (filters) {
+            const result = await this.getProspects(codigoEmpresa, { ...filters, limit: 1000, offset: 0 });
+            targets = result.prospects || [];
+        }
+
+        if (targets.length === 0) {
+            return {
+                success: false,
+                message: 'No se encontraron prospectos para incorporar.',
+                count: 0
+            };
+        }
+
+        let insertedCount = 0;
+        let updatedCount = 0;
+        const processedIds = [];
+        const layerCounts = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
+
+        for (const p of targets) {
+            try {
+                let effectiveLayerKey = (targetCapa && targetCapa !== 'AUTO') ? targetCapa : (p.source_layer || 'CAPA_1_REMAX');
+                if (!LAYERS_CONFIG[effectiveLayerKey]) {
+                    effectiveLayerKey = 'CAPA_1_REMAX';
+                }
+                const layerCfg = LAYERS_CONFIG[effectiveLayerKey];
+                layerCounts[layerCfg.num] = (layerCounts[layerCfg.num] || 0) + 1;
+
+                const isLeader = p.detected_role === 'LIDER_BROKER_POTENCIAL';
+                const fullName = `${p.first_name || ''} ${p.last_name || ''}`.trim() || 'Prospecto B2B';
+                
+                let phone = p.phone_e164;
+                if (!phone && p.phone_raw) {
+                    const norm = normalizePhoneArg(p.phone_raw);
+                    phone = norm.e164;
+                }
+                if (!phone) {
+                    phone = `B2B-${p.id.replace(/-/g, '').substring(0, 10)}`;
+                }
+
+                const grupo = isLeader ? 'LIDERES' : 'PROSPECTO ASESORES';
+                const rolAsignado = isLeader ? 'Líderes' : 'Asesores';
+
+                const suggestedEmailTemplate = isLeader ? (layerCfg.templateLeaderEmail || layerCfg.templateEmail) : layerCfg.templateEmail;
+                const suggestedWhatsappTemplate = layerCfg.templateWhatsapp;
+
+                const metaExtra = {
+                    b2b_prospect_id: p.id,
+                    origen_b2b: true,
+                    origen_capa: effectiveLayerKey,
+                    capa_numero: layerCfg.num,
+                    capa_codigo: effectiveLayerKey,
+                    capa_nombre: layerCfg.nombre,
+                    capa_tag: layerCfg.tag,
+                    segmento_origen: layerCfg.segmento,
+                    plantilla_email_sugerida: suggestedEmailTemplate,
+                    plantilla_whatsapp_sugerida: suggestedWhatsappTemplate,
+                    canal_recomendado: p.phone_e164 ? 'WHATSAPP' : (p.email ? 'EMAIL' : 'WHATSAPP'),
+                    detected_role: p.detected_role,
+                    office_name: p.office_name,
+                    city: p.city,
+                    province: p.province,
+                    sync_timestamp: new Date().toISOString()
+                };
+
+                const resumen = `[${layerCfg.tag}] ${p.office_name || ''} ${p.city ? '(' + p.city + ')' : ''} · Plantilla: ${suggestedEmailTemplate}`;
+
+                const [res] = await pool.query(`
+                    INSERT INTO contactos (
+                        telefono, codigo_empresa, nombre, email, direccion, grupo, rol_asignado,
+                        estado_resolucion, resumen_necesidad, metadata_extra
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, 'PENDIENTE', ?, ?)
+                    ON DUPLICATE KEY UPDATE
+                        nombre = VALUES(nombre),
+                        email = COALESCE(VALUES(email), email),
+                        grupo = VALUES(grupo),
+                        rol_asignado = VALUES(rol_asignado),
+                        resumen_necesidad = VALUES(resumen_necesidad),
+                        metadata_extra = VALUES(metadata_extra)
+                `, [
+                    phone,
+                    codigoEmpresa,
+                    fullName,
+                    p.email || null,
+                    [p.office_name, p.city, p.province].filter(Boolean).join(', ') || null,
+                    grupo,
+                    rolAsignado,
+                    resumen,
+                    JSON.stringify(metaExtra)
+                ]);
+
+                if (res.affectedRows === 1) insertedCount++;
+                else updatedCount++;
+
+                processedIds.push(p.id);
+            } catch (err) {
+                console.error(`Error incorporating prospect ${p.id} to CRM:`, err.message);
+            }
+        }
+
+        // Actualizar estado en b2b_prospects
+        if (processedIds.length > 0) {
+            await pool.query(`
+                UPDATE b2b_prospects
+                SET campaign_status = 'CONVERTIDO_CRM',
+                    last_contacted_at = CURRENT_TIMESTAMP
+                WHERE id IN (?)
+            `, [processedIds]);
+        }
+
+        return {
+            success: true,
+            count: processedIds.length,
+            inserted: insertedCount,
+            updated: updatedCount,
+            layerCounts,
+            message: `¡Se incorporaron ${processedIds.length} contactos a la agenda CRM con sus Capas 1 a 5 y plantillas correspondientes!`
+        };
+    }
+
+    /**
+     * Resumen de distribución por Capas 1 a 5 con métricas de cobertura
+     */
+    async getLayersSummary(codigoEmpresa = 'KRZMJI') {
+        const pool = await this.getPool();
+        const [rows] = await pool.query(`
+            SELECT 
+                source_layer, 
+                detected_role, 
+                COUNT(*) as total,
+                SUM(CASE WHEN phone_e164 IS NOT NULL AND phone_e164 != '' THEN 1 ELSE 0 END) as with_whatsapp,
+                SUM(CASE WHEN email IS NOT NULL AND email != '' THEN 1 ELSE 0 END) as with_email,
+                SUM(CASE WHEN campaign_status = 'CONVERTIDO_CRM' THEN 1 ELSE 0 END) as in_crm
+            FROM b2b_prospects
+            WHERE codigo_empresa = ?
+            GROUP BY source_layer, detected_role
+        `, [codigoEmpresa]);
+        return rows;
+    }
 }
 
 const b2bService = new B2BProspectsService();

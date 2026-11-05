@@ -85,6 +85,26 @@ async function initB2BTables() {
         );
     `);
 
+    try {
+        await conn.query(`
+            ALTER TABLE b2b_prospects 
+            MODIFY COLUMN campaign_status ENUM('NUEVO', 'LOTE_GMAIL_EXPORTADO', 'EMAIL_ENVIADO', 'WHATSAPP_ENVIADO', 'RESPONDIO_INTERESADO', 'REGISTRADO_WEBINAR', 'CONVERTIDO_ASESOR', 'CONVERTIDO_CRM', 'OPT_OUT_BAJA') DEFAULT 'NUEVO'
+        `);
+        console.log('✅ ENUM campaign_status actualizado con CONVERTIDO_CRM.');
+    } catch (e) {
+        console.warn('Nota sobre alter campaign_status:', e.message);
+    }
+
+    try {
+        await conn.query(`
+            ALTER TABLE b2b_prospects 
+            MODIFY COLUMN source_layer ENUM('CAPA_1_REMAX', 'CAPA_2_PADRONES_CORREDORES', 'CAPA_3_PREVISIONALISTAS', 'CAPA_4_DESARROLLADORES', 'CAPA_4_CONTADORES', 'CAPA_5_PAS') NOT NULL DEFAULT 'CAPA_1_REMAX'
+        `);
+        console.log('✅ ENUM source_layer actualizado con CAPA_4_DESARROLLADORES.');
+    } catch (e) {
+        console.warn('Nota sobre alter source_layer:', e.message);
+    }
+
     console.log('✅ Tablas b2b_prospects, scraper_jobs y scraper_checkpoints creadas correctamente.');
     await conn.end();
 }
