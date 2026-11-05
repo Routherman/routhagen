@@ -373,6 +373,42 @@ app.post(['/api/messages/whatsapp/receive', '/webhook'], async (req, res) => {
     }
 });
 
+// ---------------------------------------------------------
+// RUTAS PARA WASENDER API (wasenderapi.com) - Línea WA_S***5239
+// ---------------------------------------------------------
+const wasenderService = require('./wasenderService');
+
+app.post('/api/wasender/webhook', async (req, res) => {
+    try {
+        const codigoEmpresa = req.query.codigoEmpresa || 'KRZMJI';
+        const result = await wasenderService.handleWebhook(req.body, req.headers, codigoEmpresa);
+        // Responder siempre 200 OK inmediatamente según estándar de Wasender
+        res.status(200).json({ success: true, result });
+    } catch (e) {
+        console.error('Error en webhook de WASender:', e.message);
+        res.status(200).json({ success: false, error: e.message });
+    }
+});
+
+app.get('/api/empresas/:codigo/wasender/status', async (req, res) => {
+    try {
+        const config = await wasenderService.getConfig(req.params.codigo);
+        res.json({ success: true, wasender: config });
+    } catch (e) {
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
+
+app.post('/api/empresas/:codigo/wasender/send', async (req, res) => {
+    try {
+        const { to, text, forceSend } = req.body;
+        const result = await wasenderService.sendMessage(to, text, req.params.codigo, { forceSend });
+        res.json(result);
+    } catch (e) {
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
+
 // Endpoint para obtener todos los contactos (para el frontend) por empresa
 app.get('/api/contacts/:empresa', async (req, res) => {
     try {

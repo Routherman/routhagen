@@ -159,6 +159,18 @@ async function initDB() {
         try {
             await pool.query("ALTER TABLE contactos ADD COLUMN nodo_actual_id VARCHAR(100) DEFAULT NULL");
         } catch(e) {}
+        try {
+            await pool.query("ALTER TABLE contactos ADD COLUMN linea_wa VARCHAR(50) DEFAULT 'WA_B'");
+        } catch(e) {}
+        try {
+            await pool.query("ALTER TABLE contactos ADD COLUMN canal VARCHAR(50) DEFAULT 'whatsapp_meta'");
+        } catch(e) {}
+        try {
+            await pool.query("ALTER TABLE mensajes ADD COLUMN linea_wa VARCHAR(50) DEFAULT 'WA_B'");
+        } catch(e) {}
+        try {
+            await pool.query("ALTER TABLE campanas ADD COLUMN canal_linea VARCHAR(50) DEFAULT 'WA_B'");
+        } catch(e) {}
         // Tabla de Tickets
         await pool.query(`
             CREATE TABLE IF NOT EXISTS tickets (
