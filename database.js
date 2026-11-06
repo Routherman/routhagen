@@ -1794,7 +1794,13 @@ async function crearCampana(codigoEmpresa, nombre, totalContactos) {
 async function obtenerCampanas(codigoEmpresa) {
     if (!pool) return [];
     const [rows] = await pool.query(`
-        SELECT c.*, p.nombre as plantilla_nombre 
+        SELECT 
+            c.id, c.codigo_empresa, c.nombre, c.tipo, c.plantilla_id, c.asunto_email, 
+            c.archivos_adjuntos, c.total_contactos, c.estado, c.enviados, c.entregados, 
+            c.respondidos, c.ultimo_log, c.modo_envio, c.ultimo_indice_enviado, 
+            c.spam_score, c.conversiones, c.rango_destinatarios, c.programada_para, 
+            c.canal_linea, c.creado_en, c.configuracion_envio,
+            p.nombre as plantilla_nombre 
         FROM campanas c 
         LEFT JOIN plantillas p ON c.plantilla_id = p.id
         WHERE c.codigo_empresa = ? 
@@ -1805,15 +1811,11 @@ async function obtenerCampanas(codigoEmpresa) {
         if (typeof adj === 'string') {
             try { adj = JSON.parse(adj); } catch (e) { adj = []; }
         }
-        let cont = r.contactos_json;
-        if (typeof cont === 'string') {
-            try { cont = JSON.parse(cont); } catch (e) { cont = []; }
-        }
         let cfg = r.configuracion_envio;
         if (typeof cfg === 'string') {
             try { cfg = JSON.parse(cfg); } catch (e) { cfg = null; }
         }
-        return { ...r, archivos_adjuntos: adj || [], contactos_json: cont || [], configuracion_envio: cfg || {} };
+        return { ...r, archivos_adjuntos: adj || [], configuracion_envio: cfg || {} };
     });
 }
 

@@ -1710,6 +1710,33 @@ app.post('/api/empresas/:codigo/campanas/:id/cancelar', async (req, res) => {
     }
 });
 
+// Pausar una campaña activa manualmente
+app.post('/api/empresas/:codigo/campanas/:id/pausar', async (req, res) => {
+    try {
+        const campana = await db.obtenerCampanaPorId(req.params.id);
+        if (!campana) return res.status(404).json({ error: 'Campaña no encontrada' });
+
+        await db.actualizarCampanaProgreso(campana.id, {
+            estado: 'pausada',
+            ultimo_log: `⏸️ Campaña pausada manualmente en [${campana.enviados || 0}/${campana.total_contactos || 0}] (${new Date().toLocaleTimeString('es-AR')})`
+        });
+        res.json({ success: true, message: `Campaña #${campana.id} pausada con éxito.` });
+    } catch (err) {
+        console.error('Error pausando campaña:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Estado del monitor de cuota diaria de Gmail (550-5.4.5)
+app.get('/api/empresas/:codigo/campanas/quota-monitor', async (req, res) => {
+    try {
+        const { getQuotaMonitorStatus } = require('./campaignScheduler');
+        res.json({ success: true, quotaMonitor: getQuotaMonitorStatus() });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
 // Reprogramar fecha y hora de una campaña
 app.post('/api/empresas/:codigo/campanas/:id/reprogramar', async (req, res) => {
     try {

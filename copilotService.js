@@ -621,8 +621,8 @@ async function processCopilotCommand({ message, context = {}, codigoEmpresa = 'K
     }
 
     // 6. ACCIÓN: DESCARGA / EXPORTACIÓN DE FICHA DE CLIENTE A PDF
-    // Ej: "exportame la ficha de cliente a pdf", "descargar ficha en pdf", "exportar ficha a pdf", "ficha de alejandro bolognese a pdf"
-    if (/(exporta|exportar|descarga|descargar|generar|bajar|entregar|imprimir).*?(ficha|expediente).*?(cliente|contacto|pdf)|ficha.*?(cliente|contacto|pdf|damduff|juan|bolognese)|(exporta|exportar|descarga|descargar).*?(ficha|expediente)/i.test(rawMsg)) {
+    // Ej: "exportame la ficha de cliente a pdf", "descargar ficha en pdf", "exportar ficha a pdf", "ficha de alejandro bolognese a pdf", "ficha de giovanni"
+    if (/(exporta|exportar|descarga|descargar|generar|bajar|entregar|imprimir).*?(ficha|expediente)|ficha\s+(de|del|para)?\s*[a-zA-ZáéíóúñÁÉÍÓÚÑ]+|ficha.*?(cliente|contacto|pdf|damduff|juan|bolognese|giovanni|corrado)|(exporta|exportar|descarga|descargar).*?(ficha|expediente)/i.test(rawMsg)) {
         try {
             let targetTerm = '';
             
@@ -636,6 +636,10 @@ async function processCopilotCommand({ message, context = {}, codigoEmpresa = 'K
                 targetTerm = 'Bolognese';
             } else if (/iabox/i.test(rawMsg)) {
                 targetTerm = 'iabox';
+            } else if (/giovanni|speciale/i.test(rawMsg)) {
+                targetTerm = 'Giovanni';
+            } else if (/corrado|giove|rapetti/i.test(rawMsg)) {
+                targetTerm = 'Corrado';
             } else {
                 // Si el mensaje dice "ficha de [nombre]"
                 const deMatch = rawMsg.match(/(?:de|del|para)\s+([a-zA-ZáéíóúñÁÉÍÓÚÑ0-9._%+-@]+)/i);

@@ -5,6 +5,23 @@ let schedulerInterval = null;
 let isChecking = false;
 const activeCampaigns = new Set();
 
+// Monitoreo de límite diario de Gmail (550-5.4.5): reintento automático cada 15 minutos
+const QUOTA_RETRY_INTERVAL_MS = 15 * 60 * 1000;
+let lastQuotaCheckAt = Date.now();
+let quotaCheckCount = 0;
+
+function getQuotaMonitorStatus() {
+    const nextCheckAt = new Date(lastQuotaCheckAt + QUOTA_RETRY_INTERVAL_MS);
+    const msRemaining = Math.max(0, (lastQuotaCheckAt + QUOTA_RETRY_INTERVAL_MS) - Date.now());
+    return {
+        intervalMinutes: QUOTA_RETRY_INTERVAL_MS / 60000,
+        lastCheckAt: new Date(lastQuotaCheckAt).toISOString(),
+        nextCheckAt: nextCheckAt.toISOString(),
+        secondsUntilNextCheck: Math.ceil(msRemaining / 1000),
+        totalChecksPerformed: quotaCheckCount
+    };
+}
+
 function registerActiveCampaign(id) {
     if (id) activeCampaigns.add(Number(id));
 }
@@ -87,6 +104,39 @@ async function checkAndRunScheduledCampaigns() {
                                 unregisterActiveCampaign(campId);
                             });
                         }
+                    } else {
+                        unregisterActiveCampaign(campId);
+                    }
+                }
+            }
+        }
+
+        // 3. MONITOR DE LÍMITE DIARIO DE GMAIL (550-5.4.5): Reintentar automáticamente cada 15 minutos
+        const [pausadasPorLimite] = await db.pool.query(
+            "SELECT id, codigo_empresa, nombre, tipo, total_contactos, enviados, ultimo_indice_enviado FROM campanas WHERE estado = 'pausada_limite' AND tipo = 'email' ORDER BY id ASC"
+        );
+
+        if (pausadasPorLimite && pausadasPorLimite.length > 0) {
+            const elapsedMs = Date.now() - lastQuotaCheckAt;
+            if (elapsedMs >= QUOTA_RETRY_INTERVAL_MS) {
+                lastQuotaCheckAt = Date.now();
+                quotaCheckCount++;
+                const camp = pausadasPorLimite[0];
+                const campId = Number(camp.id);
+
+                if (!activeCampaigns.has(campId)) {
+                    registerActiveCampaign(campId);
+                    const nextIdx = (camp.ultimo_indice_enviado || camp.enviados || 0) + 1;
+                    console.log(`🔍 [Monitor Cuota Gmail #${quotaCheckCount}] Verificando si se liberó el límite diario (550-5.4.5) para reanudar campaña #${campId} "${camp.nombre}" desde [${nextIdx}/${camp.total_contactos}]...`);
+
+                    const campFull = await db.obtenerCampanaPorId(campId);
+                    if (campFull) {
+                        ejecutarCampanaEmail(campFull).catch(err => {
+                            console.error(`❌ [Monitor Cuota Gmail] Error verificando campaña #${campId}:`, err);
+                        }).finally(() => {
+                            unregisterActiveCampaign(campId);
+                            lastQuotaCheckAt = Date.now();
+                        });
                     } else {
                         unregisterActiveCampaign(campId);
                     }
@@ -213,5 +263,6 @@ module.exports = {
     ejecutarCampanaEmail,
     ejecutarCampanaWhatsApp,
     registerActiveCampaign,
-    unregisterActiveCampaign
+    unregisterActiveCampaign,
+    getQuotaMonitorStatus
 };

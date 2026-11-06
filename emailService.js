@@ -476,6 +476,23 @@ async function sendInvestorInquiryToCompany(investor) {
 }
 
 /**
+ * Detecta si un mensaje de error SMTP corresponde a límite de uso diario o cuota excedida de Gmail
+ */
+function isGmailQuotaError(errorMsg = '') {
+    const msg = String(errorMsg).toLowerCase();
+    return (
+        msg.includes('550-5.4.5') ||
+        msg.includes('550 5.4.5') ||
+        msg.includes('daily user sending limit exceeded') ||
+        msg.includes('sending limit exceeded') ||
+        msg.includes('quota exceeded') ||
+        msg.includes('421-4.7.0') ||
+        msg.includes('454-4.7.0') ||
+        msg.includes('too many login attempts')
+    );
+}
+
+/**
  * Envía un correo genérico con soporte completo de HTML y adjuntos
  */
 async function sendGenericEmail({ to, subject, html, text, attachments = [] }) {
@@ -513,7 +530,11 @@ async function sendGenericEmail({ to, subject, html, text, attachments = [] }) {
         return { success: true, messageId: info.messageId };
     } catch (err) {
         console.error(`❌ Error enviando email a ${to}:`, err.message);
-        return { success: false, error: err.message };
+        return {
+            success: false,
+            error: err.message,
+            isQuotaLimit: isGmailQuotaError(err.message)
+        };
     }
 }
 
@@ -531,8 +552,8 @@ async function sendMassEmailCampaign({ codigoEmpresa, campanaId, contacts = [], 
         try {
             const [curRows] = await db.pool.query("SELECT enviados, entregados FROM campanas WHERE id = ?", [campanaId]);
             if (curRows && curRows.length > 0) {
-                enviados = Math.max(startIndex, curRows[0].enviados || 0);
-                entregados = Math.max(startIndex, curRows[0].entregados || 0);
+                enviados = curRows[0].enviados != null ? Number(curRows[0].enviados) : startIndex;
+                entregados = curRows[0].entregados != null ? Number(curRows[0].entregados) : startIndex;
             }
         } catch(e) {}
     }
@@ -616,7 +637,23 @@ async function sendMassEmailCampaign({ codigoEmpresa, campanaId, contacts = [], 
         </div>`;
     };
 
+    let hasAttemptedSendInRun = false;
     for (let i = startIndex; i < total; i++) {
+        // Verificar si la campaña fue pausada o cancelada externamente antes de cada envío
+        let wasPausedByLimit = false;
+        if (campanaId) {
+            try {
+                const [statusRows] = await db.pool.query("SELECT estado FROM campanas WHERE id = ?", [campanaId]);
+                const currentEstado = statusRows?.[0]?.estado;
+                wasPausedByLimit = currentEstado === 'pausada_limite';
+                const allowQuotaProbe = wasPausedByLimit && !hasAttemptedSendInRun;
+                if (currentEstado && currentEstado !== 'en_progreso' && !allowQuotaProbe) {
+                    console.log(`⏸️ [Campaña #${campanaId}] Deteniendo bucle de envío porque el estado actual es '${currentEstado}' (índice ${i}/${total}).`);
+                    return { total, enviados, entregados, stopped: true, estado: currentEstado };
+                }
+            } catch (e) {}
+        }
+
         const contact = contacts[i];
         const targetEmail = (contact.email || '').trim();
         if (!targetEmail) continue;
@@ -698,6 +735,7 @@ async function sendMassEmailCampaign({ codigoEmpresa, campanaId, contacts = [], 
 
         let sendResult = null;
         try {
+            hasAttemptedSendInRun = true;
             console.log(`📧 [${i + 1}/${total}] Enviando email a: ${targetEmail} (${nombre})...`);
             sendResult = await sendGenericEmail({
                 to: targetEmail,
@@ -709,17 +747,47 @@ async function sendMassEmailCampaign({ codigoEmpresa, campanaId, contacts = [], 
             if (sendResult && sendResult.success) {
                 enviados++;
                 entregados++;
+                if (wasPausedByLimit) {
+                    console.log(`🟢 [CUOTA GMAIL RESTABLECIDA] Campaña #${campanaId} reanudada automáticamente con éxito desde [${i + 1}/${total}] (${targetEmail})!`);
+                }
                 console.log(`✅ [${i + 1}/${total}] Enviado exitosamente a ${targetEmail}`);
             } else {
                 console.warn(`⚠️ [${i + 1}/${total}] Advertencia enviando a ${targetEmail}:`, sendResult?.error);
+                if (sendResult?.isQuotaLimit || isGmailQuotaError(sendResult?.error)) {
+                    const horaStr = new Date().toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+                    console.error(`🛑 [LÍMITE DIARIO GMAIL] Pausando automáticamente campaña #${campanaId} en contacto [${i + 1}/${total}] (${targetEmail}). Se monitoreará cada 15 min para reanudar.`);
+                    if (campanaId) {
+                        await db.actualizarCampanaProgreso(campanaId, {
+                            enviados,
+                            entregados,
+                            estado: 'pausada_limite',
+                            ultimo_indice_enviado: i,
+                            ultimo_log: `⏸️ Límite diario de Gmail (550-5.4.5) en [${i + 1}/${total}]. Monitoreando cuota (últ. chequeo ${horaStr}, reintento auto cada 15m)...`
+                        });
+                    }
+                    return { total, enviados, entregados, pausedByLimit: true, pausedAtIndex: i };
+                }
             }
         } catch (e) {
             console.error(`❌ Error enviando email masivo a ${targetEmail}:`, e.message);
+            if (isGmailQuotaError(e.message)) {
+                const horaStr = new Date().toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+                if (campanaId) {
+                    await db.actualizarCampanaProgreso(campanaId, {
+                        enviados,
+                        entregados,
+                        estado: 'pausada_limite',
+                        ultimo_indice_enviado: i,
+                        ultimo_log: `⏸️ Límite diario de Gmail (550-5.4.5) en [${i + 1}/${total}]. Monitoreando cuota (últ. chequeo ${horaStr}, reintento auto cada 15m)...`
+                    });
+                }
+                return { total, enviados, entregados, pausedByLimit: true, pausedAtIndex: i };
+            }
         }
 
-        // Actualizar progreso en base de datos en tiempo real después de CADA envío
+        // Actualizar progreso en base de datos en tiempo real después de CADA envío exitoso
         const isLast = (i === total - 1);
-        if (campanaId) {
+        if (campanaId && sendResult && sendResult.success) {
             const logMsg = `Enviado a ${nombre} (${targetEmail}) [${i + 1}/${total}] ✓`;
             await db.actualizarCampanaProgreso(campanaId, {
                 enviados,
@@ -739,7 +807,7 @@ async function sendMassEmailCampaign({ codigoEmpresa, campanaId, contacts = [], 
                 const delaySeg = (delayMs / 1000).toFixed(1);
                 console.log(`⏳ Pausa anti-spam humano: esperando ${delaySeg}s antes del próximo envío...`);
                 
-                if (campanaId) {
+                if (campanaId && sendResult && sendResult.success) {
                     await db.actualizarCampanaProgreso(campanaId, {
                         ultimo_log: `Enviado [${i + 1}/${total}] a ${nombre} ✓ • Pausa Gmail (${Math.round(delayMs / 1000)}s)...`
                     });
@@ -841,5 +909,6 @@ module.exports = {
     sendInvestorInquiryToCompany,
     sendGenericEmail,
     sendMassEmailCampaign,
-    sendCalendarEventInvitation
+    sendCalendarEventInvitation,
+    isGmailQuotaError
 };
