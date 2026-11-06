@@ -13,8 +13,13 @@ function getTransporter() {
 
     if (pass) {
         transporter = nodemailer.createTransport({
-            service: 'gmail',
-            auth: { user, pass }
+            host: 'smtp.gmail.com',
+            port: 465,
+            secure: true,
+            auth: { user, pass },
+            connectionTimeout: 15000,
+            greetingTimeout: 10000,
+            socketTimeout: 25000
         });
     } else {
         // Transporte de desarrollo / fallback que registra los correos sin fallar
@@ -490,7 +495,7 @@ async function sendGenericEmail({ to, subject, html, text, attachments = [] }) {
             return { filename: att.nombre || 'adjunto', path: filePath };
         }).filter(a => a.path);
 
-        const info = await mailer.sendMail({
+        const sendPromise = mailer.sendMail({
             from: `"Colaboratium Oficial" <${fromEmail}>`,
             to,
             subject,
@@ -498,6 +503,12 @@ async function sendGenericEmail({ to, subject, html, text, attachments = [] }) {
             html,
             attachments: formattedAttachments
         });
+
+        const timeoutPromise = new Promise((_, reject) =>
+            setTimeout(() => reject(new Error('SMTP timeout: conexión demoró más de 25s')), 25000)
+        );
+
+        const info = await Promise.race([sendPromise, timeoutPromise]);
 
         return { success: true, messageId: info.messageId };
     } catch (err) {
@@ -730,7 +741,7 @@ async function sendMassEmailCampaign({ codigoEmpresa, campanaId, contacts = [], 
                 
                 if (campanaId) {
                     await db.actualizarCampanaProgreso(campanaId, {
-                        ultimo_log: `Pausa anti-bloqueo Gmail: esperando ${Math.round(delayMs / 1000)}s antes del próximo envío...`
+                        ultimo_log: `Enviado [${i + 1}/${total}] a ${nombre} ✓ • Pausa Gmail (${Math.round(delayMs / 1000)}s)...`
                     });
                 }
                 await new Promise(r => setTimeout(r, delayMs));
