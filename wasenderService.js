@@ -179,10 +179,10 @@ class WasenderService {
      * Procesa los webhooks entrantes de WASender (wasenderapi.com)
      */
     async handleWebhook(payload, headers = {}, codigoEmpresa = 'KRZMJI') {
-        const pool = db.pool;
-        if (!pool) {
+        if (!db.pool) {
             try { await db.initDB(); } catch(e) {}
         }
+        const pool = db.pool;
 
         const event = String(payload?.event || payload?.type || 'messages.received').toLowerCase();
         console.log(`📥 [WASender Webhook] Evento recibido: ${event}`);
@@ -190,18 +190,28 @@ class WasenderService {
         const config = await this.getConfig(codigoEmpresa);
         const lineCode = config?.line_code || 'WA_S***5239';
 
-        // Procesar mensajes entrantes (personal o grupos)
+        // 1. Filtrar eventos de sistema, recibos de lectura y presencia
+        if (
+            event.includes('receipt') || 
+            event.includes('reaction') || 
+            (event.includes('update') && !event.includes('upsert')) ||
+            event.includes('chats.') ||
+            event.includes('contacts.')
+        ) {
+            return { success: true, ignored: true, event };
+        }
+
+        // 2. Procesar mensajes entrantes (personal o grupos)
         const isMessageEvent = event.includes('message') || event.includes('upsert') || !!payload?.messages || !!payload?.data?.messages;
         if (isMessageEvent) {
             // Extraer objeto de mensaje soportando todos los formatos de WASender
             let msgObj = null;
-            if (Array.isArray(payload?.messages) && payload.messages.length > 0) {
-                msgObj = payload.messages[0];
-            } else if (payload?.messages && typeof payload.messages === 'object') {
-                msgObj = payload.messages;
-            } else if (Array.isArray(payload?.data?.messages) && payload.data.messages.length > 0) {
-                msgObj = payload.data.messages[0];
-            } else if (payload?.data && typeof payload.data === 'object') {
+            const rawMessages = payload?.data?.messages || payload?.messages;
+            if (Array.isArray(rawMessages) && rawMessages.length > 0) {
+                msgObj = rawMessages[0];
+            } else if (rawMessages && typeof rawMessages === 'object') {
+                msgObj = rawMessages;
+            } else if (payload?.data && typeof payload.data === 'object' && (payload.data.key || payload.data.messageBody || payload.data.message)) {
                 msgObj = payload.data;
             } else {
                 msgObj = payload;
@@ -214,15 +224,55 @@ class WasenderService {
                 return { success: true, ignored: true, reason: 'Mensaje saliente propio' };
             }
 
-            // Extraer remitente
-            let rawFrom = msgObj?.key?.remoteJid || msgObj?.from || msgObj?.sender || msgObj?.participant || payload?.from || '';
+            // Desduplicación por message ID (WASender dispara messages.upsert, messages.received y messages-personal.received para el mismo mensaje)
+            const msgId = msgObj?.key?.id || payload?.data?.key?.id || payload?.key?.id;
+            if (msgId) {
+                if (!this.processedMsgIds) {
+                    this.processedMsgIds = new Map();
+                }
+                const now = Date.now();
+                for (const [id, time] of this.processedMsgIds.entries()) {
+                    if (now - time > 300000) this.processedMsgIds.delete(id);
+                }
+                if (this.processedMsgIds.has(msgId)) {
+                    console.log(`ℹ️ [WASender ${lineCode}] Mensaje duplicado ya procesado (id: ${msgId})`);
+                    return { success: true, ignored: true, reason: 'Mensaje duplicado ya procesado' };
+                }
+                this.processedMsgIds.set(msgId, now);
+            }
+
+            // Extraer remitente priorizando el número de teléfono limpio sobre el JID o LID
+            let rawFrom = 
+                msgObj?.key?.cleanedSenderPn ||
+                msgObj?.key?.senderPn ||
+                msgObj?.key?.remoteJid ||
+                msgObj?.from ||
+                msgObj?.sender ||
+                msgObj?.participant ||
+                payload?.from ||
+                '';
+
             // Ignorar grupos o broadcasts
-            if (rawFrom.includes('@g.us') || rawFrom.includes('@broadcast') || rawFrom.includes('status@broadcast')) {
+            if (
+                rawFrom.includes('@g.us') || 
+                msgObj?.key?.remoteJid?.includes('@g.us') || 
+                rawFrom.includes('@broadcast') || 
+                rawFrom.includes('status@broadcast')
+            ) {
                 return { success: true, ignored: true, reason: 'Grupo o estado ignorado' };
             }
 
-            let from = rawFrom.replace(/@.*$/, '').replace(/\D/g, '');
-            let text = msgObj?.messageBody || msgObj?.body || msgObj?.text || msgObj?.message?.conversation || msgObj?.message?.extendedTextMessage?.text || '';
+            let from = String(rawFrom).replace(/@.*$/, '').replace(/\D/g, '');
+            let text = (
+                msgObj?.messageBody || 
+                msgObj?.body || 
+                msgObj?.text || 
+                msgObj?.message?.conversation || 
+                msgObj?.message?.extendedTextMessage?.text || 
+                msgObj?.message?.imageMessage?.caption ||
+                msgObj?.message?.videoMessage?.caption ||
+                ''
+            ).trim();
 
             if (!from || !text) {
                 console.log(`⚠️ [WASender ${lineCode}] Evento sin remitente (${from}) o texto (${text})`);
