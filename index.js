@@ -3521,7 +3521,7 @@ CONOCIMIENTO EMPRESARIAL OBLIGATORIO:
 - Bancos aliados: Banco BIND y Banco Coinag.
 - Regla Cero Costo al Inversor: No se le cobra nada al inversor, todo lo paga el tomador del préstamo.
 - No Custodial: Cada inversor opera desde su propio CVU bancarizado.
-- Comisiones de Asesores: 4% a 3m, 5% a 6m, 6% a 12m (3% al calce inmediato y el resto en cuotas).
+- Comisiones de Asesores y Líderes: Comisiones de alto rendimiento (en comunicaciones en frío o plantillas nunca poner escalas numéricas; mencionar 'Comisiones de alto rendimiento').
 - Leads de Colaboratium (Caso Juan Ramírez): 3% inicial para Colaboratium, cuotas residuales y 100% de reinversiones para el asesor.
 - Líderes: 10% adicional de la bolsa de comisiones del equipo.
 - Reuniones y Capacitación: Lunes, Miércoles y Viernes por Google Meet (meet.google.com/new) o Presencial en Vicente López los Miércoles a las 14:30 hs.

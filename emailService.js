@@ -185,7 +185,7 @@ async function sendWebinarConfirmationToAdvisor(booking) {
 
                     <h3 style="font-size:14px;font-weight:800;color:#0f172a;margin-top:25px;">Temario de la Capacitación (40 min):</h3>
                     <ul style="font-size:13px;line-height:1.7;color:#475569;padding-left:20px;">
-                        <li><strong>Esquema de Comisiones (4%, 5% y 6%):</strong> 3% inmediato al calce + residual en cuotas + 100% en reinversiones.</li>
+                        <li><strong>Comisiones de alto rendimiento:</strong> cobro inmediato al calce + devengamiento y 100% en reinversiones.</li>
                         <li><strong>Atribución de Leads:</strong> 100% en clientes propios (Caso Carlos Gómez) vs leads provistos por Colaboratium (Caso Juan Ramírez).</li>
                         <li><strong>Operatoria No Custodial BIND / Coinag:</strong> Costo cero para el inversor y marco normativo BCRA Nº 40.015.</li>
                         <li><strong>Consola del Asesor:</strong> Alta, precarga de clientes y seguimiento de comisiones en vivo.</li>

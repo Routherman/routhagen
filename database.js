@@ -539,7 +539,7 @@ async function initDB() {
                      JSON_ARRAY(JSON_OBJECT('nombre', 'Manual_KYC_Colaboratium.pdf', 'url', '/media/Manual_KYC_Colaboratium.pdf', 'rubro', 'pdf'))),
                     
                     ('KRZMJI', 'email', 'Esquema de Comisiones y Modelo Operativo 2026', 'lideres', 'Esquema de Comisiones y Modelo Operativo 2026 - Colaboratium', 
-                     '<div style=\"font-family:sans-serif;color:#1e293b;padding:20px;\"><h2 style=\"color:#0f172a;\">Propuesta para Líderes y Asesores</h2><p>Estimado/a <strong>{{nombre}}</strong>,</p><p>Adjuntamos la presentación oficial y el desglose de comisiones con devengamiento al 3% al calce inmediato, escalas del 4%, 5% y 6% para tu equipo de asesores.</p><p>Quedamos a tu disposición para coordinar una reunión ejecutiva.</p></div>', 
+                     '<div style=\"font-family:sans-serif;color:#1e293b;padding:20px;\"><h2 style=\"color:#0f172a;\">Propuesta para Líderes y Asesores</h2><p>Estimado/a <strong>{{nombre}}</strong>,</p><p>Adjuntamos la presentación oficial y el esquema de Comisiones de alto rendimiento con cobro inmediato al calce para tu equipo de asesores.</p><p>Quedamos a tu disposición para coordinar una reunión ejecutiva.</p></div>', 
                      JSON_ARRAY(JSON_OBJECT('nombre', 'Presentacion_Colaboratium_Fondo_Blanco.pdf', 'url', '/media/Presentacion_Colaboratium_Fondo_Blanco.pdf', 'rubro', 'presentacion'))),
                     
                     ('KRZMJI', 'email', 'Bienvenida Inversor • Acceso y Operatoria', 'inversores', 'Bienvenido a Colaboratium • Acceso a Plataforma e Inversiones', 
