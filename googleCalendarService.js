@@ -97,18 +97,18 @@ async function getAvailableWebinarSlots(codigoEmpresa = 'KRZMJI', category = 'al
                 const ev = events[k];
                 if (ev && ev.type === 'VEVENT') {
                     const summary = (ev.summary || '').toLowerCase();
-                    const isRelevant = summary.includes('webinar') || 
-                                       summary.includes('capacitacion') || 
-                                       summary.includes('capacitación') || 
-                                       summary.includes('asesor') || 
-                                       summary.includes('lider') || 
-                                       summary.includes('líder') || 
-                                       summary.includes('presencial') || 
-                                       summary.includes('presentacion') || 
-                                       summary.includes('presentación') || 
-                                       summary.includes('reunion') || 
-                                       summary.includes('reunión') || 
-                                       summary.includes('colaboratium');
+                    const isRelevant = summary.includes('webinar') ||
+                        summary.includes('capacitacion') ||
+                        summary.includes('capacitación') ||
+                        summary.includes('asesor') ||
+                        summary.includes('lider') ||
+                        summary.includes('líder') ||
+                        summary.includes('presencial') ||
+                        summary.includes('presentacion') ||
+                        summary.includes('presentación') ||
+                        summary.includes('reunion') ||
+                        summary.includes('reunión') ||
+                        summary.includes('colaboratium');
                     if (isRelevant) {
                         // Descartar eventos pasados (anteriores a hoy)
                         const eventEndDate = new Date(ev.end || ev.start);
@@ -193,7 +193,7 @@ async function getAvailableWebinarSlots(codigoEmpresa = 'KRZMJI', category = 'al
 
     // 1.1 Cargar eventos personalizados creados por Líderes (Webinars) o Asesores (Meet) en BD
     if (db && !db.pool) {
-        try { await db.initDB(); } catch(e) {}
+        try { await db.initDB(); } catch (e) { }
     }
     if (codigoEmpresa && db && db.pool) {
         try {
@@ -231,7 +231,7 @@ async function getAvailableWebinarSlots(codigoEmpresa = 'KRZMJI', category = 'al
 
     // 2. Asociar inscriptos reales desde la base de datos
     if (db && !db.pool) {
-        try { await db.initDB(); } catch(e) {}
+        try { await db.initDB(); } catch (e) { }
     }
     console.log(`[Google Calendar] Asociando inscriptos para empresa: ${codigoEmpresa}, db.pool activo: ${!!(db && db.pool)}`);
     if (codigoEmpresa && db && db.pool) {
@@ -280,13 +280,13 @@ async function getAvailableWebinarSlots(codigoEmpresa = 'KRZMJI', category = 'al
             const enrichedContacts = (cRows || []).map(c => {
                 let meta = c.metadata_extra;
                 if (typeof meta === 'string') {
-                    try { meta = JSON.parse(meta); } catch(e) { meta = {}; }
+                    try { meta = JSON.parse(meta); } catch (e) { meta = {}; }
                 } else if (!meta) {
                     meta = {};
                 }
 
                 // Detección precisa del canal confirmado (WhatsApp o Email)
-                const canalConfirmado = meta.canal_confirmacion 
+                const canalConfirmado = meta.canal_confirmacion
                     ? (meta.canal_confirmacion.toLowerCase().includes('email') ? 'Email' : 'WhatsApp')
                     : (c.canal === 'email' ? 'Email' : 'WhatsApp');
 
@@ -508,7 +508,7 @@ async function getSubscriberProfile(codigoEmpresa, contactId) {
     // 4. Parsear metadatos
     let meta = contacto.metadata_extra;
     if (typeof meta === 'string') {
-        try { meta = JSON.parse(meta); } catch(e) { meta = {}; }
+        try { meta = JSON.parse(meta); } catch (e) { meta = {}; }
     } else if (!meta) {
         meta = {};
     }
@@ -702,24 +702,24 @@ async function processBooking({ slotChoice, customerName, customerEmail, custome
  * Envía el enlace de acceso de la reunión de Meet a todos los suscriptores/inscriptos de una sesión.
  * Soporta despacho por WhatsApp y por Email oficial de Colaboratium.
  */
-async function sendMeetingLinkToSubscribers({ 
-    codigoEmpresa = 'KRZMJI', 
-    slotId, 
-    meetLinkOverride = null, 
-    customMessage = null, 
-    channels = ['whatsapp', 'email'], 
-    userId = null, 
-    userName = null, 
-    userRole = null 
+async function sendMeetingLinkToSubscribers({
+    codigoEmpresa = 'KRZMJI',
+    slotId,
+    meetLinkOverride = null,
+    customMessage = null,
+    channels = ['whatsapp', 'email'],
+    userId = null,
+    userName = null,
+    userRole = null
 }) {
     if (!slotId) {
         return { success: false, error: 'Se requiere el ID del turno o sesión.' };
     }
 
     const slots = await getAvailableWebinarSlots(codigoEmpresa, 'all');
-    const slot = slots.find(s => 
-        String(s.id) === String(slotId) || 
-        String(s.dbId) === String(slotId) || 
+    const slot = slots.find(s =>
+        String(s.id) === String(slotId) ||
+        String(s.dbId) === String(slotId) ||
         s.uid === slotId
     );
 
@@ -741,10 +741,10 @@ async function sendMeetingLinkToSubscribers({
     try {
         const empresa = await db.obtenerEmpresa(codigoEmpresa);
         let cv = empresa?.cuentas_vinculadas;
-        if (typeof cv === 'string') { try { cv = JSON.parse(cv); } catch(e){} }
+        if (typeof cv === 'string') { try { cv = JSON.parse(cv); } catch (e) { } }
         phoneId = cv?.whatsapp?.phone_id || process.env.WAPP_PHONE_ID;
         accessToken = cv?.whatsapp?.access_token || process.env.WAPP_ACCESS_TOKEN;
-    } catch(err) {
+    } catch (err) {
         console.warn('⚠️ No se pudieron obtener credenciales de WhatsApp de la empresa:', err.message);
         phoneId = process.env.WAPP_PHONE_ID;
         accessToken = process.env.WAPP_ACCESS_TOKEN;
@@ -795,7 +795,7 @@ async function sendMeetingLinkToSubscribers({
                 if (sub.id && db && db.guardarMensaje) {
                     try {
                         await db.guardarMensaje(sub.id, metaId, 'SALIENTE', 'text', wappText);
-                    } catch(mErr) {
+                    } catch (mErr) {
                         console.warn('No se pudo persistir mensaje en BD:', mErr.message);
                     }
                 }
@@ -955,8 +955,8 @@ async function updateSubscriberAttendance({ codigoEmpresa, contactId, asistencia
     if (!db || !db.pool) throw new Error("Base de datos no inicializada");
 
     const validAsistencias = ['ASISTIO', 'NO_ASISTIO', 'PENDIENTE'];
-    const finalAsistencia = validAsistencias.includes(String(asistencia || '').toUpperCase()) 
-        ? String(asistencia).toUpperCase() 
+    const finalAsistencia = validAsistencias.includes(String(asistencia || '').toUpperCase())
+        ? String(asistencia).toUpperCase()
         : 'PENDIENTE';
 
     // 1. Obtener metadata previa del contacto
@@ -970,7 +970,7 @@ async function updateSubscriberAttendance({ codigoEmpresa, contactId, asistencia
 
     let meta = cRows[0].metadata_extra;
     if (typeof meta === 'string') {
-        try { meta = JSON.parse(meta); } catch(e) { meta = {}; }
+        try { meta = JSON.parse(meta); } catch (e) { meta = {}; }
     } else if (!meta) {
         meta = {};
     }

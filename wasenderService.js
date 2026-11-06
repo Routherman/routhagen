@@ -1,6 +1,6 @@
 const axios = require('axios');
 const db = require('./database');
-const { handleFlowEngine } = require('./flowEngine');
+const { processMessageWithAI } = require('./groqService');
 
 /**
  * Servicio de Integración con WASender API (wasenderapi.com)
@@ -29,7 +29,7 @@ class WasenderService {
                 phone_last4: '5239',
                 line_code: 'WA_S***5239',
                 connected: true,
-                block_outgoing: true
+                block_outgoing: false
             };
         } catch (e) {
             console.error('Error obteniendo config de WASender:', e.message);
@@ -48,20 +48,18 @@ class WasenderService {
 
     /**
      * Envío de mensaje vía WASender API
-     * Respeta la regla: si block_outgoing está activo, se bloquea la salida
+     * Respeta la regla: si block_outgoing está activo, se bloquea la salida excepto respuestas de bot o forzadas
      */
     async sendMessage(to, text, codigoEmpresa = 'KRZMJI', options = {}) {
         const config = await this.getConfig(codigoEmpresa);
         const { isBotReply = false, forceSend = false } = options;
 
-        // Regla solicitada por el usuario:
-        // "todo mensaje entrante quiero blokear la comunicacion saliente en esta linea porahora"
         if (config?.block_outgoing && !isBotReply && !forceSend) {
-            console.warn(`🔒 [WASender ${config?.line_code || 'WA_S***5239'}] Comunicación saliente bloqueada por configuración de prueba para ${to}`);
+            console.warn(`🔒 [WASender ${config?.line_code || 'WA_S***5239'}] Comunicación saliente masiva bloqueada por configuración para ${to}`);
             return {
                 success: false,
                 blocked: true,
-                message: `Comunicación saliente bloqueada en la línea ${config?.line_code || 'WA_S***5239'} (Modo Prueba / Solo Entrante Activo).`
+                message: `Comunicación saliente bloqueada en la línea ${config?.line_code || 'WA_S***5239'}.`
             };
         }
 
@@ -86,9 +84,10 @@ class WasenderService {
                 {
                     headers: {
                         'Authorization': `Bearer ${apiKey}`,
-                        'Content-Type': 'application/json'
+                        'Content-Type': 'application/json',
+                        'Accept': 'application/json'
                     },
-                    timeout: 10000
+                    timeout: 15000
                 }
             );
 
@@ -108,70 +107,150 @@ class WasenderService {
     }
 
     /**
+     * Genera la respuesta del Bot para la línea WASender (Agentes RE/MAX y Pauta Redes)
+     */
+    async generateBotReply(cleanPhone, userText, contact, codigoEmpresa) {
+        const textLower = (userText || '').toLowerCase().trim();
+
+        // 1. Saludos iniciales o reinicio de menú
+        if (/^(hola|buenas|buen d[ií]a|buenas tardes|buenas noches|inicio|empezar|men[uú]|info|informaci[oó]n|\?)/i.test(textLower) || textLower.length <= 4) {
+            return `¡Hola! Gracias por comunicarte con la línea oficial de Global Loan S.A. — Colaboratium (Registro BCRA Nº 40.015).\n\nSi llegaste por un anuncio en redes sociales o formas parte de la red de agentes inmobiliarios (RE/MAX, Century 21 o independientes), desarrollamos un modelo exclusivo de *Comisiones de alto rendimiento* para monetizar operaciones inmobiliarias y calzar créditos puente en 48 hs.\n\n¿Cómo te gustaría continuar?\n1️⃣ Escribe *1* si eres Agente Inmobiliario y deseas conocer el programa de alianzas.\n2️⃣ Escribe *2* si viste una publicación sobre créditos / inversión.\n3️⃣ Escribe *humano* para coordinar con un asesor ejecutivo.`;
+        }
+
+        // 2. Opción 1: Agente Inmobiliario
+        if (textLower === '1' || /agente|inmobiliari|re\/?max|century|c21|alianza|corredor/i.test(textLower)) {
+            return `🤝 *Programa de Alianzas para Agentes Inmobiliarios (RE/MAX, C21 e Independientes)*\n\nComo agente o corredor podés monetizar las operaciones trabadas de tus clientes:\n• *Créditos Puente y Refacciones*: Calce ágil en 48 a 72 hs con garantía real o fiduciaria.\n• *Comisiones de alto rendimiento*: Cobro bancarizado al calce efectivo de cada operación.\n• *Seguridad BCRA*: Operación respaldada bajo Registro Oficial BCRA Nº 40.015 con Banco BIND y Coinag.\n\n📌 *Próximos pasos:*\nPodemos coordinar una reunión presencial en nuestras oficinas de *Av. del Libertador 264, Vicente López* o sumarte al próximo *Webinar Virtual de 40 min*.\n\n¿Te gustaría sumarte al *Webinar* o prefieres una *Reunión Presencial*?`;
+        }
+
+        // 3. Opción 2: Créditos / Inversión
+        if (textLower === '2' || /invers|cr[eé]dito|pr[eé]stamo|tasa|rendimiento/i.test(textLower)) {
+            return `📈 *Colaboratium — Plataforma de Créditos e Inversión P2P*\n\n• *Para Inversores*: Rendimientos atractivos en dólares o pesos. 0% comisión para el inversor (el tomador paga el costo de la plataforma). Operación 100% bancarizada desde tu propia cuenta en Banco BIND / Coinag.\n• *Para Tomadores*: Créditos ágiles calzados en 48 hs con condiciones transparentes.\n• *Marco Regulatorio*: Registro Oficial BCRA Nº 40.015.\n\n¿Deseas recibir la propuesta informativa para *Inversores* o solicitar un *Crédito*? Responde con *Inversor* o *Crédito*.`;
+        }
+
+        // 4. Opción 3 o Humano
+        if (/humano|asesor|representante|persona|hablar|llamar/i.test(textLower)) {
+            try {
+                if (db && db.crearTicket) {
+                    await db.crearTicket(
+                        codigoEmpresa,
+                        contact?.id || null,
+                        cleanPhone,
+                        contact?.nombre || `Lead WA_S (${cleanPhone.slice(-4)})`,
+                        'pending_auth',
+                        `Solicitud de contacto humano en línea WASender: "${userText}"`,
+                        null,
+                        'Equipo Admisiones'
+                    );
+                }
+            } catch (tErr) {
+                console.warn('Error creando ticket derivación humano:', tErr.message);
+            }
+            return `👨‍💼 *Derivación a Asesor Ejecutivo*\n\nHemos registrado tu solicitud con alta prioridad en nuestro sistema de atención.\nUno de nuestros ejecutivos comerciales se pondrá en contacto contigo a la brevedad por este medio.\n\n¡Muchas gracias por comunicarte con Global Loan S.A. — Colaboratium!`;
+        }
+
+        // 5. Webinar o Presencial
+        if (/webinar|virtual|capacitaci[oó]n|reuni[oó]n/i.test(textLower)) {
+            return `💻 *Webinar Virtual de Capacitación & Alianzas*\n\nNuestras próximas sesiones son:\n• *Jueves 12 de Noviembre* — 12:00 hs o 19:00 hs (Google Meet)\n\nPara reservar tu lugar oficial, por favor indícanos tu *Nombre completo* y *Correo electrónico*.`;
+        }
+
+        // 6. Consultas generales asistidas por IA RAG
+        try {
+            if (typeof processMessageWithAI === 'function') {
+                const aiPromptContext = {
+                    codigo: codigoEmpresa,
+                    nombre: 'Global Loan S.A. — Colaboratium',
+                    systemPromptOverride: 'Eres el asistente virtual en la línea WA_S***5239 para Agentes RE/MAX y publicidad de redes de Colaboratium (Global Loan S.A., Registro BCRA Nº 40.015). Recuerda: NUNCA menciones porcentajes fijos de comisión; utiliza siempre el término "Comisiones de alto rendimiento". Enfatiza el calce en 48 hs, 0% costo al inversor, respaldo de Banco BIND y Coinag. Invita cordialmente al Webinar Virtual o a las oficinas en Av. del Libertador 264, Vicente López.'
+                };
+                const history = contact?.id ? await db.obtenerHistorialMensajes(contact.id, 6) : [];
+                const aiReply = await processMessageWithAI(userText, history, aiPromptContext);
+                if (aiReply && aiReply.length > 10 && !aiReply.includes('Lo siento, en este momento no puedo')) {
+                    return aiReply.replace(/\[ROLE:.*?\]/ig, '').replace(/\[HANDOFF\]/g, '').trim();
+                }
+            }
+        } catch (aiErr) {
+            console.warn('[WASender AI] Error llamando a IA:', aiErr.message);
+        }
+
+        // Fallback al menú principal
+        return `¡Hola! Gracias por comunicarte con Global Loan S.A. — Colaboratium (BCRA Nº 40.015).\n\n¿En qué podemos ayudarte?\n1️⃣ Escribe *1* si eres Agente Inmobiliario (RE/MAX, C21 o independiente).\n2️⃣ Escribe *2* para información sobre Inversiones o Créditos.\n3️⃣ Escribe *humano* para hablar con un asesor.`;
+    }
+
+    /**
      * Procesa los webhooks entrantes de WASender (wasenderapi.com)
      */
     async handleWebhook(payload, headers = {}, codigoEmpresa = 'KRZMJI') {
         const pool = db.pool;
-        const event = payload?.event || payload?.type || 'messages.received';
+        if (!pool) {
+            try { await db.initDB(); } catch(e) {}
+        }
+
+        const event = String(payload?.event || payload?.type || 'messages.received').toLowerCase();
         console.log(`📥 [WASender Webhook] Evento recibido: ${event}`);
 
         const config = await this.getConfig(codigoEmpresa);
         const lineCode = config?.line_code || 'WA_S***5239';
 
-        // Procesar mensajes entrantes (personal o grupos si no están ignorados)
-        if (event === 'messages.received' || event === 'messages-personal.received' || event === 'message.received') {
-            const data = payload?.data || payload;
-            let from = data?.from || data?.key?.remoteJid || data?.sender || data?.participant || '';
-            let text = data?.text || data?.body || data?.content || data?.message?.conversation || '';
+        // Procesar mensajes entrantes (personal o grupos)
+        const isMessageEvent = event.includes('message') || event.includes('upsert') || !!payload?.messages || !!payload?.data?.messages;
+        if (isMessageEvent) {
+            // Extraer objeto de mensaje soportando todos los formatos de WASender
+            let msgObj = null;
+            if (Array.isArray(payload?.messages) && payload.messages.length > 0) {
+                msgObj = payload.messages[0];
+            } else if (payload?.messages && typeof payload.messages === 'object') {
+                msgObj = payload.messages;
+            } else if (Array.isArray(payload?.data?.messages) && payload.data.messages.length > 0) {
+                msgObj = payload.data.messages[0];
+            } else if (payload?.data && typeof payload.data === 'object') {
+                msgObj = payload.data;
+            } else {
+                msgObj = payload;
+            }
 
-            // Limpiar número remitente (eliminar @s.whatsapp.net o @c.us)
-            from = from.replace(/@.*$/, '').replace(/\D/g, '');
+            // Ignorar mensajes salientes propios (fromMe: true)
+            const isFromMe = msgObj?.key?.fromMe === true || payload?.key?.fromMe === true || msgObj?.fromMe === true;
+            if (isFromMe) {
+                console.log(`ℹ️ [WASender ${lineCode}] Ignorando mensaje saliente propio (fromMe=true)`);
+                return { success: true, ignored: true, reason: 'Mensaje saliente propio' };
+            }
+
+            // Extraer remitente
+            let rawFrom = msgObj?.key?.remoteJid || msgObj?.from || msgObj?.sender || msgObj?.participant || payload?.from || '';
+            // Ignorar grupos o broadcasts
+            if (rawFrom.includes('@g.us') || rawFrom.includes('@broadcast') || rawFrom.includes('status@broadcast')) {
+                return { success: true, ignored: true, reason: 'Grupo o estado ignorado' };
+            }
+
+            let from = rawFrom.replace(/@.*$/, '').replace(/\D/g, '');
+            let text = msgObj?.messageBody || msgObj?.body || msgObj?.text || msgObj?.message?.conversation || msgObj?.message?.extendedTextMessage?.text || '';
+
             if (!from || !text) {
-                return { success: true, ignored: true, reason: 'Sin remitente o mensaje' };
+                console.log(`⚠️ [WASender ${lineCode}] Evento sin remitente (${from}) o texto (${text})`);
+                return { success: true, ignored: true, reason: 'Sin remitente o texto' };
             }
 
-            console.log(`📱 [WASender ${lineCode}] Mensaje de ${from}: "${text}"`);
+            console.log(`📱 [WASender ${lineCode}] Mensaje entrante de ${from}: "${text}"`);
 
-            // 1. REGLA PEDIDA POR EL USUARIO:
-            // "todo mensaje entrante quiero blokear la comunicacion saliente en esta linea porahora"
-            // Aseguramos que la línea mantenga bloqueada la comunicación saliente de campañas masivas
-            try {
-                const [empRows] = await pool.query('SELECT cuentas_vinculadas FROM empresas WHERE codigo = ?', [codigoEmpresa]);
-                let cv = empRows[0]?.cuentas_vinculadas || {};
-                if (typeof cv === 'string') {
-                    try { cv = JSON.parse(cv); } catch (e) { cv = {}; }
-                }
-                if (cv.wasender && cv.wasender.block_outgoing !== true) {
-                    cv.wasender.block_outgoing = true;
-                    await pool.query('UPDATE empresas SET cuentas_vinculadas = ? WHERE codigo = ?', [JSON.stringify(cv), codigoEmpresa]);
-                    console.log(`🔒 [WASender ${lineCode}] Bloqueo de salida confirmado automáticamente tras mensaje entrante.`);
-                }
-            } catch (lockErr) {
-                console.error('Error aplicando bloqueo de salida WASender:', lockErr.message);
-            }
-
-            // 2. Registrar o actualizar contacto en CRM
+            // 1. Registrar o actualizar contacto en CRM
             try {
                 let cleanPhone = from;
                 if (!cleanPhone.startsWith('549') && cleanPhone.startsWith('54')) {
                     cleanPhone = '549' + cleanPhone.slice(2);
-                } else if (!cleanPhone.startsWith('549')) {
+                } else if (!cleanPhone.startsWith('549') && cleanPhone.startsWith('11')) {
                     cleanPhone = '549' + cleanPhone;
                 }
 
                 const [existing] = await pool.query(
-                    'SELECT id, nombre, grupo, flujo_activo_id, nodo_actual_id FROM contactos WHERE telefono = ? AND codigo_empresa = ? LIMIT 1',
-                    [cleanPhone, codigoEmpresa]
+                    'SELECT id, nombre, grupo, flujo_activo_id, nodo_actual_id FROM contactos WHERE (telefono = ? OR telefono = ?) AND codigo_empresa = ? LIMIT 1',
+                    [cleanPhone, from, codigoEmpresa]
                 );
 
+                let contacto = null;
                 let contactoId = null;
-                let flujoActivoId = null;
-                let nodoActualId = null;
 
                 if (existing && existing.length > 0) {
-                    contactoId = existing[0].id;
-                    flujoActivoId = existing[0].flujo_activo_id;
-                    nodoActualId = existing[0].nodo_actual_id;
+                    contacto = existing[0];
+                    contactoId = contacto.id;
                     await pool.query(
                         'UPDATE contactos SET linea_wa = ?, canal = \'wasender\' WHERE id = ?',
                         [lineCode, contactoId]
@@ -188,64 +267,49 @@ class WasenderService {
                         lineCode
                     ]);
                     contactoId = insContact.insertId;
+                    contacto = { id: contactoId, telefono: cleanPhone, nombre: `Lead WA_S (${cleanPhone.slice(-4)})` };
                 }
 
-                // 3. Registrar mensaje en tabla mensajes
-                const metaMsgId = `was_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+                // 2. Registrar mensaje entrante en tabla mensajes
+                const metaMsgId = `was_in_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
                 await pool.query(`
                     INSERT INTO mensajes (contacto_id, mensaje_meta_id, direccion, tipo, contenido, estado_entrega, linea_wa)
                     VALUES (?, ?, 'ENTRANTE', 'texto', ?, 'recibido', ?)
                 `, [contactoId, metaMsgId, text, lineCode]);
 
-                // 4. Activar el Bot para este lead (Flujo WA_S: Agentes RE/MAX y Publicidad Redes)
-                // Buscar el flujo ID 15 o por nombre
-                const [flowRows] = await pool.query(
-                    'SELECT id, nombre, data_json FROM flujos WHERE nombre LIKE \'%WA_S%\' AND activo = 1 LIMIT 1'
-                );
+                // 3. Generar respuesta automática del Bot
+                const botReplyText = await this.generateBotReply(cleanPhone, text, contacto, codigoEmpresa);
 
-                if (flowRows.length > 0) {
-                    const flow = flowRows[0];
-                    const targetFlowId = flow.id;
+                if (botReplyText) {
+                    console.log(`🤖 [WASender ${lineCode}] Despachando respuesta automática a ${cleanPhone}...`);
+                    const sendRes = await this.sendMessage(cleanPhone, botReplyText, codigoEmpresa, { isBotReply: true, forceSend: true });
 
-                    console.log(`🤖 [WASender ${lineCode}] Ejecutando Flujo "${flow.nombre}" (ID ${targetFlowId}) para ${cleanPhone}...`);
-
-                    // Si no tiene flujo activo o es nuevo mensaje, asignamos el flujo WA_S
-                    await pool.query(
-                        'UPDATE contactos SET flujo_activo_id = ?, nodo_actual_id = COALESCE(nodo_actual_id, \'node_start\') WHERE id = ?',
-                        [targetFlowId, contactoId]
-                    );
-
-                    // Ejecutar motor de flujos si está disponible
-                    if (typeof handleFlowEngine === 'function') {
-                        try {
-                            const flowContact = {
-                                id: contactoId,
-                                telefono: cleanPhone,
-                                flujo_activo_id: targetFlowId,
-                                nodo_actual_id: nodoActualId || 'node_start',
-                                codigo_empresa: codigoEmpresa
-                            };
-                            await handleFlowEngine(cleanPhone, text, flowContact, codigoEmpresa);
-                        } catch (flowErr) {
-                            console.error('Error ejecutando flowEngine en WASender:', flowErr.message);
-                        }
+                    if (sendRes.success) {
+                        const outMsgId = `was_out_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+                        await pool.query(`
+                            INSERT INTO mensajes (contacto_id, mensaje_meta_id, direccion, tipo, contenido, estado_entrega, linea_wa)
+                            VALUES (?, ?, 'SALIENTE', 'texto', ?, 'enviado', ?)
+                        `, [contactoId, outMsgId, botReplyText, lineCode]);
+                        console.log(`✅ [WASender ${lineCode}] Respuesta entregada con éxito a ${cleanPhone}`);
+                    } else {
+                        console.error(`❌ [WASender ${lineCode}] Error enviando respuesta a ${cleanPhone}:`, sendRes.error);
                     }
                 }
 
                 return { success: true, processed: true, contactId: contactoId, line: lineCode };
             } catch (dbErr) {
-                console.error('Error guardando mensaje de WASender en DB:', dbErr.message);
+                console.error('Error procesando webhook de WASender en DB:', dbErr.message);
                 return { success: false, error: dbErr.message };
             }
         }
 
         // Otros eventos de WASender (session.status, qrcode.updated, etc.)
-        if (event === 'session.status' || event === 'qrcode.updated') {
-            console.log(`ℹ️ [WASender ${lineCode}] Estado de sesión:`, payload?.data?.status || payload?.status);
+        if (event.includes('session') || event.includes('status') || event.includes('qrcode')) {
+            console.log(`ℹ️ [WASender ${lineCode}] Evento de sesión/estado:`, payload?.data?.status || payload?.status || event);
             return { success: true, event };
         }
 
-        return { success: true, ignored: true };
+        return { success: true, ignored: true, event };
     }
 }
 
