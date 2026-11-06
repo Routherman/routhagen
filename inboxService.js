@@ -311,7 +311,8 @@ async function monitorAndProcessIncomingReplies(codigoEmpresa = 'KRZMJI') {
                         customerEmail: fromEmail,
                         customerPhone,
                         codigoEmpresa,
-                        category: 'asesores'
+                        category: 'asesores',
+                        canal: 'email'
                     });
                 } catch (bErr) {
                     console.error("Error en processBooking para email monitor:", bErr.message);

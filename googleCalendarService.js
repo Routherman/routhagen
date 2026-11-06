@@ -255,6 +255,28 @@ async function getAvailableWebinarSlots(codigoEmpresa = 'KRZMJI', category = 'al
             const msgMap = {};
             (mRows || []).forEach(m => { msgMap[m.contacto_id] = m.total_mensajes; });
 
+            // Helper robusto para extraer día y mes en español (ej: "12 de noviembre" -> "12_noviembre")
+            function extractDayAndMonth(str) {
+                if (!str) return null;
+                const clean = String(str).toLowerCase().replace(/[,.:()\-]/g, ' ').replace(/\s+/g, ' ').trim();
+                const match = clean.match(/(\d{1,2})\s+(?:de\s+)?(enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|setiembre|octubre|noviembre|diciembre)/i);
+                if (match) {
+                    return `${parseInt(match[1], 10)}_${match[2].toLowerCase()}`;
+                }
+                return null;
+            }
+
+            // Helper para extraer clave horaria estándar (ej: 12 hs, 19 hs, 16:15 hs)
+            function extractHourKey(str) {
+                if (!str) return null;
+                const clean = String(str).toLowerCase().trim();
+                if (/07:00\s*p\.?\s*m|19:00|7\s*pm/i.test(clean)) return '19';
+                if (/12:00\s*p\.?\s*m|12:00|12\s*pm/i.test(clean)) return '12';
+                if (/04:15\s*p\.?\s*m|16:15|4:15\s*p/i.test(clean)) return '16';
+                if (/01:00\s*p\.?\s*m|13:00|1:00\s*p/i.test(clean)) return '13';
+                return null;
+            }
+
             const enrichedContacts = (cRows || []).map(c => {
                 let meta = c.metadata_extra;
                 if (typeof meta === 'string') {
@@ -262,6 +284,12 @@ async function getAvailableWebinarSlots(codigoEmpresa = 'KRZMJI', category = 'al
                 } else if (!meta) {
                     meta = {};
                 }
+
+                // Detección precisa del canal confirmado (WhatsApp o Email)
+                const canalConfirmado = meta.canal_confirmacion 
+                    ? (meta.canal_confirmacion.toLowerCase().includes('email') ? 'Email' : 'WhatsApp')
+                    : (c.canal === 'email' ? 'Email' : 'WhatsApp');
+
                 return {
                     id: c.id,
                     nombre: c.nombre || 'Asesor Candidato',
@@ -275,12 +303,17 @@ async function getAvailableWebinarSlots(codigoEmpresa = 'KRZMJI', category = 'al
                     grupo: c.grupo || 'ASESORES',
                     creado_en: c.creado_en,
                     slot_id: meta.slot_id ? Number(meta.slot_id) : null,
+                    slot_uid: meta.slot_uid || null,
+                    slot_dbId: meta.slot_dbId || null,
+                    fechaStr: meta.fechaStr || null,
+                    horarioStr: meta.horarioStr || null,
+                    confirmado_en: meta.confirmado_en || null,
                     inscripcion_str: meta.inscripcion || c.ticket_summary || '',
                     ticket_id: c.ticket_id,
                     ticket_status: c.ticket_status || 'pending_auth',
                     ticket_summary: c.ticket_summary,
                     total_mensajes: msgMap[c.id] || 0,
-                    canal: 'WhatsApp',
+                    canal: canalConfirmado,
                     asistencia: c.asistencia || meta.asistencia || 'PENDIENTE',
                     nota_asistencia: c.nota_asistencia || meta.nota_asistencia || '',
                     asistencia_actualizada_en: c.asistencia_actualizada_en || meta.asistencia_actualizada_en || null,
@@ -298,37 +331,53 @@ async function getAvailableWebinarSlots(codigoEmpresa = 'KRZMJI', category = 'al
                 }
             }
 
-            function normalizeStr(text) {
-                return String(text || '').toLowerCase().replace(/[,.:()\-]/g, ' ').replace(/\s+/g, ' ').trim();
-            }
-
-            // Distribuir inscriptos en sus respectivos turnos de manera unívoca
-            // SOLO se inscriben contactos con fecha y horario confirmados (slot_id explícito o inscripción válida)
+            // Distribuir inscriptos en sus respectivos turnos de manera unívoca y estricta:
+            // 1. SOLO contactos con confirmación expresa por WhatsApp o Email (o reserva manual)
+            // 2. Coincidencia estricta por fecha/horario o UID único del evento en Google Calendar
+            // 3. NUNCA arrastrar asistentes de eventos pasados a sesiones futuras
             rawSlots.forEach(s => {
+                const slotDayMonth = extractDayAndMonth(s.fechaStr);
+                const slotHour = extractHourKey(s.horarioStr);
+
                 s.subscribers = uniqueContacts.filter(c => {
-                    // Si es un prospecto sin fecha confirmada, NO se inscribe a ningún slot
-                    if (c.grupo === 'PROSPECTO ASESORES' && !c.slot_id) {
+                    // Debe haber confirmado expresamente por WhatsApp o Email
+                    const hasConfirmation = (c.inscripcion_str && (
+                        c.inscripcion_str.toLowerCase().includes('inscripto') ||
+                        c.inscripcion_str.toLowerCase().includes('inscripci') ||
+                        c.inscripcion_str.toLowerCase().includes('confirmad')
+                    )) || !!c.confirmado_en || !!c.slot_id;
+
+                    if (!hasConfirmation) {
                         return false;
                     }
 
-                    if (c.slot_id) {
-                        return Number(c.slot_id) === Number(s.id);
+                    // Coincidencia por UID exacto de Google Calendar
+                    if (c.slot_uid && s.uid && c.slot_uid === s.uid) {
+                        return true;
                     }
-                    if (c.inscripcion_str && c.inscripcion_str.toLowerCase().includes('inscripto')) {
-                        const cleanStr = normalizeStr(c.inscripcion_str);
-                        const cleanFecha = normalizeStr(s.fechaStr);
-                        const cleanHora = normalizeStr(s.horarioStr).split(' a ')[0];
 
-                        // Coincidencia exacta de fecha y hora
-                        if (cleanStr.includes(cleanFecha) && cleanStr.includes(cleanHora)) {
-                            return true;
-                        }
-
-                        // Coincidencia por modalidad presencial con fecha
-                        if (s.modalidad === 'PRESENCIAL' && cleanStr.includes('presencial') && cleanStr.includes(cleanFecha)) {
-                            return true;
-                        }
+                    // Coincidencia por DB ID de evento personalizado
+                    if (c.slot_dbId && s.dbId && Number(c.slot_dbId) === Number(s.dbId)) {
+                        return true;
                     }
+
+                    // Coincidencia estricta por Fecha y Horario
+                    // Descartar contactos de eventos pasados u otras fechas
+                    const contactDayMonth = extractDayAndMonth(c.fechaStr) || extractDayAndMonth(c.inscripcion_str);
+                    const contactHour = extractHourKey(c.horarioStr) || extractHourKey(c.inscripcion_str);
+
+                    if (contactDayMonth && slotDayMonth) {
+                        if (contactDayMonth !== slotDayMonth) {
+                            return false; // Fechas distintas (ej: 3 de nov vs 12 de nov)
+                        }
+                        // Si es el mismo día y ambos especifican horario, verificar que no sea otro turno
+                        if (contactHour && slotHour && contactHour !== slotHour) {
+                            return false;
+                        }
+                        return true;
+                    }
+
+                    // Si no tiene fecha válida que coincida con este slot, descartar
                     return false;
                 });
                 s.inscriptosCount = s.subscribers.length;
@@ -490,7 +539,7 @@ async function getSubscriberProfile(codigoEmpresa, contactId) {
 /**
  * Procesa la inscripción a un horario de capacitación
  */
-async function processBooking({ slotChoice, customerName, customerEmail, customerPhone, codigoEmpresa = 'KRZMJI', category = 'all' }) {
+async function processBooking({ slotChoice, customerName, customerEmail, customerPhone, codigoEmpresa = 'KRZMJI', category = 'all', canal = 'whatsapp' }) {
     const slots = await getAvailableWebinarSlots(codigoEmpresa, category);
 
     // Identificar slot por número o coincidencia
@@ -498,7 +547,7 @@ async function processBooking({ slotChoice, customerName, customerEmail, custome
     const choiceClean = String(slotChoice || '').replace('slot_', '').trim();
     const choiceNum = parseInt(choiceClean, 10);
     if (!isNaN(choiceNum)) {
-        chosenSlot = slots.find(s => s.id === choiceNum);
+        chosenSlot = slots.find(s => s.id === choiceNum || s.dbId === choiceNum);
     } else {
         const text = (slotChoice || '').toLowerCase();
         if (text.includes('presencial')) {
@@ -531,14 +580,19 @@ async function processBooking({ slotChoice, customerName, customerEmail, custome
             telefono: cleanPhone,
             email: customerEmail,
             grupo: isLider ? 'LIDERES' : 'ASESORES',
+            canal: canal === 'email' ? 'email' : 'whatsapp_meta',
             metadata_extra: {
                 slot_id: chosenSlot.id,
+                slot_uid: chosenSlot.uid || null,
+                slot_dbId: chosenSlot.dbId || null,
                 titulo: chosenSlot.titulo,
                 fechaStr: chosenSlot.fechaStr,
                 horarioStr: chosenSlot.horarioStr,
                 modalidad: chosenSlot.modalidad,
                 categoria: isLider ? 'LIDERES' : 'ASESORES',
-                inscripcion: `Inscripto a ${chosenSlot.titulo} (${chosenSlot.fechaStr} ${chosenSlot.horarioStr})`
+                inscripcion: `Inscripto a ${chosenSlot.titulo} (${chosenSlot.fechaStr} ${chosenSlot.horarioStr})`,
+                canal_confirmacion: canal || (customerEmail && !customerPhone ? 'email' : 'whatsapp'),
+                confirmado_en: new Date().toISOString()
             }
         });
     } catch (e) {

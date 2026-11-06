@@ -3369,13 +3369,14 @@ app.post('/api/empresas/:codigo/calendar/subscribers/:id/attendance', async (req
 
 app.post('/api/empresas/:codigo/calendar/book', async (req, res) => {
     try {
-        const { slotChoice, customerName, customerEmail, customerPhone } = req.body;
+        const { slotChoice, customerName, customerEmail, customerPhone, canal } = req.body;
         const result = await processBooking({
             slotChoice,
             customerName,
             customerEmail,
             customerPhone,
-            codigoEmpresa: req.params.codigo
+            codigoEmpresa: req.params.codigo,
+            canal: canal || (customerEmail ? 'email' : 'whatsapp')
         });
         res.json(result);
     } catch (error) {
