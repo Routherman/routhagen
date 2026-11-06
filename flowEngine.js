@@ -18,6 +18,21 @@ async function handleFlowEngine(dbContacto, cleanMessage, empresa, accessToken, 
     
     console.log(`[Flow] Iniciando motor para mensaje: "${userText}"`);
 
+    // Helper omnicanal de despacho (soporta Meta Cloud API y WASender API)
+    const sendWhatsAppMsg = async (targetPhone, text) => {
+        const isWasender = dbContacto?.canal === 'wasender' || dbContacto?.linea_wa?.includes('WA_S');
+        if (isWasender) {
+            try {
+                const wasenderService = require('./wasenderService');
+                const res = await wasenderService.sendMessage(targetPhone, text, codigoEmpresa, { isBotReply: true, forceSend: true });
+                return `was_flow_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+            } catch (wasErr) {
+                console.error('[Flow] Error enviando vía WASender:', wasErr.message);
+            }
+        }
+        return sendWhatsAppMessage(targetPhone, text, phoneId, accessToken);
+    };
+
     // Asegurar datos frescos del contacto desde la base de datos
     try {
         if (dbContacto && dbContacto.id && db && db.pool) {
@@ -306,7 +321,7 @@ async function handleFlowEngine(dbContacto, cleanMessage, empresa, accessToken, 
 
                         const promptForEmail = `¡Excelente elección! 📅 Reservaste tu turno para:\n*${chosen.titulo}*\n🗓️ ${chosen.fechaStr} (${chosen.horarioStr})\n\n👉 Para emitir tu invitación formal y enviarte el acceso a Google Meet o datos de recepción, por favor respóndeme con tu *Nombre completo* y tu *Correo electrónico* (ej. *Juan Pérez juan@gmail.com*):`;
 
-                        const outMetaId = await sendWhatsAppMessage(cleanMessage.identificador.valor, promptForEmail, phoneId, accessToken);
+                        const outMetaId = await sendWhatsAppMsg(cleanMessage.identificador.valor, promptForEmail, phoneId, accessToken);
                         await db.guardarMensaje(dbContacto.id, outMetaId, 'SALIENTE', 'text', promptForEmail);
                         return true; // Espera el siguiente mensaje con los datos
                     }
@@ -332,7 +347,7 @@ async function handleFlowEngine(dbContacto, cleanMessage, empresa, accessToken, 
                         });
 
                         if (bookingRes && bookingRes.whatsappResponse) {
-                            const outMetaId = await sendWhatsAppMessage(cleanMessage.identificador.valor, bookingRes.whatsappResponse, phoneId, accessToken);
+                            const outMetaId = await sendWhatsAppMsg(cleanMessage.identificador.valor, bookingRes.whatsappResponse, phoneId, accessToken);
                             await db.guardarMensaje(dbContacto.id, outMetaId, 'SALIENTE', 'text', bookingRes.whatsappResponse);
                             await clearFlowState(dbContacto.id);
                             return true; // Finalizado: ticket creado y confirmaciones enviadas a ambas casillas
@@ -383,7 +398,7 @@ async function handleFlowEngine(dbContacto, cleanMessage, empresa, accessToken, 
                             });
 
                             if (bookingRes && bookingRes.whatsappResponse) {
-                                const outMetaId = await sendWhatsAppMessage(cleanMessage.identificador.valor, bookingRes.whatsappResponse, phoneId, accessToken);
+                                const outMetaId = await sendWhatsAppMsg(cleanMessage.identificador.valor, bookingRes.whatsappResponse, phoneId, accessToken);
                                 await db.guardarMensaje(dbContacto.id, outMetaId, 'SALIENTE', 'text', bookingRes.whatsappResponse);
                                 await clearFlowState(dbContacto.id);
                                 return true;
@@ -401,7 +416,7 @@ async function handleFlowEngine(dbContacto, cleanMessage, empresa, accessToken, 
 
                         const promptForEmail = `¡Excelente elección, Líder! 👑 Reservaste tu turno para:\n*${chosen.titulo}*\n🗓️ ${chosen.fechaStr} (${chosen.horarioStr})\n\n👉 Para emitir tu invitación formal y enviarte el acceso a Google Meet o datos de recepción ejecutiva, por favor respóndeme con tu *Nombre completo*, tu *Correo electrónico* y cuántos asesores integran tu equipo:`;
 
-                        const outMetaId = await sendWhatsAppMessage(cleanMessage.identificador.valor, promptForEmail, phoneId, accessToken);
+                        const outMetaId = await sendWhatsAppMsg(cleanMessage.identificador.valor, promptForEmail, phoneId, accessToken);
                         await db.guardarMensaje(dbContacto.id, outMetaId, 'SALIENTE', 'text', promptForEmail);
                         return true; // Espera el siguiente mensaje con los datos
                     }
@@ -480,7 +495,7 @@ async function handleFlowEngine(dbContacto, cleanMessage, empresa, accessToken, 
 
                     if (!sentInteractive) {
                         const cleanText = await formatCalendarOptionsText(codigoEmpresa, 'lideres');
-                        const outMetaId = await sendWhatsAppMessage(cleanMessage.identificador.valor, cleanText, phoneId, accessToken);
+                        const outMetaId = await sendWhatsAppMsg(cleanMessage.identificador.valor, cleanText, phoneId, accessToken);
                         await db.guardarMensaje(dbContacto.id, outMetaId, 'SALIENTE', 'text', cleanText);
                     }
 
@@ -516,13 +531,13 @@ async function handleFlowEngine(dbContacto, cleanMessage, empresa, accessToken, 
                             }
 
                             const confirmMsg = `¡Excelente! 🤝 Hemos generado la solicitud en nuestro sistema. El equipo de Dirección Comercial te asignará un *Asesor Financiero personalizado* quien se pondrá en contacto contigo a la brevedad para acompañarte en tu primera inversión.`;
-                            const outMetaId = await sendWhatsAppMessage(cleanMessage.identificador.valor, confirmMsg, phoneId, accessToken);
+                            const outMetaId = await sendWhatsAppMsg(cleanMessage.identificador.valor, confirmMsg, phoneId, accessToken);
                             await db.guardarMensaje(dbContacto.id, outMetaId, 'SALIENTE', 'text', confirmMsg);
                             await clearFlowState(dbContacto.id);
                             return true;
                         } else {
                             const selfMsg = `¡Entendido! Podés realizar tu registro y colocación de forma 100% autogestionada siguiendo la guía enviada a tu correo. Ante cualquier inquietud o consulta sobre el simulador, estamos a tu disposición por este medio.`;
-                            const outMetaId = await sendWhatsAppMessage(cleanMessage.identificador.valor, selfMsg, phoneId, accessToken);
+                            const outMetaId = await sendWhatsAppMsg(cleanMessage.identificador.valor, selfMsg, phoneId, accessToken);
                             await db.guardarMensaje(dbContacto.id, outMetaId, 'SALIENTE', 'text', selfMsg);
                             await clearFlowState(dbContacto.id);
                             return true;
@@ -591,7 +606,7 @@ async function handleFlowEngine(dbContacto, cleanMessage, empresa, accessToken, 
                         `📊 *Simulador Online:* Recordá que podés calcular tus retornos según plazo en https://colaboratium.com.ar/inversiones.php#simulador (montos desde *$100.000* hasta *$10.000.000* sin papeles extra).\n\n` +
                         `👉 *¿Te gustaría que te asignemos un Asesor Financiero personalizado para acompañarte y resolver cualquier duda en tu primera inversión?* (Responde *Sí* o *No*)`;
 
-                    const outMetaId = await sendWhatsAppMessage(cleanMessage.identificador.valor, investorReply, phoneId, accessToken);
+                    const outMetaId = await sendWhatsAppMsg(cleanMessage.identificador.valor, investorReply, phoneId, accessToken);
                     await db.guardarMensaje(dbContacto.id, outMetaId, 'SALIENTE', 'text', investorReply);
                     return true; // Espera respuesta de Sí o No para delegar el ticket
                 }
@@ -634,7 +649,7 @@ async function handleFlowEngine(dbContacto, cleanMessage, empresa, accessToken, 
                     await clearFlowState(dbContacto.id);
                 }
 
-                const outMetaId = await sendWhatsAppMessage(cleanMessage.identificador.valor, aiResponse, phoneId, accessToken);
+                const outMetaId = await sendWhatsAppMsg(cleanMessage.identificador.valor, aiResponse, phoneId, accessToken);
                 await db.guardarMensaje(dbContacto.id, outMetaId, 'SALIENTE', 'text', aiResponse);
                 console.log(`[Flow] RAG respondió correctamente.`);
                 return true; // RAG responde y espera al próximo mensaje
@@ -661,7 +676,7 @@ async function handleFlowEngine(dbContacto, cleanMessage, empresa, accessToken, 
             const msg = currentNode.data?.message || '';
             if (msg) {
                 console.log(`[Flow] Enviando mensaje: "${msg}"`);
-                const outMetaId = await sendWhatsAppMessage(cleanMessage.identificador.valor, msg, phoneId, accessToken);
+                const outMetaId = await sendWhatsAppMsg(cleanMessage.identificador.valor, msg, phoneId, accessToken);
                 await db.guardarMensaje(dbContacto.id, outMetaId, 'SALIENTE', 'text', msg);
                 console.log(`[Flow] Mensaje enviado exitosamente.`);
             }
@@ -689,7 +704,7 @@ async function handleFlowEngine(dbContacto, cleanMessage, empresa, accessToken, 
 
                 if (!sentInteractive) {
                     const question = currentNode.data?.question || '¿Qué perfil deseas explorar? Escribe 1 (Inversor), 2 (Asesor) o 3 (Líder):';
-                    const outMetaId = await sendWhatsAppMessage(cleanMessage.identificador.valor, question, phoneId, accessToken);
+                    const outMetaId = await sendWhatsAppMsg(cleanMessage.identificador.valor, question, phoneId, accessToken);
                     await db.guardarMensaje(dbContacto.id, outMetaId, 'SALIENTE', 'text', question);
                 }
             } else if (isCalendarNode) {
@@ -720,7 +735,7 @@ async function handleFlowEngine(dbContacto, cleanMessage, empresa, accessToken, 
                         });
 
                         if (bookingRes && bookingRes.whatsappResponse) {
-                            const outMetaId = await sendWhatsAppMessage(cleanMessage.identificador.valor, bookingRes.whatsappResponse, phoneId, accessToken);
+                            const outMetaId = await sendWhatsAppMsg(cleanMessage.identificador.valor, bookingRes.whatsappResponse, phoneId, accessToken);
                             await db.guardarMensaje(dbContacto.id, outMetaId, 'SALIENTE', 'text', bookingRes.whatsappResponse);
                             await clearFlowState(dbContacto.id);
                             executing = false;
@@ -749,7 +764,7 @@ async function handleFlowEngine(dbContacto, cleanMessage, empresa, accessToken, 
 
                 if (!sentInteractive) {
                     const cleanText = await formatCalendarOptionsText(codigoEmpresa, 'asesores');
-                    const outMetaId = await sendWhatsAppMessage(cleanMessage.identificador.valor, cleanText, phoneId, accessToken);
+                    const outMetaId = await sendWhatsAppMsg(cleanMessage.identificador.valor, cleanText, phoneId, accessToken);
                     await db.guardarMensaje(dbContacto.id, outMetaId, 'SALIENTE', 'text', cleanText);
                 }
             } else if (isLeaderCalendarNode) {
@@ -771,13 +786,13 @@ async function handleFlowEngine(dbContacto, cleanMessage, empresa, accessToken, 
 
                 if (!sentInteractive) {
                     const cleanText = await formatCalendarOptionsText(codigoEmpresa, 'lideres');
-                    const outMetaId = await sendWhatsAppMessage(cleanMessage.identificador.valor, cleanText, phoneId, accessToken);
+                    const outMetaId = await sendWhatsAppMsg(cleanMessage.identificador.valor, cleanText, phoneId, accessToken);
                     await db.guardarMensaje(dbContacto.id, outMetaId, 'SALIENTE', 'text', cleanText);
                 }
             } else {
                 const question = currentNode.data?.question || '¿Cuál es tu respuesta?';
                 console.log(`[Flow] Solicitando Identity: "${question}"`);
-                const outMetaId = await sendWhatsAppMessage(cleanMessage.identificador.valor, question, phoneId, accessToken);
+                const outMetaId = await sendWhatsAppMsg(cleanMessage.identificador.valor, question, phoneId, accessToken);
                 await db.guardarMensaje(dbContacto.id, outMetaId, 'SALIENTE', 'text', question);
             }
             executing = false; // Pausamos el flujo esperando respuesta del usuario
@@ -792,7 +807,7 @@ async function handleFlowEngine(dbContacto, cleanMessage, empresa, accessToken, 
             console.log(`[Flow] Derivando a humano.`);
             await db.actualizarEstadoBot(dbContacto.id, 'HANDOFF');
             const handoffMsg = "Entiendo. Un asesor humano se conectará al chat en breve para ayudarte.";
-            const outMetaId = await sendWhatsAppMessage(cleanMessage.identificador.valor, handoffMsg, phoneId, accessToken);
+            const outMetaId = await sendWhatsAppMsg(cleanMessage.identificador.valor, handoffMsg, phoneId, accessToken);
             await db.guardarMensaje(dbContacto.id, outMetaId, 'SALIENTE', 'text', handoffMsg);
             
             await clearFlowState(dbContacto.id);

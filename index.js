@@ -1755,28 +1755,66 @@ app.post('/api/empresas/:codigo/campanas/:id/reprogramar', async (req, res) => {
 });
 
 
-// Endpoint para que un humano responda desde el panel
+// Endpoint para que un humano responda desde el panel (CRM / Inbox)
 app.post('/api/messages/reply', async (req, res) => {
     try {
-        const { contactId, telefono, codigoEmpresa, text } = req.body;
+        const { contactId, telefono, codigoEmpresa = 'KRZMJI', text } = req.body;
+        if (!text) return res.status(400).json({ error: 'El contenido del mensaje es requerido' });
+
         const empresa = await db.obtenerEmpresa(codigoEmpresa);
         if (!empresa) return res.status(404).json({ error: 'Empresa no encontrada' });
         
         let cv = empresa.cuentas_vinculadas;
         if (typeof cv === 'string') { try { cv = JSON.parse(cv); } catch(e){} }
-        
+
+        // Consultar el contacto para saber qué canal o línea tiene asignada
+        let contacto = null;
+        if (contactId && db.pool) {
+            const [cRows] = await db.pool.query('SELECT id, telefono, linea_wa, canal FROM contactos WHERE id = ? LIMIT 1', [contactId]);
+            if (cRows && cRows.length > 0) contacto = cRows[0];
+        }
+
+        const isWasenderContact = contacto?.canal === 'wasender' || 
+                                  contacto?.linea_wa?.includes('WA_S') ||
+                                  (!cv?.whatsapp?.phone_id && cv?.wasender?.connected);
+
+        // Si el contacto pertenece a la línea WASender API (+54 11 7825 5239)
+        if (isWasenderContact) {
+            const targetPhone = telefono || contacto?.telefono;
+            // Envío manual desde CRM: nunca se bloquea por anti-spam (forceSend: true, isCampaign: false)
+            const wasRes = await wasenderService.sendMessage(targetPhone, text, codigoEmpresa, { forceSend: true, isCampaign: false });
+            if (wasRes.success) {
+                const outMsgId = `was_crm_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+                const lineCode = wasRes.line || 'WA_S***5239';
+                if (db.pool && contactId) {
+                    await db.pool.query(`
+                        INSERT INTO mensajes (contacto_id, mensaje_meta_id, direccion, tipo, contenido, estado_entrega, linea_wa)
+                        VALUES (?, ?, 'SALIENTE', 'texto', ?, 'enviado', ?)
+                    `, [contactId, outMsgId, text, lineCode]);
+                }
+                return res.json({ success: true, message: 'Mensaje manual entregado vía WASender', metaId: outMsgId, line: lineCode });
+            } else {
+                return res.status(400).json({ error: wasRes.error || wasRes.message || 'Error al enviar por WASender' });
+            }
+        }
+
+        // Si el contacto pertenece a Meta Cloud API
         const phoneId = cv?.whatsapp?.phone_id;
         const accessToken = cv?.whatsapp?.access_token;
 
-        if (!phoneId || !accessToken) return res.status(400).json({ error: 'La empresa no tiene WhatsApp configurado' });
+        if (!phoneId || !accessToken) {
+            return res.status(400).json({ error: 'La empresa no tiene líneas de WhatsApp activas (Meta ni WASender)' });
+        }
 
-        const metaId = await sendWhatsAppMessage(telefono, text, phoneId, accessToken);
-        await db.guardarMensaje(contactId, metaId, 'SALIENTE', 'text', text);
+        const metaId = await sendWhatsAppMessage(telefono || contacto?.telefono, text, phoneId, accessToken);
+        if (contactId) {
+            await db.guardarMensaje(contactId, metaId, 'SALIENTE', 'text', text);
+        }
         
-        res.json({ message: 'Mensaje enviado', metaId });
+        res.json({ success: true, message: 'Mensaje manual entregado vía Meta WhatsApp', metaId });
     } catch (error) {
         console.error('❌ Error respondiendo como humano:', error);
-        res.status(500).json({ error: 'Error interno del servidor' });
+        res.status(500).json({ error: 'Error interno del servidor: ' + error.message });
     }
 });
 

@@ -685,14 +685,14 @@ async function actualizarAsignacionContacto(contactoId, rolAsignado, usuarioAsig
 /**
  * Guarda un mensaje (entrante o saliente) en el historial del chat
  */
-async function guardarMensaje(contactoId, metaId, direccion, tipo, contenido, campanaId = null) {
+async function guardarMensaje(contactoId, metaId, direccion, tipo, contenido, campanaId = null, linea_wa = null) {
     if (!pool) return;
     
     await pool.query(`
-        INSERT INTO mensajes (contacto_id, mensaje_meta_id, direccion, tipo, contenido, campana_id)
-        VALUES (?, ?, ?, ?, ?, ?)
-        ON DUPLICATE KEY UPDATE contenido = VALUES(contenido)
-    `, [contactoId, metaId, direccion, tipo, contenido, campanaId]);
+        INSERT INTO mensajes (contacto_id, mensaje_meta_id, direccion, tipo, contenido, campana_id, linea_wa)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        ON DUPLICATE KEY UPDATE contenido = VALUES(contenido), linea_wa = COALESCE(VALUES(linea_wa), linea_wa)
+    `, [contactoId, metaId, direccion, tipo, contenido, campanaId, linea_wa]);
 }
 
 /**

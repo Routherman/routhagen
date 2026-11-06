@@ -48,18 +48,20 @@ class WasenderService {
 
     /**
      * Envío de mensaje vía WASender API
-     * Respeta la regla: si block_outgoing está activo, se bloquea la salida excepto respuestas de bot o forzadas
+     * Regla de negocio: El bloqueo anti-spam solo restringe campañas masivas automáticas (isCampaign: true).
+     * Envíos manuales desde el CRM, respuestas del Bot o individuales SIEMPRE están habilitados.
      */
     async sendMessage(to, text, codigoEmpresa = 'KRZMJI', options = {}) {
         const config = await this.getConfig(codigoEmpresa);
-        const { isBotReply = false, forceSend = false } = options;
+        const { isBotReply = false, forceSend = false, isCampaign = false } = options;
 
-        if (config?.block_outgoing && !isBotReply && !forceSend) {
-            console.warn(`🔒 [WASender ${config?.line_code || 'WA_S***5239'}] Comunicación saliente masiva bloqueada por configuración para ${to}`);
+        // El bloqueo anti-spam solo restringe campañas masivas automáticas
+        if (isCampaign && config?.block_outgoing && !forceSend) {
+            console.warn(`🔒 [WASender ${config?.line_code || 'WA_S***5239'}] Campaña masiva pausada por regla anti-spam para ${to}`);
             return {
                 success: false,
                 blocked: true,
-                message: `Comunicación saliente bloqueada en la línea ${config?.line_code || 'WA_S***5239'}.`
+                message: `Campaña masiva pausada por regla anti-spam en la línea ${config?.line_code || 'WA_S***5239'}.`
             };
         }
 
@@ -112,23 +114,19 @@ class WasenderService {
     async generateBotReply(cleanPhone, userText, contact, codigoEmpresa) {
         const textLower = (userText || '').toLowerCase().trim();
 
-        // 1. Saludos iniciales o reinicio de menú
-        if (/^(hola|buenas|buen d[ií]a|buenas tardes|buenas noches|inicio|empezar|men[uú]|info|informaci[oó]n|\?)/i.test(textLower) || textLower.length <= 4) {
-            return `¡Hola! Gracias por comunicarte con la línea oficial de Global Loan S.A. — Colaboratium (Registro BCRA Nº 40.015).\n\nSi llegaste por un anuncio en redes sociales o formas parte de la red de agentes inmobiliarios (RE/MAX, Century 21 o independientes), desarrollamos un modelo exclusivo de *Comisiones de alto rendimiento* para monetizar operaciones inmobiliarias y calzar créditos puente en 48 hs.\n\n¿Cómo te gustaría continuar?\n1️⃣ Escribe *1* si eres Agente Inmobiliario y deseas conocer el programa de alianzas.\n2️⃣ Escribe *2* si viste una publicación sobre créditos / inversión.\n3️⃣ Escribe *humano* para coordinar con un asesor ejecutivo.`;
-        }
-
-        // 2. Opción 1: Agente Inmobiliario
+        // 1. Opciones directas del menú numérico
+        // Opción 1: Agente Inmobiliario
         if (textLower === '1' || /agente|inmobiliari|re\/?max|century|c21|alianza|corredor/i.test(textLower)) {
             return `🤝 *Programa de Alianzas para Agentes Inmobiliarios (RE/MAX, C21 e Independientes)*\n\nComo agente o corredor podés monetizar las operaciones trabadas de tus clientes:\n• *Créditos Puente y Refacciones*: Calce ágil en 48 a 72 hs con garantía real o fiduciaria.\n• *Comisiones de alto rendimiento*: Cobro bancarizado al calce efectivo de cada operación.\n• *Seguridad BCRA*: Operación respaldada bajo Registro Oficial BCRA Nº 40.015 con Banco BIND y Coinag.\n\n📌 *Próximos pasos:*\nPodemos coordinar una reunión presencial en nuestras oficinas de *Av. del Libertador 264, Vicente López* o sumarte al próximo *Webinar Virtual de 40 min*.\n\n¿Te gustaría sumarte al *Webinar* o prefieres una *Reunión Presencial*?`;
         }
 
-        // 3. Opción 2: Créditos / Inversión
+        // Opción 2: Créditos / Inversión
         if (textLower === '2' || /invers|cr[eé]dito|pr[eé]stamo|tasa|rendimiento/i.test(textLower)) {
             return `📈 *Colaboratium — Plataforma de Créditos e Inversión P2P*\n\n• *Para Inversores*: Rendimientos atractivos en dólares o pesos. 0% comisión para el inversor (el tomador paga el costo de la plataforma). Operación 100% bancarizada desde tu propia cuenta en Banco BIND / Coinag.\n• *Para Tomadores*: Créditos ágiles calzados en 48 hs con condiciones transparentes.\n• *Marco Regulatorio*: Registro Oficial BCRA Nº 40.015.\n\n¿Deseas recibir la propuesta informativa para *Inversores* o solicitar un *Crédito*? Responde con *Inversor* o *Crédito*.`;
         }
 
-        // 4. Opción 3 o Humano
-        if (/humano|asesor|representante|persona|hablar|llamar/i.test(textLower)) {
+        // Opción 3 o Humano
+        if (textLower === '3' || /humano|asesor|representante|persona|hablar|llamar/i.test(textLower)) {
             try {
                 if (db && db.crearTicket) {
                     await db.crearTicket(
@@ -146,6 +144,11 @@ class WasenderService {
                 console.warn('Error creando ticket derivación humano:', tErr.message);
             }
             return `👨‍💼 *Derivación a Asesor Ejecutivo*\n\nHemos registrado tu solicitud con alta prioridad en nuestro sistema de atención.\nUno de nuestros ejecutivos comerciales se pondrá en contacto contigo a la brevedad por este medio.\n\n¡Muchas gracias por comunicarte con Global Loan S.A. — Colaboratium!`;
+        }
+
+        // 2. Saludos iniciales o reinicio de menú
+        if (/^(hola|buenas|buen d[ií]a|buenas tardes|buenas noches|inicio|empezar|men[uú]|info|informaci[oó]n|\?)/i.test(textLower) || textLower.length <= 3) {
+            return `¡Hola! Gracias por comunicarte con la línea oficial de Global Loan S.A. — Colaboratium (Registro BCRA Nº 40.015).\n\nSi llegaste por un anuncio en redes sociales o formas parte de la red de agentes inmobiliarios (RE/MAX, Century 21 o independientes), desarrollamos un modelo exclusivo de *Comisiones de alto rendimiento* para monetizar operaciones inmobiliarias y calzar créditos puente en 48 hs.\n\n¿Cómo te gustaría continuar?\n1️⃣ Escribe *1* si eres Agente Inmobiliario y deseas conocer el programa de alianzas.\n2️⃣ Escribe *2* si viste una publicación sobre créditos / inversión.\n3️⃣ Escribe *humano* para coordinar con un asesor ejecutivo.`;
         }
 
         // 5. Webinar o Presencial
