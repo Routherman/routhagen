@@ -15,6 +15,9 @@ class WasenderService {
      * Obtiene la configuración de WASender para una empresa
      */
     async getConfig(codigoEmpresa = 'KRZMJI') {
+        if (!db.pool) {
+            try { await db.initDB(); } catch(e) {}
+        }
         const pool = db.pool;
         if (!pool) return null;
         try {
