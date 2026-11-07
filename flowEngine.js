@@ -749,45 +749,41 @@ async function handleFlowEngine(dbContacto, cleanMessage, empresa, accessToken, 
                 const { sendWhatsAppInteractiveList } = require('./whatsappService');
                 const { formatInteractiveCalendarList, formatCalendarOptionsText } = require('./googleCalendarService');
                 
-                let sentInteractive = false;
+                // Enviar siempre el menú de opciones en texto claro para que el usuario pueda ver las fechas y responder
+                const cleanText = await formatCalendarOptionsText(codigoEmpresa, 'asesores');
+                const outMetaId = await sendWhatsAppMsg(cleanMessage.identificador.valor, cleanText, phoneId, accessToken);
+                await db.guardarMensaje(dbContacto.id, outMetaId, 'SALIENTE', 'text', cleanText);
+
+                // Opcional: enviar además el selector interactivo si Meta Cloud API lo admite
                 try {
                     const listPayload = await formatInteractiveCalendarList(codigoEmpresa, 'asesores');
-                    const outMetaId = await sendWhatsAppInteractiveList(cleanMessage.identificador.valor, listPayload, phoneId, accessToken);
-                    if (outMetaId) {
-                        sentInteractive = true;
-                        await db.guardarMensaje(dbContacto.id, outMetaId, 'SALIENTE', 'interactive', 'Menú Interactivo: Selección de Turnos de Capacitación');
+                    const outListId = await sendWhatsAppInteractiveList(cleanMessage.identificador.valor, listPayload, phoneId, accessToken);
+                    if (outListId) {
+                        await db.guardarMensaje(dbContacto.id, outListId, 'SALIENTE', 'interactive', 'Menú Interactivo: Selección de Turnos de Capacitación');
                         console.log(`[Flow] Formulario interactivo de WhatsApp enviado exitosamente.`);
                     }
                 } catch (listErr) {
-                    console.warn(`[Flow] Falló envío interactivo (${listErr.message}), usando texto limpio de respaldo.`);
-                }
-
-                if (!sentInteractive) {
-                    const cleanText = await formatCalendarOptionsText(codigoEmpresa, 'asesores');
-                    const outMetaId = await sendWhatsAppMsg(cleanMessage.identificador.valor, cleanText, phoneId, accessToken);
-                    await db.guardarMensaje(dbContacto.id, outMetaId, 'SALIENTE', 'text', cleanText);
+                    console.warn(`[Flow] Envío interactivo opcional no disponible (${listErr.message}).`);
                 }
             } else if (isLeaderCalendarNode) {
                 const { sendWhatsAppInteractiveList } = require('./whatsappService');
                 const { formatInteractiveCalendarList, formatCalendarOptionsText } = require('./googleCalendarService');
                 
-                let sentInteractive = false;
+                // Enviar siempre el menú de opciones para líderes en texto claro
+                const cleanText = await formatCalendarOptionsText(codigoEmpresa, 'lideres');
+                const outMetaId = await sendWhatsAppMsg(cleanMessage.identificador.valor, cleanText, phoneId, accessToken);
+                await db.guardarMensaje(dbContacto.id, outMetaId, 'SALIENTE', 'text', cleanText);
+
+                // Opcional: enviar además el selector interactivo de líderes
                 try {
                     const listPayload = await formatInteractiveCalendarList(codigoEmpresa, 'lideres');
-                    const outMetaId = await sendWhatsAppInteractiveList(cleanMessage.identificador.valor, listPayload, phoneId, accessToken);
-                    if (outMetaId) {
-                        sentInteractive = true;
-                        await db.guardarMensaje(dbContacto.id, outMetaId, 'SALIENTE', 'interactive', 'Menú Interactivo: Turnos para Líderes de Equipo');
+                    const outListId = await sendWhatsAppInteractiveList(cleanMessage.identificador.valor, listPayload, phoneId, accessToken);
+                    if (outListId) {
+                        await db.guardarMensaje(dbContacto.id, outListId, 'SALIENTE', 'interactive', 'Menú Interactivo: Turnos para Líderes de Equipo');
                         console.log(`[Flow] Formulario interactivo de líderes enviado exitosamente.`);
                     }
                 } catch (listErr) {
-                    console.warn(`[Flow] Falló envío interactivo de líderes (${listErr.message}), usando texto limpio.`);
-                }
-
-                if (!sentInteractive) {
-                    const cleanText = await formatCalendarOptionsText(codigoEmpresa, 'lideres');
-                    const outMetaId = await sendWhatsAppMsg(cleanMessage.identificador.valor, cleanText, phoneId, accessToken);
-                    await db.guardarMensaje(dbContacto.id, outMetaId, 'SALIENTE', 'text', cleanText);
+                    console.warn(`[Flow] Envío interactivo opcional de líderes no disponible (${listErr.message}).`);
                 }
             } else {
                 const question = currentNode.data?.question || '¿Cuál es tu respuesta?';

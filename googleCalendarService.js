@@ -14,72 +14,78 @@ try {
 }
 
 /**
- * Eventos base obtenidos del Google Calendar oficial de Colaboratium (Damian Feuermann)
- * Mostrados en la consola y sincronizados con la captura de pantalla:
- * - Lunes 26 Oct: 10:30-12:00 (Virtual), 12:30-14:00 (Virtual), 14:30-16:00 (Virtual)
- * - Miércoles 28 Oct: 10:30-12:00 (Virtual), 14:30-16:00 (Presencial en oficinas)
- * - Viernes 30 Oct: 12:00-13:30 (Virtual)
+ * Eventos base y de contingencia para Colaboratium (Damian Feuermann / Global Loan S.A.)
+ * Fechas actualizadas para Noviembre y sincronizadas con Google Calendar oficial:
+ * - Jueves 12 Nov: 12:00 a 12:45 hs (Virtual), 19:00 a 19:45 hs (Virtual) y 18:30 a 20:00 hs (Presencial)
+ * - Lunes 16 Nov: 12:00 a 12:45 hs (Virtual), 19:00 a 19:45 hs (Virtual)
+ * - Martes 17 Nov: 12:00 a 12:45 hs (Virtual)
  */
 const DEFAULT_SLOTS = [
     {
         id: 1,
-        titulo: 'Webinar Virtual de Capacitación',
+        titulo: 'Webinar Asesor y Líder Virtual',
         modalidad: 'VIRTUAL',
-        fechaStr: 'Lunes 26 de Octubre',
-        horarioStr: '10:30 a 12:00 hs',
-        meetLink: 'https://meet.google.com/new',
+        categoria: 'ASESORES',
+        fechaStr: 'Jueves 12 de Noviembre',
+        horarioStr: '12:00 a 12:45 hs',
+        meetLink: 'https://meet.google.com/ouz-bwzw-bwg',
         ubicacion: 'Google Meet',
         cupos: 25
     },
     {
         id: 2,
-        titulo: 'Webinar Virtual de Capacitación',
+        titulo: 'Webinar Asesor y Líder Virtual',
         modalidad: 'VIRTUAL',
-        fechaStr: 'Lunes 26 de Octubre',
-        horarioStr: '12:30 a 14:00 hs',
-        meetLink: 'https://meet.google.com/new',
+        categoria: 'ASESORES',
+        fechaStr: 'Jueves 12 de Noviembre',
+        horarioStr: '19:00 a 19:45 hs',
+        meetLink: 'https://meet.google.com/ouz-bwzw-bwg',
         ubicacion: 'Google Meet',
         cupos: 25
     },
     {
         id: 3,
-        titulo: 'Webinar Virtual de Capacitación',
+        titulo: 'Webinar Asesor y Líder Virtual',
         modalidad: 'VIRTUAL',
-        fechaStr: 'Lunes 26 de Octubre',
-        horarioStr: '14:30 a 16:00 hs',
-        meetLink: 'https://meet.google.com/new',
+        categoria: 'ASESORES',
+        fechaStr: 'Lunes 16 de Noviembre',
+        horarioStr: '12:00 a 12:45 hs',
+        meetLink: 'https://meet.google.com/ouz-bwzw-bwg',
         ubicacion: 'Google Meet',
         cupos: 25
     },
     {
         id: 4,
-        titulo: 'Webinar Virtual de Capacitación',
+        titulo: 'Webinar Asesor y Líder Virtual',
         modalidad: 'VIRTUAL',
-        fechaStr: 'Miércoles 28 de Octubre',
-        horarioStr: '10:30 a 12:00 hs',
-        meetLink: 'https://meet.google.com/new',
+        categoria: 'ASESORES',
+        fechaStr: 'Lunes 16 de Noviembre',
+        horarioStr: '19:00 a 19:45 hs',
+        meetLink: 'https://meet.google.com/ouz-bwzw-bwg',
         ubicacion: 'Google Meet',
         cupos: 25
     },
     {
         id: 5,
-        titulo: 'Reunión Presencial de Asesores',
-        modalidad: 'PRESENCIAL',
-        fechaStr: 'Miércoles 28 de Octubre',
-        horarioStr: '14:30 a 16:00 hs',
-        meetLink: null,
-        ubicacion: 'Av. del Libertador 264, 1° Piso Contrafrente, Vicente López, Buenos Aires',
-        cupos: 15
+        titulo: 'Webinar Asesor y Líder Virtual',
+        modalidad: 'VIRTUAL',
+        categoria: 'ASESORES',
+        fechaStr: 'Martes 17 de Noviembre',
+        horarioStr: '12:00 a 12:45 hs',
+        meetLink: 'https://meet.google.com/ouz-bwzw-bwg',
+        ubicacion: 'Google Meet',
+        cupos: 25
     },
     {
         id: 6,
-        titulo: 'Webinar Virtual de Capacitación',
-        modalidad: 'VIRTUAL',
-        fechaStr: 'Viernes 30 de Octubre',
-        horarioStr: '12:00 a 13:30 hs',
-        meetLink: 'https://meet.google.com/new',
-        ubicacion: 'Google Meet',
-        cupos: 25
+        titulo: 'Reunión Presencial de Asesores',
+        modalidad: 'PRESENCIAL',
+        categoria: 'ASESORES',
+        fechaStr: 'Jueves 12 de Noviembre',
+        horarioStr: '18:30 a 20:00 hs',
+        meetLink: null,
+        ubicacion: 'Av. del Libertador 264, 1° Piso Contrafrente, Vicente López, Buenos Aires',
+        cupos: 15
     }
 ];
 
@@ -114,9 +120,13 @@ async function getAvailableWebinarSlots(codigoEmpresa = 'KRZMJI', category = 'al
                         const eventEndDate = new Date(ev.end || ev.start);
                         if (eventEndDate < new Date(Date.now() - 24 * 3600 * 1000)) continue;
 
-                        const isLider = /lider|líder/i.test(summary);
-                        if (category === 'lideres' && !isLider) continue;
-                        if (category === 'asesores' && isLider) continue;
+                        const hasAsesor = /asesor|asesores/i.test(summary);
+                        const hasLider = /lider|líder/i.test(summary);
+
+                        // Si el evento menciona ambos o es general de capacitación, aplica tanto para asesores como para líderes.
+                        // Solo se excluye si es estrictamente exclusivo de la otra categoría:
+                        if (category === 'lideres' && hasAsesor && !hasLider) continue;
+                        if (category === 'asesores' && hasLider && !hasAsesor) continue;
                         liveEvents.push(ev);
                     }
                 }
@@ -126,7 +136,9 @@ async function getAvailableWebinarSlots(codigoEmpresa = 'KRZMJI', category = 'al
                 liveEvents.sort((a, b) => new Date(a.start) - new Date(b.start));
                 rawSlots = liveEvents.map((ev, index) => {
                     const isPresencial = (ev.summary || '').toLowerCase().includes('presencial');
-                    const isLider = /lider|líder/i.test(ev.summary || '');
+                    const hasAsesor = /asesor|asesores/i.test(ev.summary || '');
+                    const hasLider = /lider|líder/i.test(ev.summary || '');
+                    const resolvedCategory = (hasLider && !hasAsesor) ? 'LIDERES' : (hasAsesor && !hasLider) ? 'ASESORES' : (category === 'lideres' ? 'LIDERES' : 'ASESORES');
                     const start = new Date(ev.start);
                     const end = new Date(ev.end);
                     const fechaStr = start.toLocaleDateString('es-AR', { weekday: 'long', day: 'numeric', month: 'long', timeZone: 'America/Argentina/Buenos_Aires' });
@@ -170,9 +182,9 @@ async function getAvailableWebinarSlots(codigoEmpresa = 'KRZMJI', category = 'al
                     return {
                         id: index + 1,
                         uid: ev.uid,
-                        titulo: ev.summary || (isLider ? (isPresencial ? 'Reunión Ejecutiva de Líderes' : 'Webinar Virtual de Líderes') : (isPresencial ? 'Reunión Presencial de Asesores' : 'Webinar Virtual de Capacitación')),
+                        titulo: ev.summary || (resolvedCategory === 'LIDERES' ? (isPresencial ? 'Reunión Ejecutiva de Líderes' : 'Webinar Virtual de Líderes') : (isPresencial ? 'Reunión Presencial de Asesores' : 'Webinar Virtual de Capacitación')),
                         modalidad: isPresencial ? 'PRESENCIAL' : 'VIRTUAL',
-                        categoria: isLider ? 'LIDERES' : 'ASESORES',
+                        categoria: resolvedCategory,
                         fechaStr: fechaStr.charAt(0).toUpperCase() + fechaStr.slice(1),
                         horarioStr: `${horaInicio} a ${horaFin} hs`,
                         meetLink: meetLink,
@@ -181,6 +193,23 @@ async function getAvailableWebinarSlots(codigoEmpresa = 'KRZMJI', category = 'al
                         subscribers: []
                     };
                 });
+
+                // Si iCal trajo eventos virtuales pero ninguna reunión presencial, añadir la opción presencial oficial en Vicente López
+                const hasPresencial = rawSlots.some(s => s.modalidad === 'PRESENCIAL');
+                if (!hasPresencial) {
+                    rawSlots.push({
+                        id: rawSlots.length + 1,
+                        titulo: category === 'lideres' ? 'Reunión Ejecutiva Presencial' : 'Reunión Presencial de Asesores',
+                        modalidad: 'PRESENCIAL',
+                        categoria: category === 'lideres' ? 'LIDERES' : 'ASESORES',
+                        fechaStr: 'Jueves 12 de Noviembre',
+                        horarioStr: '18:30 a 20:00 hs',
+                        meetLink: null,
+                        ubicacion: 'Av. del Libertador 264, 1° Piso Contrafrente, Vicente López, Buenos Aires',
+                        cupos: 15,
+                        subscribers: []
+                    });
+                }
             }
         } catch (e) {
             console.error('⚠️ [GOOGLE CALENDAR ICAL]: Error al leer eventos iCal en vivo:', e.message);
@@ -474,7 +503,8 @@ async function formatCalendarOptionsText(codigoEmpresa = 'KRZMJI', category = 'a
         msg += `\n`;
     }
 
-    msg += `👉 *¿Cuál opción te queda más cómoda?*\nResponde con el número de opción (ej. *1* o *2*) para reservarte el lugar.`;
+    msg += `👉 *¿Cuál opción te queda más cómoda?*\n` +
+           `Responde con el *número de opción* (ej. *1* o *2*), tu *Nombre completo* y tu *Email* para agendarte y enviarte el link de acceso a Google Meet.`;
     return msg;
 }
 

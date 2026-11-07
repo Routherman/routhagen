@@ -117,18 +117,152 @@ class WasenderService {
     async generateBotReply(cleanPhone, userText, contact, codigoEmpresa) {
         const textLower = (userText || '').toLowerCase().trim();
 
-        // 1. Opciones directas del menú numérico
-        // Opción 1: Agente Inmobiliario
-        if (textLower === '1' || /agente|inmobiliari|re\/?max|century|c21|alianza|corredor/i.test(textLower)) {
-            return `🤝 *Programa de Alianzas para Agentes Inmobiliarios (RE/MAX, C21 e Independientes)*\n\nComo agente o corredor podés monetizar las operaciones trabadas de tus clientes:\n• *Créditos Puente y Refacciones*: Calce ágil en 48 a 72 hs con garantía real o fiduciaria.\n• *Comisiones de alto rendimiento*: Cobro bancarizado al calce efectivo de cada operación.\n• *Seguridad BCRA*: Operación respaldada bajo Registro Oficial BCRA Nº 40.015 con Banco BIND y Coinag.\n\n📌 *Próximos pasos:*\nPodemos coordinar una reunión presencial en nuestras oficinas de *Av. del Libertador 264, Vicente López* o sumarte al próximo *Webinar Virtual de 40 min*.\n\n¿Te gustaría sumarte al *Webinar* o prefieres una *Reunión Presencial*?`;
+        // 0. Parsear metadatos actuales del contacto
+        let meta = contact?.metadata_extra;
+        if (typeof meta === 'string') {
+            try { meta = JSON.parse(meta); } catch (e) { meta = {}; }
+        } else if (!meta) {
+            meta = {};
         }
 
-        // Opción 2: Créditos / Inversión
+        // Helper para persistir metadatos
+        const saveMeta = async (newFields) => {
+            meta = { ...meta, ...newFields };
+            try {
+                if (contact?.id && db && db.pool) {
+                    await db.pool.query(
+                        'UPDATE contactos SET metadata_extra = ? WHERE id = ?',
+                        [JSON.stringify(meta), contact.id]
+                    );
+                }
+            } catch (err) {
+                console.warn('[WASender] Error guardando metadata:', err.message);
+            }
+        };
+
+        const emailMatch = userText.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/);
+        const slotChoiceMatch = userText.match(/\b([1-6])\b|opci[oó]n\s*([1-6])|slot_([1-6])/i);
+        const detectedSlot = slotChoiceMatch ? (slotChoiceMatch[1] || slotChoiceMatch[2] || slotChoiceMatch[3]) : null;
+
+        // 1. Detección de EMAIL (con o sin número de slot) -> PROCESAR RESERVA
+        if (emailMatch) {
+            try {
+                const detectedEmail = emailMatch[0].toLowerCase().trim();
+                const slotChoice = detectedSlot || meta.pending_slot_choice || '1';
+                
+                let detectedName = userText
+                    .replace(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g, '')
+                    .replace(/\bopci[oó]n\s*[1-6]\b|\bslot_[1-6]\b|\b[1-6]\b/gi, '')
+                    .replace(/^(mi nombre es|soy|nombre:)\s*/i, '')
+                    .replace(/[,\-;]/g, ' ')
+                    .trim();
+                if (!detectedName || detectedName.length < 2) {
+                    detectedName = contact?.nombre && !contact.nombre.startsWith('Lead') ? contact.nombre : 'Asesor Candidato';
+                }
+
+                const { processBooking } = require('./googleCalendarService');
+                const bookingRes = await processBooking({
+                    slotChoice,
+                    customerName: detectedName,
+                    customerEmail: detectedEmail,
+                    customerPhone: cleanPhone,
+                    codigoEmpresa,
+                    category: 'asesores',
+                    canal: 'wasender'
+                });
+
+                await saveMeta({
+                    pending_slot_choice: null,
+                    awaiting_webinar_booking: false,
+                    slot_id: bookingRes.chosenSlot?.id || slotChoice,
+                    email_registrado: detectedEmail,
+                    nombre_registrado: detectedName
+                });
+
+                if (bookingRes && bookingRes.whatsappResponse) {
+                    return bookingRes.whatsappResponse;
+                }
+            } catch (bookErr) {
+                console.warn('Error en processBooking de WASender:', bookErr.message);
+            }
+        }
+
+        // 2. Si el usuario ya está esperando agendar webinar Y envía un número de opción (1 a 6) sin email:
+        if (detectedSlot && (meta.awaiting_webinar_booking || /opci[oó]n|turno|slot/i.test(textLower) || meta.pending_slot_choice)) {
+            try {
+                const { getAvailableWebinarSlots } = require('./googleCalendarService');
+                const slots = await getAvailableWebinarSlots(codigoEmpresa, 'asesores');
+                const chosen = slots.find(s => s.id === parseInt(detectedSlot, 10)) || slots[0];
+
+                await saveMeta({
+                    pending_slot_choice: detectedSlot,
+                    awaiting_webinar_booking: true
+                });
+
+                if (chosen.modalidad === 'PRESENCIAL') {
+                    return `¡Excelente elección! 🏢 Reservaste tu lugar para la *${chosen.titulo}*:\n\n` +
+                           `🗓️ *Fecha:* ${chosen.fechaStr}\n` +
+                           `⏰ *Horario:* ${chosen.horarioStr}\n` +
+                           `📍 *Lugar:* ${chosen.ubicacion}\n\n` +
+                           `👉 Para emitir tu invitación formal y acreditación en recepción, por favor indícanos tu *Nombre completo* y tu *Correo electrónico* (ej. *Juan Pérez juan@gmail.com*):`;
+                }
+
+                return `¡Excelente elección! 📅 Reservaste tu lugar para el *${chosen.titulo}*:\n\n` +
+                       `🗓️ *Fecha:* ${chosen.fechaStr}\n` +
+                       `⏰ *Horario:* ${chosen.horarioStr}\n` +
+                       `💻 *Modalidad:* Google Meet\n\n` +
+                       `👉 Para emitir tu invitación formal y enviarte el link de acceso a Google Meet, por favor indícanos tu *Nombre completo* y tu *Correo electrónico* (ej. *Juan Pérez juan@gmail.com*):`;
+            } catch (slotErr) {
+                console.warn('Error procesando elección de slot en WASender:', slotErr.message);
+            }
+        }
+
+        // 3. Saludos iniciales o reinicio de menú
+        if (/^(hola|buenas|buen d[ií]a|buenas tardes|buenas noches|inicio|empezar|men[uú]|comenzar|\?)$/i.test(textLower) || textLower === 'hola') {
+            await saveMeta({ awaiting_webinar_booking: false, pending_slot_choice: null });
+            return `¡Hola! Gracias por comunicarte con la línea oficial de Global Loan S.A. — Colaboratium (Registro BCRA Nº 40.015).\n\n` +
+                   `Si llegaste por un anuncio en redes sociales o formas parte de la red de agentes inmobiliarios (RE/MAX, Century 21 o independientes), desarrollamos un modelo exclusivo de *Comisiones de alto rendimiento* para monetizar operaciones inmobiliarias y calzar créditos puente en 48 hs.\n\n` +
+                   `¿Cómo te gustaría continuar?\n` +
+                   `1️⃣ Escribe *1* si eres Agente Inmobiliario y deseas conocer el programa de alianzas y próximas capacitaciones.\n` +
+                   `2️⃣ Escribe *2* si viste una publicación sobre créditos / inversión.\n` +
+                   `3️⃣ Escribe *humano* para coordinar con un asesor ejecutivo.`;
+        }
+
+        // 4. Opción 1: Agente Inmobiliario O consulta expresa de Webinar/Capacitación/Reunión
+        const isOp1 = textLower === '1' || /agente|inmobiliari|re\/?max|century|c21|alianza|corredor/i.test(textLower);
+        const isWebinarQuery = /webinar|virtual|capacitaci[oó]n|reuni[oó]n|fechas|horarios|turno|agendar|agendame/i.test(textLower);
+
+        if (isOp1 || isWebinarQuery) {
+            await saveMeta({ awaiting_webinar_booking: true });
+
+            let calendarText = '';
+            try {
+                const { formatCalendarOptionsText } = require('./googleCalendarService');
+                calendarText = await formatCalendarOptionsText(codigoEmpresa, 'asesores');
+            } catch (calErr) {
+                console.warn('Error obteniendo opciones de calendario para WASender:', calErr.message);
+            }
+
+            if (isOp1) {
+                return `🤝 *Programa de Alianzas para Agentes Inmobiliarios (RE/MAX, C21 e Independientes)*\n\n` +
+                       `Como agente o corredor podés monetizar las operaciones trabadas de tus clientes:\n` +
+                       `• *Créditos Puente y Refacciones*: Calce ágil en 48 a 72 hs con garantía real o fiduciaria.\n` +
+                       `• *Comisiones de alto rendimiento*: Cobro bancarizado al calce efectivo de cada operación.\n` +
+                       `• *Seguridad BCRA*: Operación respaldada bajo Registro Oficial BCRA Nº 40.015 con Banco BIND y Coinag.\n\n` +
+                       `📌 *Próximas Sesiones de Capacitación (Virtuales por Google Meet y Presenciales en Vicente López):*\n\n` +
+                       (calendarText || `• *Jueves 12 de Noviembre* — 12:00 hs o 19:00 hs (Google Meet)\n\n👉 Responde con tu *Opción*, *Nombre completo* y *Email* para agendarte.`);
+            }
+
+            return calendarText || `💻 *Webinar Virtual de Capacitación & Alianzas*\n\nNuestras próximas sesiones son:\n• *Jueves 12 de Noviembre* — 12:00 hs o 19:00 hs (Google Meet)\n\n👉 Responde con tu *Opción*, *Nombre completo* y *Email* para agendarte.`;
+        }
+
+        // 5. Opción 2: Créditos / Inversión
         if (textLower === '2' || /invers|cr[eé]dito|pr[eé]stamo|tasa|rendimiento/i.test(textLower)) {
+            await saveMeta({ awaiting_webinar_booking: false });
             return `📈 *Colaboratium — Plataforma de Créditos e Inversión P2P*\n\n• *Para Inversores*: Rendimientos atractivos en dólares o pesos. 0% comisión para el inversor (el tomador paga el costo de la plataforma). Operación 100% bancarizada desde tu propia cuenta en Banco BIND / Coinag.\n• *Para Tomadores*: Créditos ágiles calzados en 48 hs con condiciones transparentes.\n• *Marco Regulatorio*: Registro Oficial BCRA Nº 40.015.\n\n¿Deseas recibir la propuesta informativa para *Inversores* o solicitar un *Crédito*? Responde con *Inversor* o *Crédito*.`;
         }
 
-        // Opción 3 o Humano
+        // 6. Opción 3 o Humano
         if (textLower === '3' || /humano|asesor|representante|persona|hablar|llamar/i.test(textLower)) {
             try {
                 if (db && db.crearTicket) {
@@ -149,62 +283,13 @@ class WasenderService {
             return `👨‍💼 *Derivación a Asesor Ejecutivo*\n\nHemos registrado tu solicitud con alta prioridad en nuestro sistema de atención.\nUno de nuestros ejecutivos comerciales se pondrá en contacto contigo a la brevedad por este medio.\n\n¡Muchas gracias por comunicarte con Global Loan S.A. — Colaboratium!`;
         }
 
-        // 2. Saludos iniciales o reinicio de menú
-        if (/^(hola|buenas|buen d[ií]a|buenas tardes|buenas noches|inicio|empezar|men[uú]|info|informaci[oó]n|\?)/i.test(textLower) || textLower.length <= 3) {
-            return `¡Hola! Gracias por comunicarte con la línea oficial de Global Loan S.A. — Colaboratium (Registro BCRA Nº 40.015).\n\nSi llegaste por un anuncio en redes sociales o formas parte de la red de agentes inmobiliarios (RE/MAX, Century 21 o independientes), desarrollamos un modelo exclusivo de *Comisiones de alto rendimiento* para monetizar operaciones inmobiliarias y calzar créditos puente en 48 hs.\n\n¿Cómo te gustaría continuar?\n1️⃣ Escribe *1* si eres Agente Inmobiliario y deseas conocer el programa de alianzas.\n2️⃣ Escribe *2* si viste una publicación sobre créditos / inversión.\n3️⃣ Escribe *humano* para coordinar con un asesor ejecutivo.`;
-        }
-
-        // 5. Detección de email para inscripción en Webinar / Reunión
-        const emailMatch = userText.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/);
-        if (emailMatch) {
-            try {
-                const detectedEmail = emailMatch[0].toLowerCase().trim();
-                let detectedName = userText
-                    .replace(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g, '')
-                    .replace(/^(mi nombre es|soy|nombre:)\s*/i, '')
-                    .replace(/[,\-;]/g, ' ')
-                    .trim();
-                if (!detectedName || detectedName.length < 2) detectedName = contact?.nombre || 'Asesor Candidato';
-
-                const { processBooking } = require('./googleCalendarService');
-                const bookingRes = await processBooking({
-                    slotChoice: '1',
-                    customerName: detectedName,
-                    customerEmail: detectedEmail,
-                    customerPhone: cleanPhone,
-                    codigoEmpresa,
-                    category: 'asesores'
-                });
-
-                if (bookingRes && bookingRes.whatsappResponse) {
-                    return bookingRes.whatsappResponse;
-                }
-            } catch (bookErr) {
-                console.warn('Error en processBooking de WASender:', bookErr.message);
-            }
-        }
-
-        // 6. Consulta de Webinar o Reunión Presencial (Carga dinámica de todos los turnos del calendario)
-        if (/webinar|virtual|capacitaci[oó]n|reuni[oó]n|fechas|horarios|turno/i.test(textLower)) {
-            try {
-                const { formatCalendarOptionsText } = require('./googleCalendarService');
-                const calendarText = await formatCalendarOptionsText(codigoEmpresa, 'asesores');
-                if (calendarText) {
-                    return `${calendarText}\n\n👉 Para reservar tu lugar oficial en la sesión seleccionada, por favor envíanos tu *Nombre completo* y tu *Correo electrónico*.`;
-                }
-            } catch (calErr) {
-                console.warn('Error obteniendo opciones de calendario para WASender:', calErr.message);
-            }
-            return `💻 *Webinar Virtual de Capacitación & Alianzas*\n\nNuestras próximas sesiones son:\n• *Jueves 12 de Noviembre* — 12:00 hs o 19:00 hs (Google Meet)\n\nPara reservar tu lugar oficial, por favor indícanos tu *Nombre completo* y *Correo electrónico*.`;
-        }
-
-        // 6. Consultas generales asistidas por IA RAG
+        // 7. Consultas generales asistidas por IA RAG
         try {
             if (typeof processMessageWithAI === 'function') {
                 const aiPromptContext = {
                     codigo: codigoEmpresa,
                     nombre: 'Global Loan S.A. — Colaboratium',
-                    systemPromptOverride: 'Eres el asistente virtual en la línea WA_S***5239 para Agentes RE/MAX y publicidad de redes de Colaboratium (Global Loan S.A., Registro BCRA Nº 40.015). Recuerda: NUNCA menciones porcentajes fijos de comisión; utiliza siempre el término "Comisiones de alto rendimiento". Enfatiza el calce en 48 hs, 0% costo al inversor, respaldo de Banco BIND y Coinag. Invita cordialmente al Webinar Virtual o a las oficinas en Av. del Libertador 264, Vicente López.'
+                    systemPromptOverride: 'Eres el asistente virtual en la línea WA_S***5239 para Agentes RE/MAX y publicidad de redes de Colaboratium (Global Loan S.A., Registro BCRA Nº 40.015). Recuerda: NUNCA menciones porcentajes fijos de comisión; utiliza siempre el término "Comisiones de alto rendimiento". Enfatiza el calce en 48 hs, 0% costo al inversor, respaldo de Banco BIND y Coinag. Si preguntan por webinars o reuniones, indícales las opciones de fechas del calendario oficial y pídeles su número de opción, nombre completo y correo electrónico para agendarlos.'
                 };
                 const history = contact?.id ? await db.obtenerHistorialMensajes(contact.id, 6) : [];
                 const aiReply = await processMessageWithAI(userText, history, aiPromptContext);
