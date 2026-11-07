@@ -151,8 +151,47 @@ class WasenderService {
             return `¡Hola! Gracias por comunicarte con la línea oficial de Global Loan S.A. — Colaboratium (Registro BCRA Nº 40.015).\n\nSi llegaste por un anuncio en redes sociales o formas parte de la red de agentes inmobiliarios (RE/MAX, Century 21 o independientes), desarrollamos un modelo exclusivo de *Comisiones de alto rendimiento* para monetizar operaciones inmobiliarias y calzar créditos puente en 48 hs.\n\n¿Cómo te gustaría continuar?\n1️⃣ Escribe *1* si eres Agente Inmobiliario y deseas conocer el programa de alianzas.\n2️⃣ Escribe *2* si viste una publicación sobre créditos / inversión.\n3️⃣ Escribe *humano* para coordinar con un asesor ejecutivo.`;
         }
 
-        // 5. Webinar o Presencial
-        if (/webinar|virtual|capacitaci[oó]n|reuni[oó]n/i.test(textLower)) {
+        // 5. Detección de email para inscripción en Webinar / Reunión
+        const emailMatch = userText.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/);
+        if (emailMatch) {
+            try {
+                const detectedEmail = emailMatch[0].toLowerCase().trim();
+                let detectedName = userText
+                    .replace(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g, '')
+                    .replace(/^(mi nombre es|soy|nombre:)\s*/i, '')
+                    .replace(/[,\-;]/g, ' ')
+                    .trim();
+                if (!detectedName || detectedName.length < 2) detectedName = contact?.nombre || 'Asesor Candidato';
+
+                const { processBooking } = require('./googleCalendarService');
+                const bookingRes = await processBooking({
+                    slotChoice: '1',
+                    customerName: detectedName,
+                    customerEmail: detectedEmail,
+                    customerPhone: cleanPhone,
+                    codigoEmpresa,
+                    category: 'asesores'
+                });
+
+                if (bookingRes && bookingRes.whatsappResponse) {
+                    return bookingRes.whatsappResponse;
+                }
+            } catch (bookErr) {
+                console.warn('Error en processBooking de WASender:', bookErr.message);
+            }
+        }
+
+        // 6. Consulta de Webinar o Reunión Presencial (Carga dinámica de todos los turnos del calendario)
+        if (/webinar|virtual|capacitaci[oó]n|reuni[oó]n|fechas|horarios|turno/i.test(textLower)) {
+            try {
+                const { formatCalendarOptionsText } = require('./googleCalendarService');
+                const calendarText = await formatCalendarOptionsText(codigoEmpresa, 'asesores');
+                if (calendarText) {
+                    return `${calendarText}\n\n👉 Para reservar tu lugar oficial en la sesión seleccionada, por favor envíanos tu *Nombre completo* y tu *Correo electrónico*.`;
+                }
+            } catch (calErr) {
+                console.warn('Error obteniendo opciones de calendario para WASender:', calErr.message);
+            }
             return `💻 *Webinar Virtual de Capacitación & Alianzas*\n\nNuestras próximas sesiones son:\n• *Jueves 12 de Noviembre* — 12:00 hs o 19:00 hs (Google Meet)\n\nPara reservar tu lugar oficial, por favor indícanos tu *Nombre completo* y *Correo electrónico*.`;
         }
 

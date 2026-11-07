@@ -360,6 +360,26 @@ REGLAS OBLIGATORIAS:
     }
 }
 
+const OFFSET_FILE = path.join(__dirname, 'telegram_offset.json');
+
+function getSavedOffset() {
+    try {
+        if (fs.existsSync(OFFSET_FILE)) {
+            const data = JSON.parse(fs.readFileSync(OFFSET_FILE, 'utf8'));
+            return Number(data.offset) || 0;
+        }
+    } catch(e) {}
+    return 0;
+}
+
+function saveOffset(newOffset) {
+    try {
+        fs.writeFileSync(OFFSET_FILE, JSON.stringify({ offset: newOffset }), 'utf8');
+    } catch(e) {}
+}
+
+const processedUpdateIds = new Set();
+
 // Bucle principal de Long Polling para Telegram
 async function startTelegramPolling() {
     if (!TELEGRAM_TOKEN) {
@@ -368,7 +388,7 @@ async function startTelegramPolling() {
     }
 
     console.log('🚀 [TELEGRAM TUNNEL] Conectado y escuchando exclusivamente para celular ' + TARGET_PHONE + '...');
-    let offset = 0;
+    let offset = getSavedOffset();
 
     while (true) {
         try {
@@ -376,8 +396,25 @@ async function startTelegramPolling() {
             const res = await axios.get(url, { timeout: 35000 });
             const updates = res.data.result || [];
 
+            if (updates.length > 0) {
+                const maxId = Math.max(...updates.map(u => u.update_id));
+                offset = maxId + 1;
+                saveOffset(offset);
+                // Confirmar inmediatamente con Telegram para vaciar la cola de reintentos
+                try {
+                    await axios.get(`https://api.telegram.org/bot${TELEGRAM_TOKEN}/getUpdates?offset=${offset}&limit=1`, { timeout: 5000 });
+                } catch(ackErr) {}
+            }
+
             for (const update of updates) {
-                offset = update.update_id + 1;
+                if (processedUpdateIds.has(update.update_id)) continue;
+                processedUpdateIds.add(update.update_id);
+                // Limitar el set a 500 elementos
+                if (processedUpdateIds.size > 500) {
+                    const first = processedUpdateIds.values().next().value;
+                    processedUpdateIds.delete(first);
+                }
+
                 const msg = update.message;
                 if (!msg) continue;
 

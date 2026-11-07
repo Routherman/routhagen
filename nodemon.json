@@ -1,0 +1,15 @@
+{
+  "watch": [
+    "*.js",
+    ".env"
+  ],
+  "ignore": [
+    "telegram_tasks.json",
+    "telegram_auth.json",
+    "telegram_offset.json",
+    "*.log",
+    "*.tmp",
+    "../RAG/*",
+    "node_modules/*"
+  ]
+}
