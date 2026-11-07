@@ -249,7 +249,7 @@ class WasenderService {
                        `• *Créditos Puente y Refacciones*: Calce ágil en 48 a 72 hs con garantía real o fiduciaria.\n` +
                        `• *Comisiones de alto rendimiento*: Cobro bancarizado al calce efectivo de cada operación.\n` +
                        `• *Seguridad BCRA*: Operación respaldada bajo Registro Oficial BCRA Nº 40.015 con Banco BIND y Coinag.\n\n` +
-                       `📌 *Próximas Sesiones de Capacitación (Virtuales por Google Meet y Presenciales en Vicente López):*\n\n` +
+                       `📌 *Próximas Sesiones de Capacitación Virtual (Vía Google Meet):*\n\n` +
                        (calendarText || `• *Jueves 12 de Noviembre* — 12:00 hs o 19:00 hs (Google Meet)\n\n👉 Responde con tu *Opción*, *Nombre completo* y *Email* para agendarte.`);
             }
 

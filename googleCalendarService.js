@@ -75,17 +75,6 @@ const DEFAULT_SLOTS = [
         meetLink: 'https://meet.google.com/ouz-bwzw-bwg',
         ubicacion: 'Google Meet',
         cupos: 25
-    },
-    {
-        id: 6,
-        titulo: 'Reunión Presencial de Asesores',
-        modalidad: 'PRESENCIAL',
-        categoria: 'ASESORES',
-        fechaStr: 'Jueves 12 de Noviembre',
-        horarioStr: '18:30 a 20:00 hs',
-        meetLink: null,
-        ubicacion: 'Av. del Libertador 264, 1° Piso Contrafrente, Vicente López, Buenos Aires',
-        cupos: 15
     }
 ];
 
@@ -193,23 +182,6 @@ async function getAvailableWebinarSlots(codigoEmpresa = 'KRZMJI', category = 'al
                         subscribers: []
                     };
                 });
-
-                // Si iCal trajo eventos virtuales pero ninguna reunión presencial, añadir la opción presencial oficial en Vicente López
-                const hasPresencial = rawSlots.some(s => s.modalidad === 'PRESENCIAL');
-                if (!hasPresencial) {
-                    rawSlots.push({
-                        id: rawSlots.length + 1,
-                        titulo: category === 'lideres' ? 'Reunión Ejecutiva Presencial' : 'Reunión Presencial de Asesores',
-                        modalidad: 'PRESENCIAL',
-                        categoria: category === 'lideres' ? 'LIDERES' : 'ASESORES',
-                        fechaStr: 'Jueves 12 de Noviembre',
-                        horarioStr: '18:30 a 20:00 hs',
-                        meetLink: null,
-                        ubicacion: 'Av. del Libertador 264, 1° Piso Contrafrente, Vicente López, Buenos Aires',
-                        cupos: 15,
-                        subscribers: []
-                    });
-                }
             }
         } catch (e) {
             console.error('⚠️ [GOOGLE CALENDAR ICAL]: Error al leer eventos iCal en vivo:', e.message);
