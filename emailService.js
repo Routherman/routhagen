@@ -10,16 +10,19 @@ function getTransporter() {
 
     const user = process.env.SMTP_USER || process.env.EMAIL_USER || 'colaboratium@gmail.com';
     const pass = (process.env.SMTP_PASS || process.env.EMAIL_PASS || '').replace(/\s+/g, '');
+    const host = process.env.SMTP_HOST || 'smtp.gmail.com';
+    const port = parseInt(process.env.SMTP_PORT || (host.includes('gmail') ? '465' : '587'), 10);
+    const secure = process.env.SMTP_SECURE !== undefined ? (process.env.SMTP_SECURE === 'true') : (port === 465);
 
     if (pass) {
         transporter = nodemailer.createTransport({
-            host: 'smtp.gmail.com',
-            port: 465,
-            secure: true,
+            host,
+            port,
+            secure,
             auth: { user, pass },
-            connectionTimeout: 15000,
-            greetingTimeout: 10000,
-            socketTimeout: 25000
+            connectionTimeout: 20000,
+            greetingTimeout: 15000,
+            socketTimeout: 30000
         });
     } else {
         // Transporte de desarrollo / fallback que registra los correos sin fallar
@@ -498,7 +501,9 @@ function isGmailQuotaError(errorMsg = '') {
 async function sendGenericEmail({ to, subject, html, text, attachments = [] }) {
     try {
         const mailer = getTransporter();
-        const fromEmail = process.env.SMTP_USER || 'colaboratium@gmail.com';
+        const fromEmail = process.env.EMAIL_FROM || process.env.SMTP_USER || 'colaboratium@gmail.com';
+        const fromName = process.env.EMAIL_FROM_NAME || 'Colaboratium Oficial';
+        const replyToEmail = process.env.EMAIL_REPLY_TO || 'colaboratium@gmail.com';
 
         const formattedAttachments = (attachments || []).map(att => {
             let filePath = att.url || att.path;
@@ -513,8 +518,9 @@ async function sendGenericEmail({ to, subject, html, text, attachments = [] }) {
         }).filter(a => a.path);
 
         const sendPromise = mailer.sendMail({
-            from: `"Colaboratium Oficial" <${fromEmail}>`,
+            from: `"${fromName}" <${fromEmail}>`,
             to,
+            replyTo: replyToEmail,
             subject,
             text,
             html,
