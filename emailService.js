@@ -47,7 +47,7 @@ function getTransporter() {
 async function sendTicketEmail(ticket, targetEmail = 'colaboratium@gmail.com') {
     try {
         const mailer = getTransporter();
-        const fromEmail = process.env.SMTP_USER || 'colaboratium@gmail.com';
+        const fromEmail = process.env.EMAIL_FROM || 'colaboratium@gmail.com';
 
         const subject = `🎫 [TICKET #${ticket.id}] ${ticket.customer_name || ticket.customer_number} - Estado: ${(ticket.status || 'OPEN').toUpperCase()}`;
 
@@ -116,6 +116,7 @@ async function sendTicketEmail(ticket, targetEmail = 'colaboratium@gmail.com') {
         const info = await mailer.sendMail({
             from: `"Colaboratium Helpdesk" <${fromEmail}>`,
             to: targetEmail,
+            replyTo: process.env.EMAIL_REPLY_TO || 'colaboratium@gmail.com',
             subject: subject,
             html: htmlContent
         });
@@ -134,7 +135,7 @@ async function sendTicketEmail(ticket, targetEmail = 'colaboratium@gmail.com') {
 async function sendWebinarConfirmationToAdvisor(booking) {
     try {
         const mailer = getTransporter();
-        const fromEmail = process.env.SMTP_USER || 'colaboratium@gmail.com';
+        const fromEmail = process.env.EMAIL_FROM || 'colaboratium@gmail.com';
         const isVirtual = booking.modalidad === 'VIRTUAL';
 
         const subject = isVirtual
@@ -206,6 +207,7 @@ async function sendWebinarConfirmationToAdvisor(booking) {
         const info = await mailer.sendMail({
             from: `"Colaboratium Asesores" <${fromEmail}>`,
             to: booking.email,
+            replyTo: process.env.EMAIL_REPLY_TO || 'colaboratium@gmail.com',
             subject: subject,
             html: htmlContent
         });
@@ -224,7 +226,7 @@ async function sendWebinarConfirmationToAdvisor(booking) {
 async function sendWebinarNotificationToCompany(booking) {
     try {
         const mailer = getTransporter();
-        const fromEmail = process.env.SMTP_USER || 'colaboratium@gmail.com';
+        const fromEmail = process.env.EMAIL_FROM || 'colaboratium@gmail.com';
         const targetEmail = 'colaboratium@gmail.com';
 
         const subject = `📢 NUEVO ASESOR INSCRIPTO: ${booking.nombre} • ${booking.modalidad} (${booking.fechaStr} ${booking.horarioStr})`;
@@ -272,7 +274,7 @@ async function sendWebinarNotificationToCompany(booking) {
 async function sendLeaderInquiryToCompany(leader) {
     try {
         const mailer = getTransporter();
-        const fromEmail = process.env.SMTP_USER || 'colaboratium@gmail.com';
+        const fromEmail = process.env.EMAIL_FROM || 'colaboratium@gmail.com';
         const targetEmail = 'colaboratium@gmail.com';
 
         const subject = `👑 NUEVO LÍDER DE EQUIPO INTERESADO: ${leader.nombre} (${leader.telefono})`;
@@ -321,7 +323,7 @@ async function sendLeaderInquiryToCompany(leader) {
 async function sendInvestorWelcomeGuide(investor) {
     try {
         const mailer = getTransporter();
-        const fromEmail = process.env.SMTP_USER || 'colaboratium@gmail.com';
+        const fromEmail = process.env.EMAIL_FROM || 'colaboratium@gmail.com';
         const targetEmail = investor.email;
 
         const subject = `📈 ¡Bienvenido a Colaboratium! - Guía de Ingreso y Operatoria de Inversión`;
@@ -435,7 +437,7 @@ async function sendInvestorWelcomeGuide(investor) {
 async function sendInvestorInquiryToCompany(investor) {
     try {
         const mailer = getTransporter();
-        const fromEmail = process.env.SMTP_USER || 'colaboratium@gmail.com';
+        const fromEmail = process.env.EMAIL_FROM || 'colaboratium@gmail.com';
         const targetEmail = 'colaboratium@gmail.com';
 
         const subject = `📈 NUEVO INVERSOR REGISTRADO: ${investor.nombre} (${investor.telefono})`;
@@ -846,7 +848,7 @@ async function sendMassEmailCampaign({ codigoEmpresa, campanaId, contacts = [], 
 async function sendCalendarEventInvitation({ titulo, tipo, modalidad, categoria, fecha, horario, meetLink, ubicacion, creadoPor }) {
     try {
         const mailer = getTransporter();
-        const fromEmail = process.env.SMTP_USER || 'colaboratium@gmail.com';
+        const fromEmail = process.env.EMAIL_FROM || 'colaboratium@gmail.com';
         const toEmail = 'colaboratium@gmail.com';
 
         const uid = `event_${Date.now()}@colaboratium.com.ar`;
