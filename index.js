@@ -374,7 +374,7 @@ app.post(['/api/messages/whatsapp/receive', '/webhook'], async (req, res) => {
 });
 
 // ---------------------------------------------------------
-// RUTAS PARA WASENDER API (wasenderapi.com) - Línea WA_S***5239
+// RUTAS PARA WASENDER API (wasenderapi.com) - Línea Oficial WA_S***5062 (+54 9 11 2473 5062)
 // ---------------------------------------------------------
 const wasenderService = require('./wasenderService');
 
@@ -1774,18 +1774,20 @@ app.post('/api/messages/reply', async (req, res) => {
             if (cRows && cRows.length > 0) contacto = cRows[0];
         }
 
-        const isWasenderContact = contacto?.canal === 'wasender' || 
+        // Línea única y oficial de WhatsApp: WASender (+54 9 11 2473 5062)
+        const isWasenderContact = cv?.wasender?.connected !== false ||
+                                  contacto?.canal === 'wasender' || 
                                   contacto?.linea_wa?.includes('WA_S') ||
-                                  (!cv?.whatsapp?.phone_id && cv?.wasender?.connected);
+                                  !cv?.whatsapp?.phone_id;
 
-        // Si el contacto pertenece a la línea WASender API (+54 11 7825 5239)
+        // Si el contacto pertenece a la línea WASender API (+54 9 11 2473 5062)
         if (isWasenderContact) {
             const targetPhone = telefono || contacto?.telefono;
             // Envío manual desde CRM: nunca se bloquea por anti-spam (forceSend: true, isCampaign: false)
             const wasRes = await wasenderService.sendMessage(targetPhone, text, codigoEmpresa, { forceSend: true, isCampaign: false });
             if (wasRes.success) {
                 const outMsgId = `was_crm_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
-                const lineCode = wasRes.line || 'WA_S***5239';
+                const lineCode = wasRes.line || 'WA_S***5062';
                 if (db.pool && contactId) {
                     await db.pool.query(`
                         INSERT INTO mensajes (contacto_id, mensaje_meta_id, direccion, tipo, contenido, estado_entrega, linea_wa)

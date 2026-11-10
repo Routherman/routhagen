@@ -4,7 +4,7 @@ const { processMessageWithAI } = require('./groqService');
 
 /**
  * Servicio de Integración con WASender API (wasenderapi.com)
- * Línea asignada: WA_S***5239 (Teléfono +54 11 7825 5239, Sesión Colab)
+ * Línea asignada: WA_S***5062 (Teléfono +54 9 11 2473 5062, Sesión Colab)
  */
 class WasenderService {
     constructor() {
@@ -28,9 +28,9 @@ class WasenderService {
             }
             return cv.wasender || {
                 session_name: 'Colab',
-                phone_number: '+54 11 7825 5239',
-                phone_last4: '5239',
-                line_code: 'WA_S***5239',
+                phone_number: '+54 9 11 2473 5062',
+                phone_last4: '5062',
+                line_code: 'WA_S***5062',
                 connected: true,
                 block_outgoing: false
             };
@@ -45,7 +45,7 @@ class WasenderService {
      */
     formatLineCode(phone) {
         const clean = (phone || '').replace(/\D/g, '');
-        const last4 = clean.length >= 4 ? clean.slice(-4) : '5239';
+        const last4 = clean.length >= 4 ? clean.slice(-4) : '5062';
         return `WA_S***${last4}`;
     }
 
@@ -60,11 +60,11 @@ class WasenderService {
 
         // El bloqueo anti-spam solo restringe campañas masivas automáticas
         if (isCampaign && config?.block_outgoing && !forceSend) {
-            console.warn(`🔒 [WASender ${config?.line_code || 'WA_S***5239'}] Campaña masiva pausada por regla anti-spam para ${to}`);
+            console.warn(`🔒 [WASender ${config?.line_code || 'WA_S***5062'}] Campaña masiva pausada por regla anti-spam para ${to}`);
             return {
                 success: false,
                 blocked: true,
-                message: `Campaña masiva pausada por regla anti-spam en la línea ${config?.line_code || 'WA_S***5239'}.`
+                message: `Campaña masiva pausada por regla anti-spam en la línea ${config?.line_code || 'WA_S***5062'}.`
             };
         }
 
@@ -72,11 +72,11 @@ class WasenderService {
         const cleanTo = (to || '').replace(/\D/g, '');
 
         if (!apiKey || apiKey === 'wasender_live_token_globalloan') {
-            console.log(`[WASender Simulado ${config?.line_code || 'WA_S***5239'}] Despachando a ${cleanTo}: "${text.substring(0, 60)}..."`);
+            console.log(`[WASender Simulado ${config?.line_code || 'WA_S***5062'}] Despachando a ${cleanTo}: "${text.substring(0, 60)}..."`);
             return {
                 success: true,
                 simulated: true,
-                line: config?.line_code || 'WA_S***5239',
+                line: config?.line_code || 'WA_S***5062',
                 to: cleanTo,
                 text
             };
@@ -99,14 +99,14 @@ class WasenderService {
             return {
                 success: true,
                 data: response.data,
-                line: config?.line_code || 'WA_S***5239'
+                line: config?.line_code || 'WA_S***5062'
             };
         } catch (error) {
             console.error('Error enviando mensaje vía WASender:', error.response?.data || error.message);
             return {
                 success: false,
                 error: error.response?.data?.message || error.message,
-                line: config?.line_code || 'WA_S***5239'
+                line: config?.line_code || 'WA_S***5062'
             };
         }
     }
@@ -289,7 +289,7 @@ class WasenderService {
                 const aiPromptContext = {
                     codigo: codigoEmpresa,
                     nombre: 'Global Loan S.A. — Colaboratium',
-                    systemPromptOverride: 'Eres el asistente virtual en la línea WA_S***5239 para Agentes RE/MAX y publicidad de redes de Colaboratium (Global Loan S.A., Registro BCRA Nº 40.015). Recuerda: NUNCA menciones porcentajes fijos de comisión; utiliza siempre el término "Comisiones de alto rendimiento". Enfatiza el calce en 48 hs, 0% costo al inversor, respaldo de Banco BIND y Coinag. Si preguntan por webinars o reuniones, indícales las opciones de fechas del calendario oficial y pídeles su número de opción, nombre completo y correo electrónico para agendarlos.'
+                    systemPromptOverride: 'Eres el asistente virtual en la línea oficial WA_S***5062 (+54 9 11 2473 5062) para Agentes y publicidad de redes de Colaboratium (Global Loan S.A., Registro BCRA Nº 40.015). Recuerda: NUNCA menciones porcentajes fijos de comisión; utiliza siempre el término "Comisiones de alto rendimiento". Enfatiza el calce en 48 hs, 0% costo al inversor, respaldo de Banco BIND y Coinag. Si preguntan por webinars o reuniones, indícales las opciones de fechas del calendario oficial y pídeles su número de opción, nombre completo y correo electrónico para agendarlos.'
                 };
                 const history = contact?.id ? await db.obtenerHistorialMensajes(contact.id, 6) : [];
                 const aiReply = await processMessageWithAI(userText, history, aiPromptContext);
@@ -318,7 +318,7 @@ class WasenderService {
         console.log(`📥 [WASender Webhook] Evento recibido: ${event}`);
 
         const config = await this.getConfig(codigoEmpresa);
-        const lineCode = config?.line_code || 'WA_S***5239';
+        const lineCode = config?.line_code || 'WA_S***5062';
 
         // 1. Filtrar eventos de sistema, recibos de lectura y presencia
         if (

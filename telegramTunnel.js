@@ -156,16 +156,16 @@ function appendToRagLog({ id, fecha, autor, tipo, solicitud, estado, respuesta, 
         
         const lineas = [
             `================================================================================`,
-            `📅 [${fechaLegible}] | PEDIDO #${id} | ESTADO: ${estado}`,
-            `👤 AUTOR: ${autor || 'Ignacio (1136822400)'} | TIPO: ${tipo || 'TEXTO'}`,
-            `📝 SOLICITUD:`,
-            `"${(solicitud || '').trim()}"`
+            `📅 [${fechaLegible}] | CONSOLA DE CHAT ANTIGRAVITY | MODELO: Gemini Flash / Qwen 3.8`,
+            `👤 USER (${autor || '1136822400'} - ${tipo || 'TEXTO'}):`,
+            `${(solicitud || '').trim()}`,
+            ``
         ];
         if (respuesta) {
-            lineas.push(``, `🤖 RESPUESTA / RESOLUCIÓN ANTIGRAVITY:`, respuesta.trim());
+            lineas.push(`🤖 ANTIGRAVITY (AI Pair Programmer):`, respuesta.trim(), ``);
         }
         if (duracion) {
-            lineas.push(`⏱️ TIEMPO DE RESPUESTA: ${duracion}s`);
+            lineas.push(`⏱️ TIEMPO DE RESPUESTA: ${duracion}s | ESTADO: ${estado}`);
         }
         lineas.push(`================================================================================\n`);
 
@@ -237,19 +237,35 @@ function resolveTelegramTask(taskId, respuesta, duracion = null, estado = '✅ R
 }
 
 async function callDeveloperLLM(systemPrompt, userInstruction) {
-    const messages = [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: userInstruction }
-    ];
+    // 1. Google Gemini Flash directo si existe GEMINI_API_KEY
+    if (process.env.GEMINI_API_KEY) {
+        try {
+            const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${process.env.GEMINI_API_KEY}`;
+            const gres = await axios.post(geminiUrl, {
+                contents: [
+                    { role: 'user', parts: [{ text: `${systemPrompt}\n\nInstrucción del usuario:\n${userInstruction}` }] }
+                ],
+                generationConfig: { maxOutputTokens: 1200, temperature: 0.3 }
+            }, { timeout: 15000 });
+            const txt = gres.data?.candidates?.[0]?.content?.parts?.[0]?.text;
+            if (txt) return txt;
+        } catch (gErr) {
+            console.warn('[TELEGRAM TUNNEL] Gemini Flash Directo falló:', gErr.response?.data || gErr.message);
+        }
+    }
 
+    // 2. Modelo 3.8 de alta velocidad en Groq (qwen/qwen3.8-27b) y alternativas
     if (groq) {
-        const candidateModels = ['openai/gpt-oss-120b', 'llama-3.1-8b-instant', 'llama3-70b-8192', 'llama-3.3-70b-versatile'];
+        const candidateModels = ['qwen/qwen3.8-27b', 'openai/gpt-oss-120b', 'llama-3.3-70b-versatile'];
         for (const model of candidateModels) {
             try {
                 const completion = await groq.chat.completions.create({
                     model,
-                    messages,
-                    max_tokens: 800,
+                    messages: [
+                        { role: 'system', content: systemPrompt },
+                        { role: 'user', content: userInstruction }
+                    ],
+                    max_tokens: 1200,
                     temperature: 0.3
                 });
                 const txt = completion.choices[0]?.message?.content;
@@ -264,7 +280,10 @@ async function callDeveloperLLM(systemPrompt, userInstruction) {
         try {
             const cres = await axios.post('https://api.cerebras.ai/v1/chat/completions', {
                 model: 'llama3.1-8b',
-                messages,
+                messages: [
+                    { role: 'system', content: systemPrompt },
+                    { role: 'user', content: userInstruction }
+                ],
                 max_tokens: 800,
                 temperature: 0.3
             }, {
@@ -309,12 +328,16 @@ async function processInstruction(chatId, instruction, userName = '', tipo = 'TE
     } else {
         // Procesar directamente con Groq LLM como Lead Developer de Antigravity
         try {
-            const systemPrompt = `Eres Antigravity IA, un Ingeniero de Software Senior y Lead Developer trabajando en pair programming con el Líder de Proyecto (Ignacio / celular 1136822400) en la plataforma Colaboratium / Routh Agent.
-Tu función es entender requerimientos de arquitectura, código, UI (React/Vite) y backend (Node.js/Express/PostgreSQL), confirmar con precisión técnica lo que se implementa y mantenerlo informado.
-REGLAS OBLIGATORIAS:
-- NUNCA respondas como soporte al cliente ni digas que derivarás la tarea al equipo de desarrollo o producto. Eres el agente que programa y ejecuta los cambios directamente.
-- NUNCA incluyas etiquetas de bots de atención como [HANDOFF] o [ROLE:Soporte].
-- Responde en español de manera profesional, técnica, concisa y orientada a la acción.`;
+            const systemPrompt = `Eres Antigravity, el asistente de inteligencia artificial y pair programmer de Google Deepmind para desarrollo de software, trabajando mano a mano con el Líder de Proyecto (Damian / celular 1136822400) en el workspace ${WORKSPACE_DIR}.
+Estás integrado directamente a la consola de chat y sincronizado con c:\\Users\\Administrador\\Desktop\\Routh-Agent\\RAG\\log.txt.
+
+ESTADO Y REGLAS DE ARQUITECTURA DEL PROYECTO:
+1. Proyecto: Colaboratium (Global Loan S.A. - BCRA Nº 40.015), plataforma Fintech P2P Lending.
+2. WhatsApp Oficial Único: Línea WASender +54 9 11 2473 5062 (WA_S***5062). No se usan otras líneas. Salidas manuales desde el CRM 100% habilitadas.
+3. Servidor Backend en puerto 8080 (Express + MySQL + Redis), Frontend en puerto 3000 (Next.js).
+4. Calendario Oficial: Webinars 100% virtuales vía Google Meet (Jueves 12, Lunes 16, Martes 17 a las 12:00 y 19:00 hs).
+5. Despacho masivo de Email activo vía Brevo SMTP Relay.
+6. Tu rol es actuar exactamente como la consola de chat de Antigravity: analiza código, confirma resoluciones, explica la arquitectura, asiste en la programación y sé técnico, conciso, amigable y resolutivo. NUNCA respondas como bot de atención al cliente ni menciones [HANDOFF].`;
 
             const aiText = await callDeveloperLLM(systemPrompt, instruction);
             const durationSec = ((Date.now() - startTime) / 1000).toFixed(1);
