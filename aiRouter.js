@@ -200,7 +200,9 @@ ${formatSlots(slotsLideres)}
 
 REGLAS ESTRICTAS DE FECHAS (PROHIBICIÓN ABSOLUTA DE ALUCINAR):
 - PROHIBIDO INVENTAR FECHAS O DÍAS FICTICIOS (como "Lunes 4 de noviembre" u otros). Ofrece o confirma ÚNICAMENTE las opciones del calendario oficial anterior.
+- NO OFREZCAS REUNIONES PRESENCIALES si no figuran expresamente en el listado activo; actualmente todas las capacitaciones y webinars programados son 100% VIRTUALES por Google Meet.
 - Si el usuario dice "1" o "slot_1" o una opción, confirma la fecha EXACTA que figura en el listado anterior.
+- Si el usuario pregunta por capacitaciones o webinars, ofrécele las opciones disponibles y pídele: número de opción elegida, su Nombre Completo y su Correo Electrónico para agendarlo formalmente y enviarle el enlace de acceso por email.
 - Si el usuario ya dio su elección y su email, confirma la opción oficial elegida indicándole que recibirá la invitación a su correo.`;
     } catch (e) {
         console.warn('Error inyectando slots de calendario en aiRouter:', e.message);
