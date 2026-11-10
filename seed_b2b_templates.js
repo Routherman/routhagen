@@ -63,7 +63,7 @@ Aviso Legal (Ley 25.326 y Disp. DNPDP 4/2009): Tus datos fueron relevados de tu 
         ON DUPLICATE KEY UPDATE asunto = VALUES(asunto), contenido = VALUES(contenido)
     `, [
         codigoEmpresa,
-        '[PUBLICIDAD] Alianza para tu cartera de clientes en {{Office}}, {{First Name}} (BCRA Nº 40.015)',
+        'Alianza comercial para tus operaciones en {{Office}}',
         plantillaAContenido
     ]);
 
@@ -74,7 +74,7 @@ Aviso Legal (Ley 25.326 y Disp. DNPDP 4/2009): Tus datos fueron relevados de tu 
         ON DUPLICATE KEY UPDATE asunto = VALUES(asunto), contenido = VALUES(contenido)
     `, [
         codigoEmpresa,
-        '[PUBLICIDAD] Unidad de negocio adicional para tu equipo en {{Office}}, {{First Name}} (BCRA Nº 40.015)',
+        'Unidad de negocio adicional para tu equipo en {{Office}}',
         plantillaBContenido
     ]);
 
