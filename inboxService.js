@@ -4,12 +4,13 @@ const nodemailer = require('nodemailer');
 const path = require('path');
 require('dotenv').config({ path: path.join(__dirname, '.env') });
 
-const gmailUser = process.env.SMTP_USER || process.env.EMAIL_USER || 'colaboratium@gmail.com';
-const gmailPass = (process.env.SMTP_PASS || process.env.EMAIL_PASS || '').replace(/\s+/g, '');
+const gmailUser = process.env.GMAIL_IMAP_USER || process.env.EMAIL_FROM || 'colaboratium@gmail.com';
+const rawImapPass = process.env.GMAIL_IMAP_PASS || process.env.GMAIL_PASS || '';
+const gmailPass = (rawImapPass && !rawImapPass.startsWith('xsmtp') && !rawImapPass.startsWith('xkey')) ? rawImapPass.replace(/\s+/g, '') : '';
 
 function getImapClient() {
     if (!gmailPass) {
-        throw new Error("No hay contraseña de aplicación configurada en SMTP_PASS");
+        throw new Error("No hay contraseña de aplicación de Gmail configurada en GMAIL_IMAP_PASS");
     }
     const client = new ImapFlow({
         host: "imap.gmail.com",
@@ -31,13 +32,8 @@ function getImapClient() {
 }
 
 function getNodemailerTransport() {
-    return nodemailer.createTransport({
-        service: "gmail",
-        auth: {
-            user: gmailUser,
-            pass: gmailPass
-        }
-    });
+    const { getTransporter } = require('./emailService');
+    return getTransporter();
 }
 
 const db = require('./database');
@@ -48,6 +44,17 @@ const db = require('./database');
 async function getInboxEmails(limit = 35, codigoEmpresa = 'KRZMJI') {
     let client = null;
     let lock = null;
+
+    if (!gmailPass) {
+        console.log("[inboxService] GMAIL_IMAP_PASS no configurada. Retornando inbox seguro.");
+        return {
+            success: true,
+            stats: { total: 0, unseen: 0 },
+            emails: [],
+            account: gmailUser,
+            warning: "Bandeja IMAP de Gmail no configurada o desconectada temporalmente."
+        };
+    }
 
     try {
         client = getImapClient();
@@ -133,6 +140,15 @@ async function getInboxEmails(limit = 35, codigoEmpresa = 'KRZMJI') {
             emails: emailList,
             account: gmailUser
         };
+    } catch (err) {
+        console.warn(`[inboxService] Advertencia al leer IMAP de Gmail: ${err.message}`);
+        return {
+            success: true,
+            stats: { total: 0, unseen: 0 },
+            emails: [],
+            account: gmailUser,
+            warning: err.message
+        };
     } finally {
         if (lock) {
             try { lock.release(); } catch (e) {}
@@ -193,9 +209,12 @@ async function getEmailBody(uid) {
  */
 async function sendReplyEmail({ to, subject, body, inReplyTo }) {
     const transporter = getNodemailerTransport();
+    const fromEmail = process.env.EMAIL_FROM || 'colaboratium@gmail.com';
+    const replyToEmail = process.env.EMAIL_REPLY_TO || 'colaboratium@gmail.com';
     const mailOptions = {
-        from: `"Colaboratium Oficial" <${gmailUser}>`,
+        from: `"Colaboratium Oficial" <${fromEmail}>`,
         to,
+        replyTo: replyToEmail,
         subject: subject.startsWith("Re:") ? subject : `Re: ${subject}`,
         text: body,
         html: `<div style="font-family: sans-serif; font-size: 14px; line-height: 1.6; color: #1e293b; white-space: pre-wrap;">${body}</div>`,
