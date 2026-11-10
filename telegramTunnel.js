@@ -553,5 +553,8 @@ if (require.main === module) {
 module.exports = {
     startTelegramPolling,
     sendTelegramMessage,
-    processInstruction
+    processInstruction,
+    recordTelegramTask,
+    resolveTelegramTask,
+    callDeveloperLLM
 };
