@@ -348,7 +348,7 @@ class WasenderService {
         if (isMessageEvent) {
             // Extraer objeto de mensaje soportando todos los formatos de WASender
             let msgObj = null;
-            const rawMessages = payload?.data?.messages || payload?.messages;
+            const rawMessages = payload?.data?.messages?.messages || payload?.data?.messages || payload?.messages?.messages || payload?.messages;
             if (Array.isArray(rawMessages) && rawMessages.length > 0) {
                 msgObj = rawMessages[0];
             } else if (rawMessages && typeof rawMessages === 'object') {
@@ -439,7 +439,7 @@ class WasenderService {
                 }
 
                 const [existing] = await pool.query(
-                    'SELECT id, nombre, grupo, flujo_activo_id, nodo_actual_id FROM contactos WHERE (telefono = ? OR telefono = ?) AND codigo_empresa = ? LIMIT 1',
+                    'SELECT id, nombre, grupo, flujo_activo_id, nodo_actual_id, metadata_extra FROM contactos WHERE (telefono = ? OR telefono = ?) AND codigo_empresa = ? LIMIT 1',
                     [cleanPhone, from, codigoEmpresa]
                 );
 

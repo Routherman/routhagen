@@ -83,7 +83,8 @@ app.use('/uploads', express.static(path.join(__dirname, 'public/uploads')));
 app.use('/api/uploads', express.static(path.join(__dirname, 'public/uploads')));
 app.use('/downloads', express.static(path.join(__dirname, 'public/downloads')));
 app.use('/api/downloads', express.static(path.join(__dirname, 'public/downloads')));
-app.use(bodyParser.json());
+app.use(bodyParser.json({ limit: '10mb' }));
+app.use(bodyParser.urlencoded({ extended: true, limit: '10mb' }));
 
 const PORT = process.env.PORT || 8080;
 const WAPP_VERIFY_TOKEN = process.env.WAPP_VERIFY_TOKEN;
@@ -378,16 +379,63 @@ app.post(['/api/messages/whatsapp/receive', '/webhook'], async (req, res) => {
 // ---------------------------------------------------------
 const wasenderService = require('./wasenderService');
 
-app.post('/api/wasender/webhook', async (req, res) => {
+const appendWasenderLog = (entry) => {
     try {
-        const codigoEmpresa = req.query.codigoEmpresa || 'KRZMJI';
-        const result = await wasenderService.handleWebhook(req.body, req.headers, codigoEmpresa);
-        // Responder siempre 200 OK inmediatamente según estándar de Wasender
-        res.status(200).json({ success: true, result });
-    } catch (e) {
-        console.error('Error en webhook de WASender:', e.message);
-        res.status(200).json({ success: false, error: e.message });
+        const logPath = path.join(__dirname, 'wasender_webhook.log');
+        const line = `[${new Date().toISOString()}] ${typeof entry === 'string' ? entry : JSON.stringify(entry)}\n`;
+        fs.appendFileSync(logPath, line, 'utf8');
+    } catch (logErr) {
+        console.warn('No se pudo escribir wasender_webhook.log:', logErr.message);
     }
+};
+
+app.get(['/api/wasender/webhook', '/api/wasender/webhook/'], (req, res) => {
+    res.status(200).json({ ok: true, service: 'WASender Webhook Active', line: 'WA_S***5062' });
+});
+
+app.get('/api/empresas/:codigo/wasender/webhook-logs', (req, res) => {
+    try {
+        const logPath = path.join(__dirname, 'wasender_webhook.log');
+        if (!fs.existsSync(logPath)) return res.json({ success: true, logs: [] });
+        const lines = fs.readFileSync(logPath, 'utf8').trim().split('\n').slice(-50);
+        res.json({ success: true, count: lines.length, logs: lines });
+    } catch (e) {
+        res.status(500).json({ success: false, error: e.message });
+    }
+});
+
+app.post(['/api/wasender/webhook', '/api/wasender/webhook/'], async (req, res) => {
+    const codigoEmpresa = req.query.codigoEmpresa || 'KRZMJI';
+    const rawEvent = req.body?.event || req.body?.type || 'unknown';
+    appendWasenderLog({
+        stage: 'HIT',
+        ip: req.headers['x-forwarded-for'] || req.ip,
+        ua: req.headers['user-agent'] || '',
+        event: rawEvent,
+        bodyPreview: JSON.stringify(req.body || {}).slice(0, 800)
+    });
+
+    if (req.query.sync === '1') {
+        try {
+            const result = await wasenderService.handleWebhook(req.body, req.headers, codigoEmpresa);
+            return res.status(200).json({ success: true, result });
+        } catch (e) {
+            appendWasenderLog({ stage: 'ERROR_SYNC', error: e.message });
+            return res.status(200).json({ success: false, error: e.message });
+        }
+    }
+
+    // Responder 200 OK de inmediato para evitar timeouts en WASender y procesar en segundo plano
+    res.status(200).json({ success: true, received: true, event: rawEvent });
+    setImmediate(async () => {
+        try {
+            const result = await wasenderService.handleWebhook(req.body, req.headers, codigoEmpresa);
+            appendWasenderLog({ stage: 'RESULT', event: rawEvent, result });
+        } catch (e) {
+            console.error('Error en webhook de WASender:', e.message);
+            appendWasenderLog({ stage: 'ERROR_ASYNC', event: rawEvent, error: e.message });
+        }
+    });
 });
 
 app.get('/api/empresas/:codigo/wasender/status', async (req, res) => {
