@@ -445,14 +445,71 @@ async function formatInteractiveCalendarList(codigoEmpresa = 'KRZMJI', category 
     };
 }
 
+function buildPublicWebinarUrl({ phone = '', category = 'asesores', codigoEmpresa = 'KRZMJI', slotId = null } = {}) {
+    const baseUrl = (process.env.FRONTEND_PUBLIC_URL || 'https://routhagent.vercel.app').replace(/\/+$/, '');
+    const params = new URLSearchParams();
+    const cleanPhone = String(phone || '').replace(/\D/g, '');
+    if (cleanPhone) params.set('tel', cleanPhone);
+    if (category && category !== 'asesores') params.set('c', category);
+    if (codigoEmpresa && codigoEmpresa !== 'KRZMJI') params.set('e', codigoEmpresa);
+    if (slotId) params.set('slot', String(slotId));
+    const qs = params.toString();
+    return `${baseUrl}/webinar${qs ? `?${qs}` : ''}`;
+}
+
+function formatCompactTime(horarioStr) {
+    const firstPart = String(horarioStr || '').split(/\s+a\s+/i)[0].trim();
+    const m = firstPart.match(/(\d{1,2}):(\d{2})\s*(a\.?\s*m\.?|p\.?\s*m\.?)?/i);
+    if (!m) return firstPart;
+    let h = parseInt(m[1], 10);
+    const min = m[2];
+    const ampm = (m[3] || '').toLowerCase();
+    if (ampm.includes('p') && h < 12) h += 12;
+    if (ampm.includes('a') && h === 12) h = 0;
+    return `${String(h).padStart(2, '0')}:${min}`;
+}
+
+function formatCompactDate(fechaStr) {
+    const clean = String(fechaStr || '').replace(/,/g, '').trim();
+    const m = clean.match(/^([a-záéíóúñ]+)\s+(\d{1,2})\s+de\s+([a-záéíóúñ]+)/i);
+    if (!m) return clean.slice(0, 18);
+    const dayCap = m[1].charAt(0).toUpperCase() + m[1].slice(1, 3).toLowerCase();
+    const monthCap = m[3].charAt(0).toUpperCase() + m[3].slice(1, 3).toLowerCase();
+    return `${dayCap} ${m[2]} ${monthCap}`;
+}
+
 /**
- * Genera el texto limpio para WhatsApp con las opciones de calendario (SIN tablas markdown)
+ * Genera el payload de encuesta interactiva (Poll) para WhatsApp vía WASender
  */
-async function formatCalendarOptionsText(codigoEmpresa = 'KRZMJI', category = 'asesores') {
+async function formatWebinarPollPayload(codigoEmpresa = 'KRZMJI', category = 'asesores') {
+    const slots = await getAvailableWebinarSlots(codigoEmpresa, category);
+    const isLider = category === 'lideres';
+    const options = slots.slice(0, 12).map(s => {
+        const compactDate = formatCompactDate(s.fechaStr);
+        const compactTime = formatCompactTime(s.horarioStr);
+        const lugar = s.modalidad === 'PRESENCIAL' ? 'V. López' : 'Meet';
+        return `Opción ${s.id} · ${compactDate} ${compactTime} hs (${lugar})`.replace(/%/g, '');
+    });
+
+    return {
+        question: isLider
+            ? '👑 Tocá para elegir tu turno de Webinar / Reunión Líderes:'
+            : '📅 Tocá para elegir tu turno de Webinar / Capacitación:',
+        options,
+        multiSelect: false,
+        slots
+    };
+}
+
+/**
+ * Genera el texto limpio para WhatsApp con las opciones de calendario (SIN tablas markdown ni %)
+ */
+async function formatCalendarOptionsText(codigoEmpresa = 'KRZMJI', category = 'asesores', options = {}) {
     const slots = await getAvailableWebinarSlots(codigoEmpresa, category);
     const virtualSlots = slots.filter(s => s.modalidad === 'VIRTUAL');
     const presencialSlots = slots.filter(s => s.modalidad === 'PRESENCIAL');
     const isLider = category === 'lideres';
+    const { includeFormLink = false, includePollHint = false, phone = '' } = options || {};
 
     let msg = isLider
         ? `👑 *FECHAS Y HORARIOS PARA LÍDERES DE EQUIPO*\n\n`
@@ -475,8 +532,14 @@ async function formatCalendarOptionsText(codigoEmpresa = 'KRZMJI', category = 'a
         msg += `\n`;
     }
 
-    msg += `👉 *¿Cuál opción te queda más cómoda?*\n` +
-           `Responde con el *número de opción* (ej. *1* o *2*), tu *Nombre completo* y tu *Email* para agendarte y enviarte el link de acceso a Google Meet.`;
+    if (includeFormLink || phone) {
+        const formUrl = buildPublicWebinarUrl({ phone, category, codigoEmpresa });
+        msg += `📝 *Inscribite en 1 paso desde tu celular (fecha, nombre y email):*\n👉 ${formUrl}\n\n`;
+    }
+
+    msg += includePollHint
+        ? `👇 *También podés tocar tu horario directamente en la encuesta de abajo* o responder con el *número de opción*, *Nombre completo* y *Email*.`
+        : `👉 *¿Cuál opción te queda más cómoda?*\nResponde con el *número de opción* (ej. *1* o *2*), tu *Nombre completo* y tu *Email* para agendarte y enviarte el link de acceso a Google Meet.`;
     return msg;
 }
 
@@ -662,7 +725,7 @@ async function processBooking({ slotChoice, customerName, customerEmail, custome
                 `📅 *Fecha:* ${chosenSlot.fechaStr}\n` +
                 `⏰ *Horario:* ${chosenSlot.horarioStr}\n` +
                 `💻 *Acceso Google Meet:* ${chosenSlot.meetLink}\n\n` +
-                `📧 Te enviamos la confirmación con los accesos al panel jerárquico y detalles del 10% de bolsa a *${customerEmail}*.\n` +
+                `📧 Te enviamos la confirmación con los accesos al panel jerárquico y detalles del programa de líderes a *${customerEmail}*.\n` +
                 `¡Nos vemos en el Webinar de Líderes!`;
         } else {
             responseText = `¡Excelente, Líder *${customerName}*! 👑 Tu *Reunión Ejecutiva Presencial* está confirmada.\n\n` +
@@ -1007,6 +1070,8 @@ module.exports = {
     getAvailableWebinarSlots,
     formatCalendarOptionsText,
     formatInteractiveCalendarList,
+    formatWebinarPollPayload,
+    buildPublicWebinarUrl,
     getSubscriberProfile,
     processBooking,
     sendMeetingLinkToSubscribers,

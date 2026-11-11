@@ -189,8 +189,8 @@ async function sendWebinarConfirmationToAdvisor(booking) {
 
                     <h3 style="font-size:14px;font-weight:800;color:#0f172a;margin-top:25px;">Temario de la Capacitación (40 min):</h3>
                     <ul style="font-size:13px;line-height:1.7;color:#475569;padding-left:20px;">
-                        <li><strong>Comisiones de alto rendimiento:</strong> cobro inmediato al calce + devengamiento y 100% en reinversiones.</li>
-                        <li><strong>Atribución de Leads:</strong> 100% en clientes propios (Caso Carlos Gómez) vs leads provistos por Colaboratium (Caso Juan Ramírez).</li>
+                        <li><strong>Comisiones de alto rendimiento:</strong> cobro inmediato al calce, saldo residual en cuotas y comisión plena en cada reinversión.</li>
+                        <li><strong>Atribución de Leads:</strong> esquema de comisión plena en clientes propios (Caso Carlos Gómez) vs leads provistos por Colaboratium (Caso Juan Ramírez).</li>
                         <li><strong>Operatoria No Custodial BIND / Coinag:</strong> Costo cero para el inversor y marco normativo BCRA Nº 40.015.</li>
                         <li><strong>Consola del Asesor:</strong> Alta, precarga de clientes y seguimiento de comisiones en vivo.</li>
                     </ul>
@@ -295,7 +295,7 @@ async function sendLeaderInquiryToCompany(leader) {
                 <p><strong>Detalle de Solicitud:</strong> ${leader.datosRed || 'Coordinación de Reunión Ejecutiva en Vicente López o Webinar de Líderes'}</p>
                 <p><strong>Ticket Helpdesk:</strong> #${leader.ticketId || '-'}</p>
                 <div style="margin-top:20px;padding:12px;background:#0f172a;border-radius:10px;font-size:12px;color:#94a3b8;">
-                    Este líder expresó interés en el 10% de la bolsa de comisiones y solicita coordinar reunión ejecutiva en Vicente López o sumarse al Webinar de Líderes. Se le enviaron las opciones de turnos disponibles vía WhatsApp.
+                    Este líder expresó interés en el programa de overriding de comisiones y solicita coordinar reunión ejecutiva en Vicente López o sumarse al Webinar de Líderes. Se le enviaron las opciones de turnos disponibles vía WhatsApp.
                 </div>
             </div>
         </body>

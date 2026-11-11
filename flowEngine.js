@@ -751,8 +751,11 @@ async function handleFlowEngine(dbContacto, cleanMessage, empresa, accessToken, 
                 const { sendWhatsAppInteractiveList } = require('./whatsappService');
                 const { formatInteractiveCalendarList, formatCalendarOptionsText } = require('./googleCalendarService');
                 
-                // Enviar siempre el menú de opciones en texto claro para que el usuario pueda ver las fechas y responder
-                const cleanText = await formatCalendarOptionsText(codigoEmpresa, 'asesores');
+                // Enviar siempre el menú de opciones en texto claro + link de formulario móvil en 1 paso
+                const cleanText = await formatCalendarOptionsText(codigoEmpresa, 'asesores', {
+                    includeFormLink: true,
+                    phone: cleanMessage.identificador.valor
+                });
                 const outMetaId = await sendWhatsAppMsg(cleanMessage.identificador.valor, cleanText, phoneId, accessToken);
                 await db.guardarMensaje(dbContacto.id, outMetaId, 'SALIENTE', 'text', cleanText);
 
@@ -771,8 +774,11 @@ async function handleFlowEngine(dbContacto, cleanMessage, empresa, accessToken, 
                 const { sendWhatsAppInteractiveList } = require('./whatsappService');
                 const { formatInteractiveCalendarList, formatCalendarOptionsText } = require('./googleCalendarService');
                 
-                // Enviar siempre el menú de opciones para líderes en texto claro
-                const cleanText = await formatCalendarOptionsText(codigoEmpresa, 'lideres');
+                // Enviar siempre el menú de opciones para líderes en texto claro + link de formulario móvil en 1 paso
+                const cleanText = await formatCalendarOptionsText(codigoEmpresa, 'lideres', {
+                    includeFormLink: true,
+                    phone: cleanMessage.identificador.valor
+                });
                 const outMetaId = await sendWhatsAppMsg(cleanMessage.identificador.valor, cleanText, phoneId, accessToken);
                 await db.guardarMensaje(dbContacto.id, outMetaId, 'SALIENTE', 'text', cleanText);
 

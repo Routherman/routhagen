@@ -3473,6 +3473,135 @@ app.post('/api/empresas/:codigo/calendar/book', async (req, res) => {
     }
 });
 
+// Endpoints públicos para Formulario Móvil de Inscripción a Webinars (sin exponer PII de otros inscriptos)
+app.get('/api/public/webinar/slots', async (req, res) => {
+    try {
+        const { sanitizeBotReplyText } = require('./aiRouter');
+        const codigo = String(req.query.codigo || 'KRZMJI').trim() || 'KRZMJI';
+        const rawCategory = String(req.query.category || 'asesores').toLowerCase().trim();
+        const category = ['asesores', 'lideres', 'all'].includes(rawCategory) ? rawCategory : 'asesores';
+
+        const slots = await getAvailableWebinarSlots(codigo, category);
+        const publicSlots = (slots || []).map(s => ({
+            id: s.id,
+            titulo: sanitizeBotReplyText(s.titulo || 'Webinar Virtual Colaboratium'),
+            modalidad: s.modalidad || 'VIRTUAL',
+            categoria: s.categoria || 'ASESORES',
+            fechaStr: s.fechaStr,
+            horarioStr: s.horarioStr,
+            ubicacion: s.modalidad === 'PRESENCIAL'
+                ? (s.ubicacion || 'Av. del Libertador 264, 1° Piso Contrafrente, Vicente López')
+                : 'Google Meet (Virtual)',
+            cuposDisponibles: typeof s.cuposDisponibles === 'number' ? s.cuposDisponibles : (s.cupos || 25)
+        }));
+
+        res.json({ success: true, codigo, category, slots: publicSlots });
+    } catch (error) {
+        console.error('Error obteniendo slots públicos de webinar:', error);
+        res.status(500).json({ success: false, error: 'No se pudieron cargar las fechas disponibles.' });
+    }
+});
+
+app.post('/api/public/webinar/book', async (req, res) => {
+    try {
+        const wasenderService = require('./wasenderService');
+        const { sanitizeBotReplyText } = require('./aiRouter');
+        const body = req.body || {};
+
+        const codigoEmpresa = String(body.codigoEmpresa || body.codigo || 'KRZMJI').trim() || 'KRZMJI';
+        const rawCategory = String(body.category || 'asesores').toLowerCase().trim();
+        const category = ['asesores', 'lideres', 'all'].includes(rawCategory) ? rawCategory : 'asesores';
+        const cleanName = String(body.customerName || '').trim();
+        const cleanEmail = String(body.customerEmail || '').trim().toLowerCase();
+        const cleanPhone = wasenderService.normalizePhone(body.customerPhone || '');
+        const slotChoice = String(body.slotChoice || '1').trim();
+
+        if (cleanName.length < 2) {
+            return res.status(400).json({ success: false, error: 'Por favor ingresá tu nombre y apellido completo.' });
+        }
+        if (!/^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/.test(cleanEmail)) {
+            return res.status(400).json({ success: false, error: 'Por favor ingresá un correo electrónico válido.' });
+        }
+
+        const result = await processBooking({
+            slotChoice,
+            customerName: cleanName,
+            customerEmail: cleanEmail,
+            customerPhone: cleanPhone,
+            codigoEmpresa,
+            category,
+            canal: cleanPhone ? 'wasender' : 'web'
+        });
+
+        let whatsappSent = false;
+        const waConfirmText = sanitizeBotReplyText(result?.whatsappResponse || '');
+
+        if (cleanPhone && waConfirmText) {
+            try {
+                if (!db.pool) await db.initDB();
+                const cfg = await wasenderService.getConfig(codigoEmpresa);
+                const lineCode = cfg?.line_code || 'WA_S***5062';
+
+                // Limpiar estado pendiente del bot en el contacto si existe
+                const [cRows] = await db.pool.query(
+                    'SELECT id, metadata_extra FROM contactos WHERE telefono = ? AND codigo_empresa = ? LIMIT 1',
+                    [cleanPhone, codigoEmpresa]
+                );
+                let contactId = null;
+                if (cRows && cRows.length > 0) {
+                    contactId = cRows[0].id;
+                    let meta = cRows[0].metadata_extra;
+                    if (typeof meta === 'string') {
+                        try { meta = JSON.parse(meta); } catch (e) { meta = {}; }
+                    } else if (!meta) {
+                        meta = {};
+                    }
+                    meta.pending_slot_choice = null;
+                    meta.awaiting_webinar_booking = false;
+                    meta.pending_webinar_category = null;
+                    meta.canal_registro = 'webinar_form';
+                    await db.pool.query('UPDATE contactos SET metadata_extra = ? WHERE id = ?', [JSON.stringify(meta), contactId]);
+                }
+
+                const sendRes = await wasenderService.sendMessage(cleanPhone, waConfirmText, codigoEmpresa, {
+                    isBotReply: true,
+                    forceSend: true
+                });
+                whatsappSent = Boolean(sendRes?.success);
+
+                if (whatsappSent && contactId) {
+                    const outMsgId = `was_form_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+                    await db.pool.query(
+                        `INSERT INTO mensajes (contacto_id, mensaje_meta_id, direccion, tipo, contenido, estado_entrega, linea_wa)
+                         VALUES (?, ?, 'SALIENTE', 'texto', ?, 'enviado', ?)`,
+                        [contactId, outMsgId, waConfirmText, lineCode]
+                    );
+                }
+            } catch (waErr) {
+                console.warn('No se pudo enviar confirmación WhatsApp tras formulario web:', waErr.message);
+            }
+        }
+
+        res.json({
+            success: true,
+            ticketId: result.ticketId,
+            whatsappSent,
+            slot: {
+                id: result.slot?.id,
+                titulo: sanitizeBotReplyText(result.slot?.titulo || ''),
+                modalidad: result.slot?.modalidad,
+                fechaStr: result.slot?.fechaStr,
+                horarioStr: result.slot?.horarioStr,
+                meetLink: result.slot?.modalidad === 'VIRTUAL' ? result.slot?.meetLink : null,
+                ubicacion: result.slot?.ubicacion
+            }
+        });
+    } catch (error) {
+        console.error('Error en reserva pública desde formulario webinar:', error);
+        res.status(500).json({ success: false, error: 'No pudimos completar tu inscripción. Intentá nuevamente.' });
+    }
+});
+
 app.post('/api/empresas/:codigo/calendar/slots/:id/send-link', async (req, res) => {
     try {
         const { sendMeetingLinkToSubscribers } = require('./googleCalendarService');
