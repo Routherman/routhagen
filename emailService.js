@@ -365,7 +365,7 @@ async function sendInvestorWelcomeGuide(investor) {
                         <div class="step-num">1</div>
                         <div class="step-body">
                             <strong>Ingreso y Creación de Usuario:</strong><br>
-                            Accedé a nuestra consola oficial en <a href="https://consola.colaboratium.com.ar" style="color: #38bdf8;">consola.colaboratium.com.ar</a> con tu correo electrónico.
+                            Accedé directamente a nuestra aplicación principal en <a href="https://colaboratium.com.ar/" style="color: #38bdf8;">https://colaboratium.com.ar/</a> con tu correo electrónico.
                         </div>
                     </div>
 
@@ -399,7 +399,7 @@ async function sendInvestorWelcomeGuide(investor) {
                     </div>
 
                     <div style="text-align: center; margin: 25px 0;">
-                        <a href="https://consola.colaboratium.com.ar" class="cta-btn">🚀 Ingresar a la Plataforma</a>
+                        <a href="https://colaboratium.com.ar/" class="cta-btn">🚀 Ingresar a la Plataforma</a>
                     </div>
 
                     <p style="font-size: 12px; color: #94a3b8; text-align: center; margin-bottom: 0;">

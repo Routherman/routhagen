@@ -409,8 +409,8 @@ class B2BProspectsService {
             webinarDate = 'Lunes 3 de Noviembre',
             webinarTime = '10:00',
             webinarTitle = 'Reunión Informativa Red de Asesores Independientes',
-            bookingLink = 'https://consola.colaboratium.com.ar/reservar',
-            optOutBaseUrl = 'https://consola.colaboratium.com.ar/b2b/baja',
+            bookingLink = 'https://colaboratium.com.ar/reservar',
+            optOutBaseUrl = 'https://colaboratium.com.ar/baja',
             syncToAgenda = true
         } = options;
 

@@ -178,7 +178,31 @@ async function callOllama(messages, model = OLLAMA_MODEL, codigoEmpresa = 'KRZMJ
  */
 async function routeAiMessage(userMessage, history = [], empresaData = {}) {
     const codigoEmpresa = empresaData.codigo || 'KRZMJI';
-    const customPrompt = empresaData.prompt_ia || 'Eres el Asistente Oficial de Colaboratium.';
+
+    // Si quien llama no pasó prompt_ia o conocimiento_ia (ej. WASender), cargarlos desde MySQL para mantener contexto completo
+    if ((!empresaData.prompt_ia || !empresaData.conocimiento_ia) && db && db.pool) {
+        try {
+            const [rows] = await db.pool.query(
+                'SELECT nombre, prompt_ia, conocimiento_ia FROM empresas WHERE codigo = ? LIMIT 1',
+                [codigoEmpresa]
+            );
+            if (rows && rows[0]) {
+                empresaData = {
+                    ...rows[0],
+                    ...empresaData,
+                    prompt_ia: empresaData.prompt_ia || rows[0].prompt_ia,
+                    conocimiento_ia: empresaData.conocimiento_ia || rows[0].conocimiento_ia
+                };
+            }
+        } catch (dbLoadErr) {
+            console.warn('⚠️ [AI ROUTER] No se pudo cargar contexto de empresa desde BD:', dbLoadErr.message);
+        }
+    }
+
+    const basePrompt = empresaData.prompt_ia || 'Eres el Asistente Oficial de Colaboratium.';
+    const customPrompt = empresaData.systemPromptOverride
+        ? `${basePrompt}\n\n[INSTRUCCIONES DEL CANAL]:\n${empresaData.systemPromptOverride}`
+        : basePrompt;
     const customKnowledge = empresaData.conocimiento_ia ? `\nBASE DE CONOCIMIENTO:\n${empresaData.conocimiento_ia}` : '';
 
     let liveSlotsContext = '';
@@ -221,7 +245,8 @@ REGLAS DE DERIVACIÓN Y RESPUESTA OBLIGATORIA:
    • Solo si es un problema técnico específico (olvido de contraseña, error en la plataforma, falla del sistema) se deriva a [ROLE:Soporte].
    • Solo trámites formales de alta o constancia de CBU institucional van a [ROLE:Administracion].
 4. PROHIBIDO TABLAS MARKDOWN: NUNCA utilices tablas de markdown (| col1 | col2 |) porque WhatsApp no las soporta y se muestran como texto roto e ilegible. Si presentas horarios o comparativas, usa viñetas (•), negritas (*) y saltos de línea claros y limpios.
-5. Cuando el usuario pregunte por horarios o capacitaciones, dale las opciones numeradas del CALENDARIO OFICIAL de forma clara y amigable invitándolo a responder con el número de opción y su email. NUNCA inventes fechas.`
+5. Cuando el usuario pregunte por horarios o capacitaciones, dale las opciones numeradas del CALENDARIO OFICIAL de forma clara y amigable invitándolo a responder con el número de opción y su email. NUNCA inventes fechas.
+6. APP PRINCIPAL Y ACCESO (REGLA OBLIGATORIA): La aplicación y plataforma principal oficial de Colaboratium es *https://colaboratium.com.ar/*. SIEMPRE que cualquier persona pregunte cómo acceder, ingresar, registrarse, abrir la cuenta o pida el enlace/link de la app o plataforma, debes enviarla directamente a *https://colaboratium.com.ar/* (es una aplicación web; NO menciones descargas de App Store/Google Play ni el dominio obsoleto consola.colaboratium.com.ar ni "wallet interno"). Si pide el enlace inmediatamente después de hablar de la app, dale *https://colaboratium.com.ar/*, NO le envíes links de webinars salvo que haya preguntado explícitamente por capacitación o reunión.`
         }
     ];
 

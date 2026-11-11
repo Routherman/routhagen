@@ -283,13 +283,25 @@ class WasenderService {
             return `👨‍💼 *Derivación a Asesor Ejecutivo*\n\nHemos registrado tu solicitud con alta prioridad en nuestro sistema de atención.\nUno de nuestros ejecutivos comerciales se pondrá en contacto contigo a la brevedad por este medio.\n\n¡Muchas gracias por comunicarte con Global Loan S.A. — Colaboratium!`;
         }
 
+        // 6b. Consultas directas sobre cómo acceder o enlace a la aplicación principal
+        const asksAppAccess = /(c[oó]mo|d[oó]nde|por d[oó]nde|quiero|puedo|link|enlace|url|web|p[aá]gina).*(acced|ingres|entrar|registr|abrir|app|aplicaci[oó]n|plataforma|colaboratium)|(acceder|ingresar|entrar|registrarme|enlace de la app|link de la app)/i.test(textLower);
+        const mentionsMeetingOrWebinar = /webinar|capacitaci[oó]n|reuni[oó]n|meet|horario|turno/i.test(textLower);
+        if (asksAppAccess && !mentionsMeetingOrWebinar) {
+            await saveMeta({ awaiting_webinar_booking: false });
+            return `🌐 *Acceso a la App Principal de Colaboratium*\n\n` +
+                   `Podés ingresar, registrarte y operar directamente desde nuestra plataforma web oficial:\n` +
+                   `👉 https://colaboratium.com.ar/\n\n` +
+                   `Recordá que la operatoria es 100% digital y No Custodial (con respaldo de Banco BIND y Banco Coinag, Registro BCRA Nº 40.015), sin descargas ni intermediarios.\n\n` +
+                   `¿Necesitás ayuda para registrarte o preferís que coordinemos una capacitación en vivo?`;
+        }
+
         // 7. Consultas generales asistidas por IA RAG
         try {
             if (typeof processMessageWithAI === 'function') {
                 const aiPromptContext = {
                     codigo: codigoEmpresa,
                     nombre: 'Global Loan S.A. — Colaboratium',
-                    systemPromptOverride: 'Eres el asistente virtual en la línea oficial WA_S***5062 (+54 9 11 2473 5062) para Agentes y publicidad de redes de Colaboratium (Global Loan S.A., Registro BCRA Nº 40.015). Recuerda: NUNCA menciones porcentajes fijos de comisión; utiliza siempre el término "Comisiones de alto rendimiento". Enfatiza el calce en 48 hs, 0% costo al inversor, respaldo de Banco BIND y Coinag. Si preguntan por webinars o reuniones, indícales las opciones de fechas del calendario oficial y pídeles su número de opción, nombre completo y correo electrónico para agendarlos.'
+                    systemPromptOverride: 'Eres el asistente virtual en la línea oficial WA_S***5062 (+54 9 11 2473 5062) para Agentes y publicidad de redes de Colaboratium (Global Loan S.A., Registro BCRA Nº 40.015). La aplicación/plataforma principal es https://colaboratium.com.ar/: SIEMPRE que cualquier persona pregunte cómo acceder, ingresar, registrarse o pida el link de la app/plataforma, envíala a https://colaboratium.com.ar/ (no existe consola.colaboratium.com.ar ni app descargable ni wallet interno). NUNCA menciones porcentajes fijos de comisión; utiliza siempre el término "Comisiones de alto rendimiento". Enfatiza el calce en 48 hs, 0% costo al inversor, respaldo de Banco BIND y Coinag. Si preguntan específicamente por webinars o reuniones, indícales las opciones de fechas del calendario oficial y pídeles su número de opción, nombre completo y correo electrónico para agendarlos.'
                 };
                 const history = contact?.id ? await db.obtenerHistorialMensajes(contact.id, 6) : [];
                 const aiReply = await processMessageWithAI(userText, history, aiPromptContext);
@@ -375,6 +387,8 @@ class WasenderService {
             let rawFrom = 
                 msgObj?.key?.cleanedSenderPn ||
                 msgObj?.key?.senderPn ||
+                msgObj?.key?.remoteJidAlt ||
+                msgObj?.key?.participantAlt ||
                 msgObj?.key?.remoteJid ||
                 msgObj?.from ||
                 msgObj?.sender ||
@@ -393,14 +407,18 @@ class WasenderService {
             }
 
             let from = String(rawFrom).replace(/@.*$/, '').replace(/\D/g, '');
+            const innerMsg = msgObj?.message?.ephemeralMessage?.message || msgObj?.message || {};
             let text = (
                 msgObj?.messageBody || 
                 msgObj?.body || 
                 msgObj?.text || 
-                msgObj?.message?.conversation || 
-                msgObj?.message?.extendedTextMessage?.text || 
-                msgObj?.message?.imageMessage?.caption ||
-                msgObj?.message?.videoMessage?.caption ||
+                innerMsg?.conversation || 
+                innerMsg?.extendedTextMessage?.text || 
+                innerMsg?.imageMessage?.caption ||
+                innerMsg?.videoMessage?.caption ||
+                innerMsg?.buttonsResponseMessage?.selectedDisplayText ||
+                innerMsg?.templateButtonReplyMessage?.selectedDisplayText ||
+                innerMsg?.listResponseMessage?.title ||
                 ''
             ).trim();
 

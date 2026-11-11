@@ -35,6 +35,9 @@ MARCO LEGAL Y GUARDARRAÍLES GLOBALES OBLIGATORIOS:
 5. DOMICILIOS OFICIALES:
    - Oficinas Comerciales (reuniones y atención): Av. del Libertador 264, 1° Piso Contrafrente, Vicente López, Buenos Aires.
    - Domicilio Legal y Fiscal: Maipú 568, Piso 8°, CABA.
+6. APP PRINCIPAL Y ACCESO OFICIAL:
+   - La app y plataforma web principal es https://colaboratium.com.ar/.
+   - SIEMPRE que cualquier persona pregunte cómo acceder, ingresar, entrar o registrarse en la app o plataforma, envíala directamente a https://colaboratium.com.ar/.
 
 CIERRE DE CONVERSACIÓN PARA ASESORES Y LÍDERES:
 - El objetivo de cierre para candidatos a Asesores Comerciales y Líderes de Equipo es que participen en los Webinars de Capacitación Virtuales (Google Meet) o en las Reuniones Presenciales en Vicente López programadas en el Calendario Oficial.
@@ -61,7 +64,7 @@ REGLAS DE DERIVACIÓN (OBLIGATORIO FINALIZAR CON):
 - Domicilio Legal y Fiscal: Maipú 568, Piso 8°, CABA.
 - Oficinas Comerciales: Av. del Libertador 264, 1° Piso Contrafrente, Vicente López, Provincia de Buenos Aires.
 - Bancos Partners: Banco BIND (Banco Industrial) y Banco Coinag.
-- Consola y Plataforma: https://consola.colaboratium.com.ar | https://www.colaboratium.com.ar
+- App y Plataforma Principal: https://colaboratium.com.ar/ (para ingresar, registrarse u operar, siempre enviar aquí)
 - Título Oficial del Asesor: Asesor / Consultor Financiero Independiente adherido a la Red Colaboratium.
 
 ## 2. REGLA FUNDAMENTAL: CERO COSTO AL INVERSOR Y NO CUSTODIAL
@@ -201,7 +204,7 @@ REGLAS DE DERIVACIÓN (OBLIGATORIO FINALIZAR CON):
                 type: 'message',
                 position: { x: 720, y: 200 },
                 data: {
-                    message: "*¿Cómo captar clientes y cómo se asignan tus comisiones?*\n\n1. *Clientes Propios o por tu Publicidad en Redes (100% Comisión - Caso Carlos Gómez):* Desde `consola.colaboratium.com.ar` generás tu propio link UTM. En la capacitación te enseñamos el paso a paso en *Meta Ads* (Instagram Reels/Stories con -35% de costo): con una pauta mínima de *$5.000 ARS/día ($150.000 ARS/mes)* generás entre *4 y 10 consultas diarias*, logrando entre *6 y 18 nuevos inversores por mes* con el *100% de la comisión desde la primera colocación*.\n2. *Leads provistos por Colaboratium (Caso Juan Ramírez):* Cuando un inversor entra por publicidad institucional de Colaboratium e invierte, el 3% inicial de ese primer crédito queda en Colaboratium. Luego te asignamos ese cliente: cobrás *todas las cuotas residuales de ese primer crédito* y, apenas reinvierta, *ya cobrás el 100% de la comisión plena (3% inmediato + residual)*.\n\nAdemás contás con nuestras oficinas en *Av. del Libertador 264, 1° Piso Contrafrente, Vicente López* para citar clientes si lo necesitás."
+                    message: "*¿Cómo captar clientes y cómo se asignan tus comisiones?*\n\n1. *Clientes Propios o por tu Publicidad en Redes (100% Comisión - Caso Carlos Gómez):* Desde https://colaboratium.com.ar/ generás tu propio link UTM. En la capacitación te enseñamos el paso a paso en *Meta Ads* (Instagram Reels/Stories con -35% de costo): con una pauta mínima de *$5.000 ARS/día ($150.000 ARS/mes)* generás entre *4 y 10 consultas diarias*, logrando entre *6 y 18 nuevos inversores por mes* con el *100% de la comisión desde la primera colocación*.\n2. *Leads provistos por Colaboratium (Caso Juan Ramírez):* Cuando un inversor entra por publicidad institucional de Colaboratium e invierte, el 3% inicial de ese primer crédito queda en Colaboratium. Luego te asignamos ese cliente: cobrás *todas las cuotas residuales de ese primer crédito* y, apenas reinvierta, *ya cobrás el 100% de la comisión plena (3% inmediato + residual)*.\n\nAdemás contás con nuestras oficinas en *Av. del Libertador 264, 1° Piso Contrafrente, Vicente López* para citar clientes si lo necesitás."
                 }
             },
             {
@@ -345,7 +348,7 @@ REGLAS DE DERIVACIÓN (OBLIGATORIO FINALIZAR CON):
                 type: 'message',
                 position: { x: 720, y: 200 },
                 data: {
-                    message: "*Herramientas de Consola y Protección de tu Bolsa del 10%:*\n\n• En `consola.colaboratium.com.ar` vas a tener tu panel de Líder donde podés dar de alta vendedores (`Comercial > Crear Vendedor`), emitir links UTM y monitorear el *Ranking Gráfico de Desempeño en tiempo real* (tanto por cantidad de leads captados vs. activos como por volumen de cartera fondeada en ARS con el Top 3 de tu equipo).\n• *Ventaja comercial y protección de tu bolsa del 10%:*\n  - Tus vendedores tienen el mejor argumento del mercado: *al inversor jamás se le cobra comisión* (paga todo el tomador) y nunca sale de su propio CVU.\n  - Tu función como Líder es cuidar que tu equipo cumpla el Decálogo de Transparencia del BCRA (no prometer tasas fijas ni tocar dinero de clientes). Y nuestro sistema protege tu trabajo: *si tenés 10 asesores y 1 comete una infracción, jamás perdés el 10% de todo tu equipo*; la sanción aplica solo sobre el asesor infractor (y si vos mismo reportás o corregís un desvío a tiempo, tenés *0% de quita* sobre tu bolsa)."
+                    message: "*Herramientas de Consola y Protección de tu Bolsa del 10%:*\n\n• En https://colaboratium.com.ar/ vas a tener tu panel de Líder donde podés dar de alta vendedores (`Comercial > Crear Vendedor`), emitir links UTM y monitorear el *Ranking Gráfico de Desempeño en tiempo real* (tanto por cantidad de leads captados vs. activos como por volumen de cartera fondeada en ARS con el Top 3 de tu equipo).\n• *Ventaja comercial y protección de tu bolsa del 10%:*\n  - Tus vendedores tienen el mejor argumento del mercado: *al inversor jamás se le cobra comisión* (paga todo el tomador) y nunca sale de su propio CVU.\n  - Tu función como Líder es cuidar que tu equipo cumpla el Decálogo de Transparencia del BCRA (no prometer tasas fijas ni tocar dinero de clientes). Y nuestro sistema protege tu trabajo: *si tenés 10 asesores y 1 comete una infracción, jamás perdés el 10% de todo tu equipo*; la sanción aplica solo sobre el asesor infractor (y si vos mismo reportás o corregís un desvío a tiempo, tenés *0% de quita* sobre tu bolsa)."
                 }
             },
             {
