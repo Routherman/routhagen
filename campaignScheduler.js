@@ -239,7 +239,6 @@ async function ejecutarCampanaWhatsApp(camp) {
             await db.actualizarCampanaProgreso(camp.id, {
                 enviados,
                 entregados: enviados,
-                respondidos: Math.round(enviados * 0.8),
                 estado: i === targetContacts.length - 1 ? 'completada' : 'en_progreso',
                 ultimo_log: `Programador: Enviados ${enviados} de ${targetContacts.length}`
             });

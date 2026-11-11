@@ -19,7 +19,8 @@ Para vos como Asesor (Esquema similar a RE/MAX): Ya conocés la modalidad de age
 
 Este {{1}} a las {{2}} hs vamos a dar una reunión informativa online de {{3}} exclusiva para profesionales independientes, donde mostramos https://colaboratium.com.ar/ en vivo, el esquema de comisiones y el respaldo normativo del BCRA.
 
-👉 Podés reservar tu lugar sin costo acá: {{4}}
+👉 Podés reservar tu lugar en 1 paso desde tu celular: <a href="{{4}}" style="color:#0284c7;font-weight:700;">Elegir horario acá</a>
+(También podés escribirnos directo por WhatsApp al <a href="https://wa.me/5491124735062" style="color:#16a34a;font-weight:700;">+54 9 11 2473-5062</a>)
 
 Si preferís conocer nuestras oficinas comerciales personalmente, estamos en Av. del Libertador 264, 1° Piso Contrafrente, Vicente López (podés responderme este correo o escribirme por WhatsApp y coordinamos un café de 15 minutos).
 
@@ -30,7 +31,7 @@ Presidente | Global Loan S.A. — Colaboratium
 Registro BCRA PNFC Nº 40.015 (Verificable en bcra.gob.ar)
 Av. del Libertador 264, 1° Piso, Vicente López / Maipú 568, Piso 8°, CABA
 
-Aviso Legal (Ley 25.326 y Disp. DNPDP 4/2009): Te contactamos únicamente porque tu correo profesional figura publicado como contacto comercial en el directorio público de tu red en {{City}}. Según el Art. 27 de la Ley 25.326 y el Decreto 1558/2001, tenés derecho de acceso gratuito y de solicitar el retiro o bloqueo total de tu nombre y correo de nuestra base en cualquier momento haciendo clic en [este enlace de baja inmediata ({{5}})] o respondiendo este correo con la palabra "BAJA".`;
+Aviso Legal (Ley 25.326 y Disp. DNPDP 4/2009): Te contactamos únicamente porque tu correo profesional figura publicado como contacto comercial en el directorio público de tu red en {{City}}. Según el Art. 27 de la Ley 25.326 y el Decreto 1558/2001, tenés derecho de acceso gratuito y de solicitar el retiro o bloqueo total de tu nombre y correo de nuestra base en cualquier momento haciendo clic en <a href="{{5}}" style="color:#64748b;">darme de baja</a> o respondiendo este correo con la palabra "BAJA".`;
 
     const plantillaBContenido = `Hola {{First Name}}, ¿cómo estás?
 
@@ -54,7 +55,7 @@ Lic. Damián Feuermann
 Presidente | Global Loan S.A. — Colaboratium
 Registro BCRA PNFC Nº 40.015
 
-Aviso Legal (Ley 25.326 y Disp. DNPDP 4/2009): Tus datos fueron relevados de tu perfil público profesional en el directorio de {{Office}}. Conforme al Art. 27 de la Ley 25.326, podés ejercer sin cargo tu derecho de acceso, retiro o bloqueo inmediato de nuestra base haciendo clic en [Darme de baja ({{5}})] o respondiendo con la palabra "BAJA".`;
+Aviso Legal (Ley 25.326 y Disp. DNPDP 4/2009): Tus datos fueron relevados de tu perfil público profesional en el directorio de {{Office}}. Conforme al Art. 27 de la Ley 25.326, podés ejercer sin cargo tu derecho de acceso, retiro o bloqueo inmediato de nuestra base haciendo clic en <a href="{{5}}" style="color:#64748b;">darme de baja</a> o respondiendo con la palabra "BAJA".`;
 
     // 1. Plantilla A (Asesores)
     await pool.query(`

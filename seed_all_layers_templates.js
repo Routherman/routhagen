@@ -38,7 +38,7 @@ Brindamos una reunión informativa online de 40 minutos exclusiva para agentes y
   </a>
 </div>
 
-👉 Podés reservar tu lugar: https://routhagent.vercel.app/dashboard/calendar
+👉 Podés reservar tu lugar en 1 paso desde tu celular: <a href="{{4}}" style="color:#0284c7;font-weight:700;">Elegir horario acá</a>
 (O bien responder directamente a este correo indicando tu opción de preferencia: 1, 2, 3 o 4)
 
 ---
@@ -50,7 +50,7 @@ Canales Oficiales de Contacto:
 
 Global Loan S.A. • Registro Oficial BCRA Nº 40.015
 Av. del Libertador 264, 1° Piso, Vicente López
-Aviso Legal (Ley 25.326 y Disp. DNPDP 4/2009): Datos de contacto comercial del directorio público de {{Office}} en {{City}}. Baja inmediata en [este enlace ({{5}})] o respondiendo "BAJA".`
+Aviso Legal (Ley 25.326 y Disp. DNPDP 4/2009): Datos de contacto comercial del directorio público de {{Office}} en {{City}}. Baja inmediata en <a href="{{5}}" style="color:#64748b;">este enlace</a> o respondiendo "BAJA".`
         },
         {
             nombre: 'Prospección WhatsApp: Agentes Franquicias (Capa 1)',

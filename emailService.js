@@ -41,13 +41,25 @@ function getTransporter() {
     return transporter;
 }
 
+function getEmailConfig() {
+    const fromEmail = process.env.EMAIL_FROM || process.env.SMTP_USER || 'colaboratium@gmail.com';
+    const fromName = process.env.EMAIL_FROM_NAME || 'Colaboratium Oficial';
+    const replyToEmail = process.env.EMAIL_REPLY_TO || process.env.GMAIL_IMAP_USER || fromEmail;
+    const adminEmail = process.env.EMAIL_ADMIN || process.env.GMAIL_IMAP_USER || replyToEmail || 'colaboratium@gmail.com';
+    const whatsappNumber = String(process.env.WHATSAPP_OFFICIAL_NUMBER || '5491124735062').replace(/\D/g, '') || '5491124735062';
+    const publicUrl = (process.env.FRONTEND_PUBLIC_URL || 'https://routhagent.vercel.app').replace(/\/+$/, '');
+    const backendUrl = (process.env.BACKEND_URL || publicUrl).replace(/\/+$/, '');
+    return { fromEmail, fromName, replyToEmail, adminEmail, whatsappNumber, publicUrl, backendUrl };
+}
+
 /**
  * Envía un ticket de soporte/orden por email a la casilla oficial (colaboratium@gmail.com o especificada)
  */
-async function sendTicketEmail(ticket, targetEmail = 'colaboratium@gmail.com') {
+async function sendTicketEmail(ticket, targetEmail = null) {
     try {
         const mailer = getTransporter();
-        const fromEmail = process.env.EMAIL_FROM || 'colaboratium@gmail.com';
+        const cfg = getEmailConfig();
+        const finalTarget = targetEmail || cfg.adminEmail;
 
         const subject = `🎫 [TICKET #${ticket.id}] ${ticket.customer_name || ticket.customer_number} - Estado: ${(ticket.status || 'OPEN').toUpperCase()}`;
 
@@ -106,7 +118,7 @@ async function sendTicketEmail(ticket, targetEmail = 'colaboratium@gmail.com') {
                 </div>
                 <div class="footer">
                     Notificación automática de Routh-Agent para ${ticket.codigo_empresa || 'Colaboratium'}.<br>
-                    Destinatario oficial: ${targetEmail}
+                    Destinatario oficial: ${finalTarget}
                 </div>
             </div>
         </body>
@@ -114,14 +126,14 @@ async function sendTicketEmail(ticket, targetEmail = 'colaboratium@gmail.com') {
         `;
 
         const info = await mailer.sendMail({
-            from: `"Colaboratium Helpdesk" <${fromEmail}>`,
-            to: targetEmail,
-            replyTo: process.env.EMAIL_REPLY_TO || 'colaboratium@gmail.com',
+            from: `"Colaboratium Helpdesk" <${cfg.fromEmail}>`,
+            to: finalTarget,
+            replyTo: cfg.replyToEmail,
             subject: subject,
             html: htmlContent
         });
 
-        console.log(`✅ [TICKET EMAIL] Notificación enviada con éxito a ${targetEmail} (ID: ${info.messageId})`);
+        console.log(`✅ [TICKET EMAIL] Notificación enviada con éxito a ${finalTarget} (ID: ${info.messageId})`);
         return { success: true, messageId: info.messageId };
     } catch (error) {
         console.error('❌ [TICKET EMAIL ERROR]:', error.message);
@@ -204,10 +216,11 @@ async function sendWebinarConfirmationToAdvisor(booking) {
         </html>
         `;
 
+        const cfg = getEmailConfig();
         const info = await mailer.sendMail({
-            from: `"Colaboratium Asesores" <${fromEmail}>`,
+            from: `"Colaboratium Asesores" <${cfg.fromEmail}>`,
             to: booking.email,
-            replyTo: process.env.EMAIL_REPLY_TO || 'colaboratium@gmail.com',
+            replyTo: cfg.replyToEmail,
             subject: subject,
             html: htmlContent
         });
@@ -221,13 +234,14 @@ async function sendWebinarConfirmationToAdvisor(booking) {
 }
 
 /**
- * Notifica a colaboratium@gmail.com que un asesor reservó fecha en el calendario
+ * Notifica a la casilla administrativa que un asesor reservó fecha en el calendario
  */
 async function sendWebinarNotificationToCompany(booking) {
     try {
         const mailer = getTransporter();
-        const fromEmail = process.env.EMAIL_FROM || 'colaboratium@gmail.com';
-        const targetEmail = 'colaboratium@gmail.com';
+        const cfg = getEmailConfig();
+        const fromEmail = cfg.fromEmail;
+        const targetEmail = cfg.adminEmail;
 
         const subject = `📢 NUEVO ASESOR INSCRIPTO: ${booking.nombre} • ${booking.modalidad} (${booking.fechaStr} ${booking.horarioStr})`;
 
@@ -274,8 +288,9 @@ async function sendWebinarNotificationToCompany(booking) {
 async function sendLeaderInquiryToCompany(leader) {
     try {
         const mailer = getTransporter();
-        const fromEmail = process.env.EMAIL_FROM || 'colaboratium@gmail.com';
-        const targetEmail = 'colaboratium@gmail.com';
+        const cfg = getEmailConfig();
+        const fromEmail = cfg.fromEmail;
+        const targetEmail = cfg.adminEmail;
 
         const subject = `👑 NUEVO LÍDER DE EQUIPO INTERESADO: ${leader.nombre} (${leader.telefono})`;
 
@@ -437,8 +452,9 @@ async function sendInvestorWelcomeGuide(investor) {
 async function sendInvestorInquiryToCompany(investor) {
     try {
         const mailer = getTransporter();
-        const fromEmail = process.env.EMAIL_FROM || 'colaboratium@gmail.com';
-        const targetEmail = 'colaboratium@gmail.com';
+        const cfg = getEmailConfig();
+        const fromEmail = cfg.fromEmail;
+        const targetEmail = cfg.adminEmail;
 
         const subject = `📈 NUEVO INVERSOR REGISTRADO: ${investor.nombre} (${investor.telefono})`;
 
@@ -500,12 +516,13 @@ function isGmailQuotaError(errorMsg = '') {
 /**
  * Envía un correo genérico con soporte completo de HTML y adjuntos
  */
-async function sendGenericEmail({ to, subject, html, text, attachments = [] }) {
+async function sendGenericEmail({ to, subject, html, text, attachments = [], headers = {} }) {
     try {
         const mailer = getTransporter();
-        const fromEmail = process.env.EMAIL_FROM || process.env.SMTP_USER || 'colaboratium@gmail.com';
-        const fromName = process.env.EMAIL_FROM_NAME || 'Colaboratium Oficial';
-        const replyToEmail = process.env.EMAIL_REPLY_TO || 'colaboratium@gmail.com';
+        const cfg = getEmailConfig();
+        const fromEmail = cfg.fromEmail;
+        const fromName = cfg.fromName;
+        const replyToEmail = cfg.replyToEmail;
 
         const formattedAttachments = (attachments || []).map(att => {
             let filePath = att.url || att.path;
@@ -519,7 +536,7 @@ async function sendGenericEmail({ to, subject, html, text, attachments = [] }) {
             return { filename: att.nombre || 'adjunto', path: filePath };
         }).filter(a => a.path);
 
-        const sendPromise = mailer.sendMail({
+        const mailPayload = {
             from: `"${fromName}" <${fromEmail}>`,
             to,
             replyTo: replyToEmail,
@@ -527,7 +544,12 @@ async function sendGenericEmail({ to, subject, html, text, attachments = [] }) {
             text,
             html,
             attachments: formattedAttachments
-        });
+        };
+        if (headers && Object.keys(headers).length > 0) {
+            mailPayload.headers = headers;
+        }
+
+        const sendPromise = mailer.sendMail(mailPayload);
 
         const timeoutPromise = new Promise((_, reject) =>
             setTimeout(() => reject(new Error('SMTP timeout: conexión demoró más de 25s')), 25000)
@@ -546,12 +568,288 @@ async function sendGenericEmail({ to, subject, html, text, attachments = [] }) {
     }
 }
 
+function buildPublicWebinarBookingLink({ publicUrl, phone = '', name = '', email = '', category = 'asesores', codigoEmpresa = 'KRZMJI', slotId = null } = {}) {
+    const base = (publicUrl || 'https://routhagent.vercel.app').replace(/\/+$/, '');
+    const params = new URLSearchParams();
+    const cleanPhone = String(phone || '').replace(/\D/g, '');
+    if (cleanPhone) params.set('tel', cleanPhone);
+    if (name && name !== 'Estimado/a' && !name.includes('Prueba')) params.set('name', name);
+    if (email) params.set('email', email);
+    if (category && category !== 'asesores') params.set('c', category);
+    if (codigoEmpresa && codigoEmpresa !== 'KRZMJI') params.set('e', codigoEmpresa);
+    if (slotId) params.set('slot', String(slotId));
+    const qs = params.toString();
+    return `${base}/webinar${qs ? `?${qs}` : ''}`;
+}
+
+function buildSlotsHtml(calendarSlots, { nombre = 'Estimado/a', email = '', telefono = '', replyToEmail, publicUrl, category = 'asesores', codigoEmpresa = 'KRZMJI' } = {}) {
+    const cfg = getEmailConfig();
+    const replyAddr = replyToEmail || cfg.replyToEmail;
+    const basePublicUrl = publicUrl || cfg.publicUrl;
+    const slotsToUse = (calendarSlots && calendarSlots.length > 0) ? calendarSlots : [
+        { id: 1, fechaStr: 'Jueves, 12 de noviembre', horarioStr: '12:00 p. m. a 12:40 p. m. hs', modalidad: 'VIRTUAL' },
+        { id: 2, fechaStr: 'Jueves, 12 de noviembre', horarioStr: '07:00 p. m. a 07:40 p. m. hs', modalidad: 'VIRTUAL' }
+    ];
+
+    const listItems = slotsToUse.map((s, idx) => {
+        const optNum = idx + 1;
+        const formUrl = buildPublicWebinarBookingLink({
+            publicUrl: basePublicUrl,
+            phone: telefono,
+            name: nombre,
+            email,
+            category,
+            codigoEmpresa,
+            slotId: s.id
+        });
+        const sub = encodeURIComponent(`Confirmación Asistencia Webinar Asesores (Opción ${optNum}) - ${nombre}`);
+        const bod = encodeURIComponent(
+            `Hola Colaboratium,\n\nConfirmo mi asistencia para la Opción ${optNum} (${s.fechaStr} de ${s.horarioStr}).\n\nMis datos:\n- Nombre: ${nombre}\n- Email: ${email}\n- Teléfono: ${telefono}\n\nQuedo a la espera del enlace de Google Meet.\n¡Muchas gracias!`
+        );
+        const mailtoBtn = `mailto:${replyAddr}?subject=${sub}&body=${bod}`;
+        const horaInicio = s.horarioStr ? s.horarioStr.split(' a ')[0] : 'Horario';
+        return `
+        <li style="margin-bottom: 10px; background: #ffffff; padding: 12px 14px; border-radius: 8px; border: 1px solid #e2e8f0; list-style-type: none;">
+          <div style="font-size: 13px; color: #1e293b; margin-bottom: 8px;">
+            <strong style="color: #0284c7;">Opción ${optNum}:</strong> <strong>${s.fechaStr}</strong> • <strong>${s.horarioStr}</strong> (Argentina) • Modalidad: <strong>${s.modalidad || 'VIRTUAL'}</strong>
+          </div>
+          <div style="margin-top: 6px;">
+            <a href="${formUrl}" target="_blank" style="display: inline-block; background-color: #0284c7; color: #ffffff; text-decoration: none; padding: 7px 14px; border-radius: 6px; font-weight: 700; font-size: 11px; letter-spacing: 0.3px; margin-right: 6px; margin-bottom: 4px;">
+              📅 Reservar Opción ${optNum} (${horaInicio})
+            </a>
+            <a href="${mailtoBtn}" target="_blank" style="display: inline-block; background-color: #f1f5f9; color: #0f172a; text-decoration: none; padding: 7px 12px; border-radius: 6px; font-weight: 600; font-size: 11px; border: 1px solid #cbd5e1; margin-bottom: 4px;">
+              ✉️ Confirmar por Email
+            </a>
+          </div>
+        </li>`;
+    }).join('\n');
+
+    return `
+    <div style="background-color: #f8fafc; border-left: 4px solid #0284c7; padding: 16px; border-radius: 8px; margin: 22px 0;">
+      <h4 style="margin: 0 0 12px 0; color: #0369a1; font-size: 13px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.5px;">
+        📅 DETALLES DEL ENCUENTRO Y TURNOS DISPONIBLES:
+      </h4>
+      <ul style="margin: 0; padding-left: 0;">
+        ${listItems}
+      </ul>
+      <p style="margin: 10px 0 0 0; font-size: 11px; color: #475569;">
+        Tocá cualquier turno para confirmar en 1 paso desde tu celular, o respondé este correo a ${replyAddr} indicando 1, 2, 3 o 4.
+      </p>
+    </div>`;
+}
+
+async function hydrateCampaignContacts(contacts = [], codigoEmpresa = 'KRZMJI', dbPool = null) {
+    if (!Array.isArray(contacts) || contacts.length === 0) return [];
+
+    const parseMeta = (rawMeta) => {
+        if (!rawMeta) return {};
+        if (typeof rawMeta === 'object') return rawMeta;
+        try { return JSON.parse(rawMeta); } catch (e) { return {}; }
+    };
+
+    const baseList = contacts.map(c => {
+        const meta = parseMeta(c.metadata_extra);
+        const nombre = String(c.nombre || '').trim();
+        const firstName = String(c.first_name || meta.first_name || (nombre && nombre !== 'Estimado/a' ? nombre.split(' ')[0] : '')).trim();
+        const lastName = String(c.last_name || meta.last_name || (nombre && nombre !== 'Estimado/a' ? nombre.split(' ').slice(1).join(' ') : '')).trim();
+        return {
+            ...c,
+            nombre: nombre || `${firstName} ${lastName}`.trim(),
+            first_name: firstName,
+            last_name: lastName,
+            office_name: String(c.office_name || meta.office_name || '').trim(),
+            company_or_board: String(c.company_or_board || meta.company_or_board || '').trim(),
+            city: String(c.city || c.localidad || meta.city || meta.localidad || '').trim(),
+            telefono: String(c.telefono || c.phone_e164 || c.phone_raw || '').trim(),
+            metadata_extra: meta
+        };
+    });
+
+    const b2bMap = {};
+    if (dbPool) {
+        const emailsToLookup = [...new Set(
+            baseList
+                .filter(c => c.email && (!c.office_name || !c.city || !c.telefono || !c.first_name))
+                .map(c => c.email.toLowerCase().trim())
+        )];
+
+        if (emailsToLookup.length > 0) {
+            try {
+                const chunkSize = 400;
+                for (let idx = 0; idx < emailsToLookup.length; idx += chunkSize) {
+                    const batch = emailsToLookup.slice(idx, idx + chunkSize);
+                    const [rows] = await dbPool.query(
+                        "SELECT email, first_name, last_name, office_name, company_or_board, city, phone_e164, phone_raw, detected_role FROM b2b_prospects WHERE codigo_empresa = ? AND LOWER(email) IN (?)",
+                        [codigoEmpresa, batch]
+                    );
+                    (rows || []).forEach(r => {
+                        if (r.email) b2bMap[r.email.toLowerCase().trim()] = r;
+                    });
+                }
+            } catch (e) {
+                console.warn('Advertencia hidratando contactos desde b2b_prospects:', e.message);
+            }
+        }
+    }
+
+    return baseList.map(c => {
+        const key = (c.email || '').toLowerCase().trim();
+        const b2b = b2bMap[key];
+        if (!b2b) return c;
+
+        const firstName = c.first_name || String(b2b.first_name || '').trim();
+        const lastName = c.last_name || String(b2b.last_name || '').trim();
+        const fullName = (c.nombre && c.nombre !== 'Estimado/a')
+            ? c.nombre
+            : (`${firstName} ${lastName}`.trim() || b2b.office_name || b2b.company_or_board || '');
+
+        return {
+            ...c,
+            nombre: fullName,
+            first_name: firstName,
+            last_name: lastName,
+            office_name: c.office_name || String(b2b.office_name || '').trim(),
+            company_or_board: c.company_or_board || String(b2b.company_or_board || '').trim(),
+            city: c.city || String(b2b.city || '').trim(),
+            telefono: c.telefono || String(b2b.phone_e164 || b2b.phone_raw || '').trim(),
+            detected_role: c.detected_role || b2b.detected_role
+        };
+    });
+}
+
+function renderPersonalizedCampaignEmail({
+    subject = '',
+    htmlContent = '',
+    contact = {},
+    calendarSlots = [],
+    codigoEmpresa = 'KRZMJI',
+    frontendPublicUrl = null,
+    backendUrl = null,
+    replyToEmail = null,
+    whatsappNumber = null
+}) {
+    const cfg = getEmailConfig();
+    const publicUrl = (frontendPublicUrl || cfg.publicUrl).replace(/\/+$/, '');
+    const apiBaseUrl = (backendUrl || cfg.backendUrl).replace(/\/+$/, '');
+    const replyAddr = replyToEmail || cfg.replyToEmail;
+    const waNum = String(whatsappNumber || cfg.whatsappNumber).replace(/\D/g, '') || '5491124735062';
+
+    const defaultSlot = (calendarSlots && calendarSlots.length > 0) ? calendarSlots[0] : null;
+    const fechaSlot = defaultSlot ? defaultSlot.fechaStr : 'Jueves, 12 de noviembre';
+    const horaSlot = defaultSlot ? (defaultSlot.horarioStr ? defaultSlot.horarioStr.split(' a ')[0] : '12:00 hs') : '12:00 hs';
+    const duracionSlot = '40 minutos';
+
+    const targetEmail = String(contact.email || '').trim();
+    const nombre = String(contact.nombre || '').trim() || 'Estimado/a';
+    const firstName = String(contact.first_name || '').trim() || (nombre !== 'Estimado/a' ? nombre.split(' ')[0] : 'Estimado/a');
+    const lastName = String(contact.last_name || '').trim() || (nombre !== 'Estimado/a' ? nombre.split(' ').slice(1).join(' ') : '');
+    const rawCompany = String(contact.company_or_board || '').trim();
+    const rawOffice = String(contact.office_name || '').trim();
+    const office = rawOffice || rawCompany || 'tu oficina inmobiliaria';
+    const company = rawCompany || 'RE/MAX';
+    const rol = String(contact.grupo || contact.rol_asignado || 'Asesor').trim();
+    const telefono = String(contact.telefono || '').trim();
+    const rawCity = String(contact.city || contact.localidad || '').trim();
+    const category = /lider/i.test(`${rol} ${contact.detected_role || ''}`) ? 'lideres' : 'asesores';
+
+    const enlaceBaja = `${apiBaseUrl}/api/campanas/desuscribir?email=${encodeURIComponent(targetEmail)}&empresa=${encodeURIComponent(codigoEmpresa)}`;
+    const enlaceRegistro = buildPublicWebinarBookingLink({
+        publicUrl,
+        phone: telefono,
+        name: nombre,
+        email: targetEmail,
+        category,
+        codigoEmpresa
+    });
+
+    const dynamicSlotsHtml = buildSlotsHtml(calendarSlots, {
+        nombre,
+        email: targetEmail,
+        telefono,
+        replyToEmail: replyAddr,
+        publicUrl,
+        category,
+        codigoEmpresa
+    });
+
+    const applyTokens = (str, isHtml) => {
+        let out = String(str || '');
+        if (rawCity) {
+            out = out.replace(/\{\{City\}\}/gi, rawCity);
+        } else {
+            out = out
+                .replace(/\s+en\s+\{\{City\}\}/gi, '')
+                .replace(/\{\{City\}\}/gi, 'tu zona');
+        }
+
+        out = out
+            .replace(/\{\{First Name\}\}/gi, firstName)
+            .replace(/\{\{Last Name\}\}/gi, lastName)
+            .replace(/\{\{Office\}\}/gi, office)
+            .replace(/\{\{Company\}\}/gi, company)
+            .replace(/\{\{nombre\}\}/gi, nombre)
+            .replace(/\{\{email\}\}/gi, targetEmail)
+            .replace(/\{\{rol\}\}/gi, rol)
+            .replace(/\{\{telefono\}\}/gi, telefono)
+            .replace(/\{\{fecha\}\}/gi, fechaSlot)
+            .replace(/\{\{hora\}\}/gi, horaSlot)
+            .replace(/\{\{1\}\}/g, fechaSlot)
+            .replace(/\{\{2\}\}/g, horaSlot)
+            .replace(/\{\{3\}\}/g, duracionSlot);
+
+        if (!isHtml) return out;
+
+        out = out
+            .replace(/\{\{duracion\}\}/gi, duracionSlot)
+            .replace(/\{\{enlaceregistro\}\}/gi, enlaceRegistro)
+            .replace(/\{\{enlacebaja\}\}/gi, enlaceBaja)
+            .replace(/\{\{detalles_encuentro\}\}/gi, dynamicSlotsHtml)
+            .replace(/\{\{detallesencuentro\}\}/gi, dynamicSlotsHtml)
+            .replace(/\{\{opciones_calendario\}\}/gi, dynamicSlotsHtml)
+            .replace(/\{\{4\}\}/g, enlaceRegistro)
+            .replace(/\{\{5\}\}/g, enlaceBaja)
+            .replace(/https?:\/\/routhagent\.vercel\.app\/dashboard\/calendar/gi, enlaceRegistro)
+            .replace(/https?:\/\/localhost:8080/gi, apiBaseUrl)
+            .replace(/5491173722708/g, waNum)
+            .replace(/11\s*7372-2708/g, '11 2473-5062')
+            .replace(/mailto:colaboratium@gmail\.com/gi, `mailto:${replyAddr}`);
+
+        if (replyAddr.toLowerCase() !== 'colaboratium@gmail.com') {
+            out = out.replace(/colaboratium@gmail\.com/gi, replyAddr);
+        }
+
+        return out;
+    };
+
+    let baseContent = htmlContent;
+    if (!/<[a-z][\s\S]*>/i.test(baseContent)) {
+        baseContent = `<div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; font-size: 15px; line-height: 1.6; color: #1e293b; max-width: 600px; margin: 0 auto; padding: 24px; background-color: #ffffff; border-radius: 12px; border: 1px solid #e2e8f0;">${baseContent.replace(/\n/g, '<br>')}</div>`;
+    }
+
+    let personalizedHtml = applyTokens(baseContent, true);
+    if (personalizedHtml.includes('29 de octubre') || personalizedHtml.includes('30 de octubre')) {
+        personalizedHtml = personalizedHtml.replace(
+            /<div style="background-color: #f8fafc; border-left: 4px solid #0284c7;[\s\S]*?<\/ul>\s*<\/div>/gi,
+            dynamicSlotsHtml
+        );
+    }
+
+    const personalizedSubject = applyTokens(subject, false);
+
+    return {
+        subject: personalizedSubject,
+        html: personalizedHtml,
+        enlaceRegistro,
+        enlaceBaja,
+        replyToEmail: replyAddr
+    };
+}
+
 /**
- * Despacha una campaña masiva de emails desde colaboratium@gmail.com
- * Simula comportamiento humano (2 a 3 emails por minuto) con pausas aleatorias para evitar bloqueos de Gmail.
+ * Despacha una campaña masiva de emails con trazabilidad real (sin métricas ficticias)
  */
-async function sendMassEmailCampaign({ codigoEmpresa, campanaId, contacts = [], subject, htmlContent, attachments = [], humanPacing = true, startIndex = 0, selectedSlotIds = [] }) {
-    const db = require('./database');
+async function sendMassEmailCampaign({ codigoEmpresa, campanaId, contacts = [], subject, htmlContent, attachments = [], humanPacing = true, startIndex = 0, selectedSlotIds = [], _sendFn = null, _db = null }) {
+    const db = _db || require('./database');
     let enviados = startIndex;
     let entregados = startIndex;
     const total = contacts.length;
@@ -568,7 +866,9 @@ async function sendMassEmailCampaign({ codigoEmpresa, campanaId, contacts = [], 
 
     console.log(`🚀 Iniciando/Reanudando despacho de campaña masiva (Total: ${total} destinatarios, Desde índice: ${startIndex}, Enviados previos: ${enviados}, Modo Humano: ${humanPacing})...`);
 
-    // Consultar lista negra / desuscripciones para proteger reputación de Gmail (Minigun / CAN-SPAM)
+    const hydratedContacts = await hydrateCampaignContacts(contacts, codigoEmpresa, db?.pool || null);
+
+    // Consultar lista negra / desuscripciones para proteger reputación de envío
     let setDesuscritos = new Set();
     try {
         const desuscripciones = await db.obtenerDesuscripciones(codigoEmpresa);
@@ -579,6 +879,7 @@ async function sendMassEmailCampaign({ codigoEmpresa, campanaId, contacts = [], 
         await db.actualizarCampanaProgreso(campanaId, {
             enviados: 0,
             entregados: 0,
+            respondidos: 0,
             estado: 'en_progreso',
             ultimo_log: `Iniciando campaña para ${total} contacto(s)...`,
             ultimo_indice_enviado: 0
@@ -601,53 +902,10 @@ async function sendMassEmailCampaign({ codigoEmpresa, campanaId, contacts = [], 
     } catch (e) {
         console.warn('No se pudieron obtener slots para variables de email:', e.message);
     }
-    const defaultSlot = (calendarSlots && calendarSlots.length > 0) ? calendarSlots[0] : null;
-    const fechaSlot = defaultSlot ? defaultSlot.fechaStr : 'Martes, 3 de noviembre';
-    const horaSlot = defaultSlot ? (defaultSlot.horarioStr ? defaultSlot.horarioStr.split(' a ')[0] : '13:00 hs') : '13:00 hs';
-    const duracionSlot = '1 hora y media (90 minutos)';
-    const botWhatsApp = '5491173722708';
 
-    // Función auxiliar para construir el bloque HTML dinámico de turnos con botones directos
-    const buildSlotsHtml = (cSlots, cNombre, cEmail, cTel) => {
-        const slotsToUse = (cSlots && cSlots.length > 0) ? cSlots : [
-            { id: 1, fechaStr: 'Martes, 3 de noviembre', horarioStr: '01:00 p. m. a 02:30 p. m. hs', modalidad: 'VIRTUAL' },
-            { id: 2, fechaStr: 'Martes, 3 de noviembre', horarioStr: '04:15 p. m. a 05:45 p. m. hs', modalidad: 'VIRTUAL' }
-        ];
-
-        const listItems = slotsToUse.map((s, idx) => {
-            const optNum = idx + 1;
-            const sub = encodeURIComponent(`Confirmación Asistencia Webinar Asesores (Opción ${optNum}) - ${cNombre}`);
-            const bod = encodeURIComponent(
-                `Hola Colaboratium,\n\nConfirmo mi asistencia para la Opción ${optNum} (${s.fechaStr} de ${s.horarioStr}).\n\nMis datos:\n- Nombre: ${cNombre}\n- Email: ${cEmail}\n- Teléfono: ${cTel}\n\nQuedo a la espera del enlace de Google Meet.\n¡Muchas gracias!`
-            );
-            const mailtoBtn = `mailto:colaboratium@gmail.com?subject=${sub}&body=${bod}`;
-            return `
-            <li style="margin-bottom: 10px; background: #ffffff; padding: 12px 14px; border-radius: 8px; border: 1px solid #e2e8f0; list-style-type: none;">
-              <div style="font-size: 13px; color: #1e293b; margin-bottom: 6px;">
-                <strong style="color: #0284c7;">Opción ${optNum}:</strong> <strong>${s.fechaStr}</strong> • <strong>${s.horarioStr}</strong> (Argentina) • Modalidad: <strong>${s.modalidad || 'VIRTUAL'}</strong>
-              </div>
-              <div style="margin-top: 6px;">
-                <a href="${mailtoBtn}" target="_blank" style="display: inline-block; background-color: #0284c7; color: #ffffff; text-decoration: none; padding: 6px 14px; border-radius: 6px; font-weight: 700; font-size: 11px; letter-spacing: 0.3px;">
-                  ✉️ Confirmar Opción ${optNum} (${s.horarioStr.split(' a ')[0]})
-                </a>
-              </div>
-            </li>`;
-        }).join('\n');
-
-        return `
-        <div style="background-color: #f8fafc; border-left: 4px solid #0284c7; padding: 16px; border-radius: 8px; margin: 22px 0;">
-          <h4 style="margin: 0 0 12px 0; color: #0369a1; font-size: 13px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.5px;">
-            📅 DETALLES DEL ENCUENTRO Y TURNOS DISPONIBLES:
-          </h4>
-          <ul style="margin: 0; padding-left: 0;">
-            ${listItems}
-          </ul>
-        </div>`;
-    };
-
+    const dispatchFn = _sendFn || sendGenericEmail;
     let hasAttemptedSendInRun = false;
     for (let i = startIndex; i < total; i++) {
-        // Verificar si la campaña fue pausada o cancelada externamente antes de cada envío
         let wasPausedByLimit = false;
         if (campanaId) {
             try {
@@ -662,115 +920,58 @@ async function sendMassEmailCampaign({ codigoEmpresa, campanaId, contacts = [], 
             } catch (e) {}
         }
 
-        const contact = contacts[i];
+        const contact = hydratedContacts[i];
         const targetEmail = (contact.email || '').trim();
         if (!targetEmail) continue;
 
-        // Omitir destinatarios desuscritos
         if (setDesuscritos.has(targetEmail.toLowerCase())) {
             console.log(`🛡️ [Desuscrito] Omitiendo ${targetEmail} por solicitud previa de baja.`);
             continue;
         }
 
-        // Reemplazo dinámico de variables
         const nombre = contact.nombre || 'Estimado/a';
-        const firstName = contact.first_name || (nombre ? nombre.split(' ')[0] : 'Estimado/a');
-        const lastName = contact.last_name || (nombre ? nombre.split(' ').slice(1).join(' ') : '');
-        const office = contact.office_name || contact.company_or_board || 'tu oficina';
-        const company = contact.company_or_board || 'RE/MAX';
-        const rol = contact.grupo || contact.rol_asignado || 'Colaborador';
-        const telefono = contact.telefono || '';
-        const city = contact.city || contact.localidad || 'Buenos Aires';
-        const backendUrl = process.env.BACKEND_URL || 'http://localhost:8080';
-        const enlaceBaja = `${backendUrl}/api/campanas/desuscribir?email=${encodeURIComponent(targetEmail)}&empresa=${encodeURIComponent(codigoEmpresa)}`;
-
-        // Enlace de reserva por email con mailto estructurado
-        const mailtoSubject = encodeURIComponent(`Confirmar Asistencia Webinar Asesores - ${nombre}`);
-        const mailtoBody = encodeURIComponent(
-            `Hola Colaboratium,\n\nConfirmo mi asistencia y deseo RESERVAR MI LUGAR en la reunión de asesores comerciales.\n\nMis datos:\n- Nombre: ${nombre}\n- Email: ${targetEmail}\n- Teléfono: ${telefono}\n\nOpción de turno elegida: Opción 1 (${fechaSlot} ${horaSlot}) o la que consideren más conveniente.\n\nSaludos cordiales!`
-        );
-        const enlaceRegistro = `mailto:colaboratium@gmail.com?subject=${mailtoSubject}&body=${mailtoBody}`;
-
-        const dynamicSlotsHtml = buildSlotsHtml(calendarSlots, nombre, targetEmail, telefono);
-
-        let baseContent = htmlContent;
-        if (!/<[a-z][\s\S]*>/i.test(baseContent)) {
-            baseContent = `<div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; font-size: 15px; line-height: 1.6; color: #1e293b; max-width: 600px; margin: 0 auto; padding: 24px; background-color: #ffffff; border-radius: 12px; border: 1px solid #e2e8f0;">${baseContent.replace(/\n/g, '<br>')}</div>`;
-        }
-
-        let personalizedHtml = baseContent
-            .replace(/\{\{First Name\}\}/gi, firstName)
-            .replace(/\{\{Last Name\}\}/gi, lastName)
-            .replace(/\{\{Office\}\}/gi, office)
-            .replace(/\{\{Company\}\}/gi, company)
-            .replace(/\{\{City\}\}/gi, city)
-            .replace(/\{\{nombre\}\}/gi, nombre)
-            .replace(/\{\{email\}\}/gi, targetEmail)
-            .replace(/\{\{rol\}\}/gi, rol)
-            .replace(/\{\{telefono\}\}/gi, telefono)
-            .replace(/\{\{enlaceregistro\}\}/gi, enlaceRegistro)
-            .replace(/\{\{enlacebaja\}\}/gi, enlaceBaja)
-            .replace(/\{\{fecha\}\}/gi, fechaSlot)
-            .replace(/\{\{hora\}\}/gi, horaSlot)
-            .replace(/\{\{duracion\}\}/gi, duracionSlot)
-            .replace(/\{\{detalles_encuentro\}\}/gi, dynamicSlotsHtml)
-            .replace(/\{\{detallesencuentro\}\}/gi, dynamicSlotsHtml)
-            .replace(/\{\{opciones_calendario\}\}/gi, dynamicSlotsHtml)
-            .replace(/\{\{1\}\}/g, fechaSlot)
-            .replace(/\{\{2\}\}/g, horaSlot)
-            .replace(/\{\{3\}\}/g, duracionSlot)
-            .replace(/\{\{4\}\}/g, enlaceRegistro)
-            .replace(/\{\{5\}\}/g, enlaceBaja);
-
-        // Si el html original contenía fechas estáticas viejas (ej: 29 de octubre / 30 de octubre), reemplazarlas por el bloque dinámico
-        if (personalizedHtml.includes('29 de octubre') || personalizedHtml.includes('30 de octubre')) {
-            personalizedHtml = personalizedHtml.replace(
-                /<div style="background-color: #f8fafc; border-left: 4px solid #0284c7;[\s\S]*?<\/ul>\s*<\/div>/gi,
-                dynamicSlotsHtml
-            );
-        }
-
-        const personalizedSubject = subject
-            .replace(/\{\{First Name\}\}/gi, firstName)
-            .replace(/\{\{Last Name\}\}/gi, lastName)
-            .replace(/\{\{Office\}\}/gi, office)
-            .replace(/\{\{Company\}\}/gi, company)
-            .replace(/\{\{City\}\}/gi, city)
-            .replace(/\{\{nombre\}\}/gi, nombre)
-            .replace(/\{\{rol\}\}/gi, rol)
-            .replace(/\{\{fecha\}\}/gi, fechaSlot)
-            .replace(/\{\{hora\}\}/gi, horaSlot);
+        const rendered = renderPersonalizedCampaignEmail({
+            subject,
+            htmlContent,
+            contact,
+            calendarSlots,
+            codigoEmpresa
+        });
 
         let sendResult = null;
         try {
             hasAttemptedSendInRun = true;
             console.log(`📧 [${i + 1}/${total}] Enviando email a: ${targetEmail} (${nombre})...`);
-            sendResult = await sendGenericEmail({
+            sendResult = await dispatchFn({
                 to: targetEmail,
-                subject: personalizedSubject,
-                html: personalizedHtml,
-                attachments
+                subject: rendered.subject,
+                html: rendered.html,
+                attachments,
+                headers: {
+                    'List-Unsubscribe': `<${rendered.enlaceBaja}>, <mailto:${rendered.replyToEmail}?subject=BAJA>`,
+                    'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click'
+                }
             });
 
             if (sendResult && sendResult.success) {
                 enviados++;
                 entregados++;
                 if (wasPausedByLimit) {
-                    console.log(`🟢 [CUOTA GMAIL RESTABLECIDA] Campaña #${campanaId} reanudada automáticamente con éxito desde [${i + 1}/${total}] (${targetEmail})!`);
+                    console.log(`🟢 [CUOTA RESTABLECIDA] Campaña #${campanaId} reanudada automáticamente desde [${i + 1}/${total}] (${targetEmail})!`);
                 }
                 console.log(`✅ [${i + 1}/${total}] Enviado exitosamente a ${targetEmail}`);
             } else {
                 console.warn(`⚠️ [${i + 1}/${total}] Advertencia enviando a ${targetEmail}:`, sendResult?.error);
                 if (sendResult?.isQuotaLimit || isGmailQuotaError(sendResult?.error)) {
                     const horaStr = new Date().toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-                    console.error(`🛑 [LÍMITE DIARIO GMAIL] Pausando automáticamente campaña #${campanaId} en contacto [${i + 1}/${total}] (${targetEmail}). Se monitoreará cada 15 min para reanudar.`);
+                    console.error(`🛑 [LÍMITE DIARIO SMTP/GMAIL] Pausando campaña #${campanaId} en [${i + 1}/${total}] (${targetEmail}).`);
                     if (campanaId) {
                         await db.actualizarCampanaProgreso(campanaId, {
                             enviados,
                             entregados,
                             estado: 'pausada_limite',
                             ultimo_indice_enviado: i,
-                            ultimo_log: `⏸️ Límite diario de Gmail (550-5.4.5) en [${i + 1}/${total}]. Monitoreando cuota (últ. chequeo ${horaStr}, reintento auto cada 15m)...`
+                            ultimo_log: `⏸️ Límite diario SMTP en [${i + 1}/${total}]. Monitoreando cuota (últ. chequeo ${horaStr}, reintento auto cada 15m)...`
                         });
                     }
                     return { total, enviados, entregados, pausedByLimit: true, pausedAtIndex: i };
@@ -786,43 +987,38 @@ async function sendMassEmailCampaign({ codigoEmpresa, campanaId, contacts = [], 
                         entregados,
                         estado: 'pausada_limite',
                         ultimo_indice_enviado: i,
-                        ultimo_log: `⏸️ Límite diario de Gmail (550-5.4.5) en [${i + 1}/${total}]. Monitoreando cuota (últ. chequeo ${horaStr}, reintento auto cada 15m)...`
+                        ultimo_log: `⏸️ Límite diario SMTP en [${i + 1}/${total}]. Monitoreando cuota (últ. chequeo ${horaStr}, reintento auto cada 15m)...`
                     });
                 }
                 return { total, enviados, entregados, pausedByLimit: true, pausedAtIndex: i };
             }
         }
 
-        // Actualizar progreso en base de datos en tiempo real después de CADA envío exitoso
+        // Actualizar progreso real en BD sin inflar `respondidos` (respondidos reales los incrementa inboxService)
         const isLast = (i === total - 1);
         if (campanaId && sendResult && sendResult.success) {
             const logMsg = `Enviado a ${nombre} (${targetEmail}) [${i + 1}/${total}] ✓`;
             await db.actualizarCampanaProgreso(campanaId, {
                 enviados,
                 entregados,
-                respondidos: Math.round(entregados * 0.15),
                 estado: isLast ? 'completada' : 'en_progreso',
                 ultimo_log: logMsg,
                 ultimo_indice_enviado: i + 1
             });
         }
 
-        // Si no es el último correo y está en modo humano, esperar entre 20 a 30 segundos (2 a 3 emails por minuto)
         if (!isLast) {
             if (humanPacing) {
-                // Entre 20.000ms y 30.000ms aleatorio para simular digitación y pausas humanas
                 const delayMs = Math.floor(Math.random() * (30000 - 20000 + 1)) + 20000;
                 const delaySeg = (delayMs / 1000).toFixed(1);
                 console.log(`⏳ Pausa anti-spam humano: esperando ${delaySeg}s antes del próximo envío...`);
-                
                 if (campanaId && sendResult && sendResult.success) {
                     await db.actualizarCampanaProgreso(campanaId, {
-                        ultimo_log: `Enviado [${i + 1}/${total}] a ${nombre} ✓ • Pausa Gmail (${Math.round(delayMs / 1000)}s)...`
+                        ultimo_log: `Enviado [${i + 1}/${total}] a ${nombre} ✓ • Pausa (${Math.round(delayMs / 1000)}s)...`
                     });
                 }
                 await new Promise(r => setTimeout(r, delayMs));
             } else {
-                // Pausa mínima de cortesía
                 await new Promise(r => setTimeout(r, 1000));
             }
         }
@@ -832,7 +1028,6 @@ async function sendMassEmailCampaign({ codigoEmpresa, campanaId, contacts = [], 
         await db.actualizarCampanaProgreso(campanaId, {
             enviados,
             entregados,
-            respondidos: Math.round(entregados * 0.15),
             estado: 'completada',
             ultimo_log: `Campaña completada: ${enviados} correo(s) despachado(s) con éxito.`
         });
@@ -909,6 +1104,8 @@ async function sendCalendarEventInvitation({ titulo, tipo, modalidad, categoria,
 }
 
 module.exports = {
+    getTransporter,
+    getEmailConfig,
     sendTicketEmail,
     sendWebinarConfirmationToAdvisor,
     sendWebinarNotificationToCompany,
@@ -916,6 +1113,9 @@ module.exports = {
     sendInvestorWelcomeGuide,
     sendInvestorInquiryToCompany,
     sendGenericEmail,
+    hydrateCampaignContacts,
+    buildSlotsHtml,
+    renderPersonalizedCampaignEmail,
     sendMassEmailCampaign,
     sendCalendarEventInvitation,
     isGmailQuotaError

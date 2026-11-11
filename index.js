@@ -22,7 +22,14 @@ const fs = require('fs');
 const { incomingMessageQueue } = require('./queue/messageQueue');
 const { campaignQueue } = require('./queue/campaignQueue');
 const { processExcelContactsWithAI, normalizePhoneNumber } = require('./excelService');
-const { sendTicketEmail, sendMassEmailCampaign, sendGenericEmail } = require('./emailService');
+const {
+    sendTicketEmail,
+    sendMassEmailCampaign,
+    sendGenericEmail,
+    hydrateCampaignContacts,
+    renderPersonalizedCampaignEmail,
+    getEmailConfig
+} = require('./emailService');
 const { analyzeDeliverability, validateMergeVariables } = require('./emailOptimizer');
 const { summarizeConversationWithAI } = require('./aiRouter');
 const campaignScheduler = require('./campaignScheduler');
@@ -1269,7 +1276,8 @@ app.post('/api/empresas/:codigo/campanas/email/validate-merge', async (req, res)
         if (contactIds && Array.isArray(contactIds) && contactIds.length > 0) {
             targetContacts = allContacts.filter(c => contactIds.includes(c.id));
         }
-        const validation = validateMergeVariables(content, targetContacts);
+        const hydratedValidationContacts = await hydrateCampaignContacts(targetContacts, req.params.codigo, db.pool);
+        const validation = validateMergeVariables(content, hydratedValidationContacts);
         res.json({ success: true, validation });
     } catch (err) {
         console.error('Error validando variables de email:', err);
@@ -1296,107 +1304,41 @@ app.post('/api/empresas/:codigo/campanas/email/test-send', async (req, res) => {
                 }
             }
         } catch (e) {}
-        const defaultSlot = (calendarSlots && calendarSlots.length > 0) ? calendarSlots[0] : null;
-        const fechaSlot = defaultSlot ? defaultSlot.fechaStr : 'Martes, 3 de noviembre';
-        const horaSlot = defaultSlot ? (defaultSlot.horarioStr ? defaultSlot.horarioStr.split(' a ')[0] : '13:00 hs') : '13:00 hs';
-        const duracionSlot = '1 hora y media (90 minutos)';
-        const backendUrl = process.env.BACKEND_URL || 'http://localhost:8080';
-
-        const sampleNombre = 'Damián (Prueba)';
-        const mailtoSub = encodeURIComponent(`Confirmar Asistencia Webinar Asesores - ${sampleNombre}`);
-        const mailtoBod = encodeURIComponent(
-            `Hola Colaboratium,\n\nConfirmo mi asistencia y deseo RESERVAR MI LUGAR en la reunión de asesores comerciales.\n\nMis datos:\n- Nombre: ${sampleNombre}\n- Email: ${testEmail}\n- Teléfono: +54 9 11 7372-2708\n\nOpción de turno elegida: Opción 1 (${fechaSlot} ${horaSlot}) o la que consideren más conveniente.\n\nSaludos cordiales!`
-        );
-        const enlaceRegistro = `mailto:colaboratium@gmail.com?subject=${mailtoSub}&body=${mailtoBod}`;
-        const enlaceBaja = `${backendUrl}/api/campanas/desuscribir?email=${encodeURIComponent(testEmail)}&empresa=${encodeURIComponent(req.params.codigo)}`;
-
-        // Bloque dinámico de turnos reales del calendario
-        const slotsToUse = (calendarSlots && calendarSlots.length > 0) ? calendarSlots.slice(0, 3) : [
-            { id: 1, fechaStr: 'Martes, 3 de noviembre', horarioStr: '01:00 p. m. a 02:30 p. m. hs', modalidad: 'VIRTUAL' },
-            { id: 2, fechaStr: 'Martes, 3 de noviembre', horarioStr: '04:15 p. m. a 05:45 p. m. hs', modalidad: 'VIRTUAL' }
+        const defaultSlots = [
+            { id: 1, fechaStr: 'Jueves, 12 de noviembre', horarioStr: '12:00 p. m. a 12:40 p. m. hs', modalidad: 'VIRTUAL' },
+            { id: 2, fechaStr: 'Jueves, 12 de noviembre', horarioStr: '07:00 p. m. a 07:40 p. m. hs', modalidad: 'VIRTUAL' }
         ];
-
-        const listItems = slotsToUse.map((s, idx) => {
-            const optNum = idx + 1;
-            const sub = encodeURIComponent(`Confirmación Asistencia Webinar Asesores (Opción ${optNum}) - ${sampleNombre}`);
-            const bod = encodeURIComponent(
-                `Hola Colaboratium,\n\nConfirmo mi asistencia para la Opción ${optNum} (${s.fechaStr} de ${s.horarioStr}).\n\nMis datos:\n- Nombre: ${sampleNombre}\n- Email: ${testEmail}\n- Teléfono: +54 9 11 7372-2708\n\nQuedo a la espera del enlace de Google Meet.\n¡Muchas gracias!`
-            );
-            const mailtoBtn = `mailto:colaboratium@gmail.com?subject=${sub}&body=${bod}`;
-            return `
-            <li style="margin-bottom: 10px; background: #ffffff; padding: 12px 14px; border-radius: 8px; border: 1px solid #e2e8f0; list-style-type: none;">
-              <div style="font-size: 13px; color: #1e293b; margin-bottom: 6px;">
-                <strong style="color: #0284c7;">Opción ${optNum}:</strong> <strong>${s.fechaStr}</strong> • <strong>${s.horarioStr}</strong> (Argentina) • Modalidad: <strong>${s.modalidad || 'VIRTUAL'}</strong>
-              </div>
-              <div style="margin-top: 6px;">
-                <a href="${mailtoBtn}" target="_blank" style="display: inline-block; background-color: #0284c7; color: #ffffff; text-decoration: none; padding: 6px 14px; border-radius: 6px; font-weight: 700; font-size: 11px; letter-spacing: 0.3px;">
-                  ✉️ Confirmar Opción ${optNum} (${s.horarioStr ? s.horarioStr.split(' a ')[0] : 'Horario'})
-                </a>
-              </div>
-            </li>`;
-        }).join('\n');
-
-        const dynamicSlotsHtml = `
-        <div style="background-color: #f8fafc; border-left: 4px solid #0284c7; padding: 16px; border-radius: 8px; margin: 22px 0;">
-          <h4 style="margin: 0 0 12px 0; color: #0369a1; font-size: 13px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.5px;">
-            📅 DETALLES DEL ENCUENTRO Y TURNOS DISPONIBLES:
-          </h4>
-          <ul style="margin: 0; padding-left: 0;">
-            ${listItems}
-          </ul>
-        </div>`;
-
-        let processedContent = content;
-        if (!/<[a-z][\s\S]*>/i.test(processedContent)) {
-            processedContent = `<div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; font-size: 15px; line-height: 1.6; color: #1e293b; max-width: 600px; margin: 0 auto; padding: 24px; background-color: #ffffff; border-radius: 12px; border: 1px solid #e2e8f0;">${processedContent.replace(/\n/g, '<br>')}</div>`;
-        }
+        const slotsToUse = (calendarSlots && calendarSlots.length > 0) ? calendarSlots.slice(0, 4) : defaultSlots;
+        const cfg = getEmailConfig();
+        const sampleNombre = 'Damián (Prueba)';
+        const rendered = renderPersonalizedCampaignEmail({
+            subject,
+            htmlContent: content,
+            contact: {
+                nombre: sampleNombre,
+                first_name: 'Damián',
+                last_name: 'Duff',
+                office_name: 'RE/MAX Total',
+                company_or_board: 'RE/MAX Argentina',
+                city: 'Vicente López',
+                email: testEmail,
+                telefono: `+${cfg.whatsappNumber}`,
+                grupo: 'Prospecto Asesores'
+            },
+            calendarSlots: slotsToUse,
+            codigoEmpresa: req.params.codigo
+        });
 
         const includeBanner = req.body.includeBanner !== false;
-        let personalizedHtml = `
-            ${includeBanner ? `<div style="background:#fef3c7;border:1px solid #f59e0b;color:#92400e;padding:12px 18px;border-radius:10px;margin-bottom:20px;font-family:sans-serif;font-size:13px;line-height:1.5;">
+        const bannerHtml = includeBanner
+            ? `<div style="background:#fef3c7;border:1px solid #f59e0b;color:#92400e;padding:12px 18px;border-radius:10px;margin-bottom:20px;font-family:sans-serif;font-size:13px;line-height:1.5;">
                 <strong>🧪 TEST DE ENVÍO DE 1 CLIC (Pre-flight Mail-Merge):</strong><br>
                 Este correo es una prueba de previsualización directa despachada a <code>${testEmail}</code> con turnos sincronizados en vivo desde el calendario oficial.
-            </div>` : ''}
-            ${processedContent}
-        `
-        .replace(/\{\{nombre\}\}/gi, sampleNombre)
-        .replace(/\{\{email\}\}/gi, testEmail)
-        .replace(/\{\{rol\}\}/gi, 'Prospecto Asesores')
-        .replace(/\{\{telefono\}\}/gi, '+54 9 11 7372-2708')
-        .replace(/\{\{enlaceregistro\}\}/gi, enlaceRegistro)
-        .replace(/\{\{enlacebaja\}\}/gi, enlaceBaja)
-        .replace(/\{\{fecha\}\}/gi, fechaSlot)
-        .replace(/\{\{hora\}\}/gi, horaSlot)
-        .replace(/\{\{duracion\}\}/gi, duracionSlot)
-        .replace(/\{\{detalles_encuentro\}\}/gi, dynamicSlotsHtml)
-        .replace(/\{\{detallesencuentro\}\}/gi, dynamicSlotsHtml)
-        .replace(/\{\{opciones_calendario\}\}/gi, dynamicSlotsHtml)
-        .replace(/\{\{First Name\}\}/g, 'Damián')
-        .replace(/\{\{Last Name\}\}/g, 'Duff')
-        .replace(/\{\{Office\}\}/g, 'RE/MAX Total')
-        .replace(/\{\{City\}\}/g, 'Vicente López')
-        .replace(/\{\{Company\}\}/g, 'RE/MAX Argentina')
-        .replace(/\{\{1\}\}/g, fechaSlot)
-        .replace(/\{\{2\}\}/g, horaSlot)
-        .replace(/\{\{3\}\}/g, '40 minutos')
-        .replace(/\{\{4\}\}/g, enlaceRegistro)
-        .replace(/\{\{5\}\}/g, enlaceBaja);
-
-        if (personalizedHtml.includes('29 de octubre') || personalizedHtml.includes('30 de octubre')) {
-            personalizedHtml = personalizedHtml.replace(
-                /<div style="background-color: #f8fafc; border-left: 4px solid #0284c7;[\s\S]*?<\/ul>\s*<\/div>/gi,
-                dynamicSlotsHtml
-            );
-        }
-
+            </div>`
+            : '';
+        const personalizedHtml = `${bannerHtml}${rendered.html}`;
         const isCleanSubject = req.body.cleanSubject === true;
-        const testSubject = (isCleanSubject ? '' : '[TEST PRUEBA 1-CLIC] ') + subject
-            .replace(/\{\{nombre\}\}/gi, 'Damián')
-            .replace(/\{\{First Name\}\}/g, 'Damián')
-            .replace(/\{\{Last Name\}\}/g, 'Duff')
-            .replace(/\{\{Office\}\}/g, 'RE/MAX Total')
-            .replace(/\{\{City\}\}/g, 'Vicente López')
-            .replace(/\{\{Company\}\}/g, 'RE/MAX Argentina');
+        const testSubject = `${isCleanSubject ? '' : '[TEST PRUEBA 1-CLIC] '}${rendered.subject}`;
 
         const result = await sendGenericEmail({
             to: testEmail,
@@ -1436,6 +1378,7 @@ app.post('/api/empresas/:codigo/campanas/email', async (req, res) => {
                 last_name: p.last_name,
                 office_name: p.office_name,
                 company_or_board: p.company_or_board,
+                city: p.city,
                 email: p.email,
                 telefono: p.phone_e164 || p.phone_raw,
                 grupo: p.detected_role === 'LIDER_BROKER_POTENCIAL' ? 'B2B_LIDERES' : 'B2B_ASESORES',
@@ -1451,8 +1394,12 @@ app.post('/api/empresas/:codigo/campanas/email', async (req, res) => {
             targetContacts = combinedPool.filter(c => contactIds.includes(c.id) || contactIds.includes(Number(c.id)) || contactIds.includes(String(c.id)));
         }
 
-        // Filtrar contactos con email válido
-        targetContacts = targetContacts.filter(c => c.email && c.email.includes('@'));
+        // Filtrar contactos con email válido e hidratar metadata/office/city
+        targetContacts = await hydrateCampaignContacts(
+            targetContacts.filter(c => c.email && c.email.includes('@')),
+            req.params.codigo,
+            db.pool
+        );
 
         if (targetContacts.length === 0) {
             return res.status(400).json({ error: 'No se encontraron contactos con email válido para enviar la campaña' });
@@ -1480,6 +1427,7 @@ app.post('/api/empresas/:codigo/campanas/email', async (req, res) => {
                 last_name: c.last_name,
                 office_name: c.office_name,
                 company_or_board: c.company_or_board,
+                city: c.city,
                 email: c.email,
                 telefono: c.telefono
             })),
@@ -1609,6 +1557,7 @@ app.get('/api/empresas/:codigo/campanas/desuscripciones', async (req, res) => {
 app.get('/api/campanas/desuscribir', async (req, res) => {
     const { email, empresa } = req.query;
     const safeEmail = email ? String(email).replace(/[<>]/g, '').trim() : 'tu correo';
+    const contactEmail = getEmailConfig().replyToEmail;
     if (email) {
         await db.registrarDesuscripcion(empresa || 'KRZMJI', email, 'Baja por enlace web en correo');
     }
@@ -1635,7 +1584,7 @@ app.get('/api/campanas/desuscribir', async (req, res) => {
         <h1>Baja procesada con éxito</h1>
         <p>Tu dirección ha sido dada de baja de nuestra lista de convocatorias y oportunidades comerciales.</p>
         <div class="badge">${safeEmail}</div>
-        <p style="font-size:12px;color:#64748b;">No recibirás más correos automáticos sobre esta convocatoria. Si esto fue un error, puedes escribir a <a href="mailto:colaboratium@gmail.com" style="color:#38bdf8;">colaboratium@gmail.com</a>.</p>
+        <p style="font-size:12px;color:#64748b;">No recibirás más correos automáticos sobre esta convocatoria. Si esto fue un error, puedes escribir a <a href="mailto:${contactEmail}" style="color:#38bdf8;">${contactEmail}</a>.</p>
         <div class="footer">
             Colaboratium &copy; 2026 • Av. del Libertador 264, Vicente López, Buenos Aires
         </div>
@@ -1703,7 +1652,6 @@ app.post('/api/empresas/:codigo/campanas/meta', async (req, res) => {
                     await db.actualizarCampanaProgreso(campanaId, {
                         enviados,
                         entregados: enviados,
-                        respondidos: Math.round(enviados * 0.8),
                         estado: i === targetContacts.length - 1 ? 'completada' : 'en_progreso'
                     });
                 }
