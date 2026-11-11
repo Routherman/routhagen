@@ -1,6 +1,7 @@
 const db = require('./database');
 const { sendWhatsAppMessage } = require('./whatsappService');
 const { processMessageWithAI } = require('./groqService');
+const { sanitizeBotReplyText } = require('./aiRouter');
 
 /**
  * Ejecuta o avanza un flujo conversacional.
@@ -20,17 +21,18 @@ async function handleFlowEngine(dbContacto, cleanMessage, empresa, accessToken, 
 
     // Helper omnicanal de despacho (soporta Meta Cloud API y WASender API)
     const sendWhatsAppMsg = async (targetPhone, text) => {
+        const cleanText = sanitizeBotReplyText(text);
         const isWasender = dbContacto?.canal === 'wasender' || dbContacto?.linea_wa?.includes('WA_S');
         if (isWasender) {
             try {
                 const wasenderService = require('./wasenderService');
-                const res = await wasenderService.sendMessage(targetPhone, text, codigoEmpresa, { isBotReply: true, forceSend: true });
+                const res = await wasenderService.sendMessage(targetPhone, cleanText, codigoEmpresa, { isBotReply: true, forceSend: true });
                 return `was_flow_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
             } catch (wasErr) {
                 console.error('[Flow] Error enviando vía WASender:', wasErr.message);
             }
         }
-        return sendWhatsAppMessage(targetPhone, text, phoneId, accessToken);
+        return sendWhatsAppMessage(targetPhone, cleanText, phoneId, accessToken);
     };
 
     // Asegurar datos frescos del contacto desde la base de datos
@@ -536,7 +538,7 @@ async function handleFlowEngine(dbContacto, cleanMessage, empresa, accessToken, 
                             await clearFlowState(dbContacto.id);
                             return true;
                         } else {
-                            const selfMsg = `¡Entendido! Podés realizar tu registro y colocación de forma 100% autogestionada siguiendo la guía enviada a tu correo. Ante cualquier inquietud o consulta sobre el simulador, estamos a tu disposición por este medio.`;
+                            const selfMsg = `¡Entendido! Podés realizar tu registro y colocación de forma totalmente autogestionada siguiendo la guía enviada a tu correo. Ante cualquier inquietud o consulta sobre el simulador, estamos a tu disposición por este medio.`;
                             const outMetaId = await sendWhatsAppMsg(cleanMessage.identificador.valor, selfMsg, phoneId, accessToken);
                             await db.guardarMensaje(dbContacto.id, outMetaId, 'SALIENTE', 'text', selfMsg);
                             await clearFlowState(dbContacto.id);

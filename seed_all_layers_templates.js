@@ -20,9 +20,9 @@ Sabemos que en la operatoria inmobiliaria hablás todas las semanas con clientes
 
 ¿Cómo funciona la alianza para vos y para tu cliente?
 
-• Para tu cliente inversor (Costo 0%): Invierte desde una plataforma 100% bancarizada (Banco BIND y Banco Coinag) operando desde su propio CVU, financiando créditos atomizados calificados por IA. Al inversor jamás se le cobra comisión ni gasto administrativo.
+• Para tu cliente inversor (Costo Cero): Invierte desde una plataforma totalmente bancarizada (Banco BIND y Banco Coinag) operando desde su propio CVU, financiando créditos atomizados calificados por IA. Al inversor jamás se le cobra comisión ni gasto administrativo.
 
-• Para vos como Asesor: Percibís Comisiones de alto rendimiento sobre capital colocado, cobrando un porcentaje inmediato al calce del crédito y el resto con las cuotas, más el 100% de comisión en cada reinversión futura de tu cliente.
+• Para vos como Asesor: Percibís Comisiones de alto rendimiento sobre capital colocado, cobrando un tramo inmediato al calce del crédito y el resto con las cuotas, más comisión plena completa en cada reinversión futura de tu cliente.
 
 Brindamos una reunión informativa online de 40 minutos exclusiva para agentes y brokers de redes. Tenemos 4 opciones de turnos disponibles para que elijas la que mejor se adapte a tu agenda:
 
@@ -57,7 +57,7 @@ Aviso Legal (Ley 25.326 y Disp. DNPDP 4/2009): Datos de contacto comercial del d
             tipo: 'whatsapp',
             categoria: 'asesores',
             asunto: 'Contacto Inicial Asesores Franquicias',
-            contenido: `Hola {{First Name}}, ¿cómo estás? Vi tu perfil público en {{Office}} ({{City}}). En Colaboratium (Global Loan S.A. - Reg. BCRA Nº 40.015) incorporamos agentes con cartera para monetizar operaciones inmobiliarias con comisiones del 4% al 6% al calce. Este {{1}} a las {{2}} hs brindamos un webinar de 40 min exclusivo. ¿Te gustaría sumarte o que coordinemos un café en nuestras oficinas de Av. del Libertador 264, Vicente López?`
+            contenido: `Hola {{First Name}}, ¿cómo estás? Vi tu perfil público en {{Office}} ({{City}}). En Colaboratium (Global Loan S.A. - Reg. BCRA Nº 40.015) incorporamos agentes con cartera para monetizar operaciones inmobiliarias con Comisiones de alto rendimiento al calce. Este {{1}} a las {{2}} hs brindamos un webinar de 40 min exclusivo. ¿Te gustaría sumarte o que coordinemos un café en nuestras oficinas de Av. del Libertador 264, Vicente López?`
         },
 
         // CAPA 2: CORREDORES MATRICULADOS
@@ -75,8 +75,8 @@ Sabemos que uno de los mayores frenos en la operatoria inmobiliaria son las oper
 ¿Qué soluciones brindamos para tu inmobiliaria y tus clientes?
 
 1. Créditos Puente y Mutuos con Garantía Real: Financiación ágil en 48 hs aprobada por motor de IA, permitiendo destrabar reservas y boletos de compraventa para clientes calificados.
-2. Destino para Clientes Vendedores con Liquidez: Si tu cliente acaba de vender y busca renta en pesos 100% bancarizada (vía Banco BIND y Banco Coinag con CVU propio), invierte sin comisiones ni cargos administrativos financiando carteras atomizadas de bajo riesgo.
-3. Honorarios y Comisiones para Vos: Percibís entre el 4% y el 6% de honorarios directos sobre el capital colocado, cobrando un 3% inmediato al calce de la operación y el saldo en cuotas, más el 100% en reinversiones futuras.
+2. Destino para Clientes Vendedores con Liquidez: Si tu cliente acaba de vender y busca renta en pesos totalmente bancarizada (vía Banco BIND y Banco Coinag con CVU propio), invierte sin comisiones ni cargos administrativos financiando carteras atomizadas de bajo riesgo.
+3. Honorarios y Comisiones para Vos: Percibís Comisiones de alto rendimiento directas sobre el capital colocado, con cobro inmediato al calce de la operación y saldo residual en cuotas, más comisión plena completa en reinversiones futuras.
 
 Este {{1}} a las {{2}} hs brindaremos una sesión online de {{3}} exclusiva para Corredores Matriculados donde mostramos cómo estructurar los mutuos puente y el marco legal regulatorio.
 
@@ -98,7 +98,7 @@ Aviso Legal (Ley 25.326 y Disp. DNPDP 4/2009): Datos obtenidos del padrón públ
             tipo: 'whatsapp',
             categoria: 'asesores',
             asunto: 'Contacto Inicial Corredores Matriculados',
-            contenido: `Hola {{First Name}}, ¿cómo estás? Te escribo como Corredor Inmobiliario Matriculado en {{City}}. En Colaboratium (Global Loan S.A. - Reg. BCRA Nº 40.015) creamos un canal para martilleros que permite destrabar operaciones con créditos puente con garantía real en 48 hs aprobados por IA, y captar renta para vendedores al 4-6% de honorarios. Este {{1}} a las {{2}} hs explicamos el marco legal en un webinar de 40 min. ¿Te gustaría recibir el link de Google Meet?`
+            contenido: `Hola {{First Name}}, ¿cómo estás? Te escribo como Corredor Inmobiliario Matriculado en {{City}}. En Colaboratium (Global Loan S.A. - Reg. BCRA Nº 40.015) creamos un canal para martilleros que permite destrabar operaciones con créditos puente con garantía real en 48 hs aprobados por IA, y captar renta para vendedores con Comisiones de alto rendimiento. Este {{1}} a las {{2}} hs explicamos el marco legal en un webinar de 40 min. ¿Te gustaría recibir el link de Google Meet?`
         },
 
         // CAPA 3: PREVISIONALISTAS
@@ -115,7 +115,7 @@ Esta operatoria permite a los profesionales previsionales sumar una unidad de in
 
 1. Préstamos a Jubilados y Pensionados: Créditos con cuota fija y débito seguro en cuenta bancaria.
 2. Inversión para Clientes con Sentencias o Cobros Retroactivos: Alternativa de renta bancarizada a través de BIND y Coinag sin comisiones de entrada ni salida.
-3. Comisiones del 4% al 6% directo para el profesional, con 3% cobrado de inmediato al desembolso del crédito.
+3. Comisiones de alto rendimiento directas para el profesional, con cobro inmediato al desembolso del crédito y residual en cuotas.
 
 Este {{1}} a las {{2}} hs daremos una charla explicativa online de {{3}} exclusiva para el sector previsional.
 
@@ -135,7 +135,7 @@ Aviso Legal (Ley 25.326 y Disp. DNPDP 4/2009): Enviado conforme a registros prof
             tipo: 'whatsapp',
             categoria: 'asesores',
             asunto: 'Contacto Inicial Previsionales',
-            contenido: `Hola {{First Name}}, ¿cómo estás? Te escribo por tu actividad previsional en {{City}}. En Colaboratium (Reg. BCRA Nº 40.015) habilitamos un canal para gestores y abogados previsionales con créditos a jubilados de cuota fija y comisiones del 4% al 6%. Este {{1}} a las {{2}} hs tenemos una sesión online de 40 min. ¿Te gustaría participar?`
+            contenido: `Hola {{First Name}}, ¿cómo estás? Te escribo por tu actividad previsional en {{City}}. En Colaboratium (Reg. BCRA Nº 40.015) habilitamos un canal para gestores y abogados previsionales con créditos a jubilados de cuota fija y Comisiones de alto rendimiento. Este {{1}} a las {{2}} hs tenemos una sesión online de 40 min. ¿Te gustaría participar?`
         },
 
         // CAPA 4: DESARROLLADORES URBANOS
@@ -195,9 +195,9 @@ Como PAS, ya contás con la confianza y el conocimiento financiero de tus asegur
 3. Inversión en Créditos con Rendimiento Superior al Plazo Fijo: Para asegurados con excedentes de liquidez en cuenta bancaria, con respaldo bancario vía Banco BIND y Coinag.
 
 Tus Beneficios como Productor:
-- Comisiones de entre el 4% y el 6% sobre el desembolso total del crédito (cobrando un 3% inmediato al calce).
-- Ingresos residuales mes a mes y 100% de comisión sobre cada renovación de crédito.
-- Operatoria 100% digital desde tu consola propia con scoring IA en segundos.
+- Comisiones de alto rendimiento sobre el desembolso total del crédito (con cobro inmediato al calce y residual en cuotas).
+- Ingresos residuales mes a mes y comisión plena completa sobre cada renovación de crédito.
+- Operatoria totalmente digital desde https://colaboratium.com.ar/ con scoring IA en segundos.
 
 Este {{1}} a las {{2}} hs daremos una charla informativa online de {{3}} para Productores de Seguros.
 
@@ -217,7 +217,7 @@ Aviso Legal (Ley 25.326 y Disp. DNPDP 4/2009): Datos de matriculación profesion
             tipo: 'whatsapp',
             categoria: 'asesores',
             asunto: 'Contacto Inicial PAS Seguros',
-            contenido: `Hola {{First Name}}, ¿cómo estás? Te escribo como Productor Asesor de Seguros (PAS) en {{City}}. En Colaboratium (Global Loan S.A. - Reg. BCRA Nº 40.015) creamos una alianza para que productores sumen colocación de créditos con garantía y préstamos a jubilados a su cartera, ganando entre el 4% y el 6% de comisión inmediata más residuales. Este {{1}} a las {{2}} hs tenemos un webinar de 40 min para PAS. ¿Te reservo un lugar?`
+            contenido: `Hola {{First Name}}, ¿cómo estás? Te escribo como Productor Asesor de Seguros (PAS) en {{City}}. En Colaboratium (Global Loan S.A. - Reg. BCRA Nº 40.015) creamos una alianza para que productores sumen colocación de créditos con garantía y préstamos a jubilados a su cartera, generando Comisiones de alto rendimiento de cobro inmediato al calce más residuales. Este {{1}} a las {{2}} hs tenemos un webinar de 40 min para PAS. ¿Te reservo un lugar?`
         }
     ];
 

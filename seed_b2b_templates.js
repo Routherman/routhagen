@@ -13,11 +13,11 @@ Sabemos que en la operatoria inmobiliaria hablás todas las semanas con clientes
 
 ¿Cómo funciona la alianza para vos y para tu cliente?
 
-Para tu cliente inversor (Costo 0%): Invierte desde una plataforma 100% bancarizada (Banco BIND y Banco Coinag) operando desde su propio CVU, financiando créditos atomizados que pasan por un motor de Inteligencia Artificial que filtra solo entre el 5% y el 15% de los mejores perfiles crediticios (validando BCRA, Renaper, Nosis, Veraz y UIF). Al inversor jamás se le cobra comisión ni gasto administrativo (todo el costo lo absorbe el tomador del crédito).
+Para tu cliente inversor (Costo Cero): Invierte desde una plataforma totalmente bancarizada (Banco BIND y Banco Coinag) operando desde su propio CVU, financiando créditos atomizados que pasan por un motor de Inteligencia Artificial altamente selectivo (validando BCRA, Renaper, Nosis, Veraz y UIF). Al inversor jamás se le cobra comisión ni gasto administrativo (todo el costo lo absorbe el tomador del crédito).
 
-Para vos como Asesor (Esquema similar a RE/MAX): Ya conocés la modalidad de agencia independiente. Por cada inversor que vincules con tu link propio desde nuestra consola, percibís comisiones directas del 4% (plazo 3 meses), 5% (6 meses) y 6% (12 meses) sobre el capital colocado, cobrando un 3% de forma inmediata al calce del crédito y el resto con las cuotas, más el 100% de comisión en cada reinversión futura de tu cliente. Además, podés recibir inversores captados por las campañas de marketing de Colaboratium.
+Para vos como Asesor (Esquema similar a RE/MAX): Ya conocés la modalidad de agencia independiente. Por cada inversor que vincules con tu link propio desde nuestra plataforma, percibís Comisiones de alto rendimiento sobre el capital colocado, cobrando un tramo de forma inmediata al calce del crédito y el resto con las cuotas, más la comisión plena en cada reinversión futura de tu cliente. Además, podés recibir inversores captados por las campañas de marketing de Colaboratium.
 
-Este {{1}} a las {{2}} hs vamos a dar una reunión informativa online de {{3}} exclusiva para profesionales independientes, donde mostramos la consola en vivo, la escala de comisiones y el respaldo normativo del BCRA.
+Este {{1}} a las {{2}} hs vamos a dar una reunión informativa online de {{3}} exclusiva para profesionales independientes, donde mostramos https://colaboratium.com.ar/ en vivo, el esquema de comisiones y el respaldo normativo del BCRA.
 
 👉 Podés reservar tu lugar sin costo acá: {{4}}
 
@@ -38,11 +38,11 @@ Te contacto como Broker / Responsable de {{Office}} porque en Colaboratium (Glob
 
 Sabemos que ya liderás un equipo de agentes que trabajan bajo el modelo de contrato independiente. Nuestra propuesta te permite sumar una unidad de ingresos recurrentes para tu oficina, sin ningún costo para los clientes inversores de tu cartera:
 
-Plataforma Principal (https://colaboratium.com.ar/): Dás de alta a los agentes de tu equipo bajo tu propio nodo. Ellos cobran entre el 4% y el 6% de comisión por ofrecer alternativas de inversión en pesos (100% bancarizadas vía BIND/Coinag y filtradas por IA) a sus clientes con liquidez.
+Plataforma Principal (https://colaboratium.com.ar/): Dás de alta a los agentes de tu equipo bajo tu propio nodo. Ellos cobran Comisiones de alto rendimiento por ofrecer alternativas de inversión en pesos (totalmente bancarizadas vía BIND/Coinag y filtradas por IA) a sus clientes con liquidez.
 
-10% de Overriding para vos como Líder: Percibís un 10% adicional sobre la bolsa total de comisiones que generen todos los agentes de tu equipo (sin descontárselo a ellos).
+Overriding Adicional para vos como Líder: Percibís una participación adicional recurrente sobre la bolsa total de comisiones que generen todos los agentes de tu equipo (sin descontárselo a ellos).
 
-Derivación de Inversores del Marketing Central de Colaboratium: Los inversores que entran por la publicidad propia de Colaboratium se asignan a nuestros Líderes de Equipo para que vos o tus agentes gestionen su cartera y cobren las cuotas residuales y el 100% de cada reinversión futura.
+Derivación de Inversores del Marketing Central de Colaboratium: Los inversores que entran por la publicidad propia de Colaboratium se asignan a nuestros Líderes de Equipo para que vos o tus agentes gestionen su cartera y cobren las cuotas residuales y la comisión plena de cada reinversión futura.
 
 Me gustaría invitarte este {{1}} a las {{2}} hs a nuestra presentación ejecutiva online de {{3}} (registrate sin cargo en {{4}}), o bien coordinar una reunión privada 1 a 1 por Zoom o en nuestras oficinas de Av. del Libertador 264, 1° Piso, Vicente López.
 

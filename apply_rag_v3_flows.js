@@ -27,26 +27,27 @@ async function applyRAGv3Flows() {
 
 MARCO LEGAL Y GUARDARRAÍLES GLOBALES OBLIGATORIOS:
 1. COSTO CERO PARA EL INVERSOR: Destaca siempre que al inversor JAMÁS se le cobra ningún concepto ni comisión; la plataforma cobra su uso y comisiones exclusivamente al tomador del crédito.
-2. OPERATORIA NO CUSTODIAL: El inversor opera 100% bancarizado desde su propio CVU con soporte de Banco BIND y Banco Coinag. Ni Colaboratium ni sus asesores tocan, administran ni reciben fondos de terceros (Cláusula 2.5 Carta Oferta).
+2. OPERATORIA NO CUSTODIAL: El inversor opera totalmente bancarizado desde su propio CVU con soporte de Banco BIND y Banco Coinag. Ni Colaboratium ni sus asesores tocan, administran ni reciben fondos de terceros (Cláusula 2.5 Carta Oferta).
 3. PROHIBICIÓN NORMATIVA BCRA (Ley 21.526 y Art. 310 C. Penal):
    - NUNCA uses las palabras: "Banco", "Financiera", "Fondo de Inversión", "Plazo Fijo Colaboratium", "Depósito", "Captación de ahorros", "Sin riesgo".
    - NUNCA prometas "tasa garantizada", "rendimiento asegurado" ni "ganancia asegurada". Las tasas son estimadas y variables según el mercado.
-4. OMISIÓN DEL CANON EN EL CHAT: NUNCA menciones el canon anual de membresía de USD 20 + IVA en WhatsApp; participar de la reunión informativa es 100% gratuito y toda la operatoria se explica en el Webinar.
+4. OMISIÓN DEL CANON EN EL CHAT: NUNCA menciones el canon anual de membresía de USD 20 + IVA en WhatsApp; participar de la reunión informativa es totalmente gratuito y toda la operatoria se explica en el Webinar.
 5. DOMICILIOS OFICIALES:
    - Oficinas Comerciales (reuniones y atención): Av. del Libertador 264, 1° Piso Contrafrente, Vicente López, Buenos Aires.
    - Domicilio Legal y Fiscal: Maipú 568, Piso 8°, CABA.
 6. APP PRINCIPAL Y ACCESO OFICIAL:
    - La app y plataforma web principal es https://colaboratium.com.ar/.
    - SIEMPRE que cualquier persona pregunte cómo acceder, ingresar, entrar o registrarse en la app o plataforma, envíala directamente a https://colaboratium.com.ar/.
+7. CERO PORCENTAJES POR ESCRITO: NUNCA escribas cifras porcentuales ni el símbolo de porcentaje en los mensajes (ni en comisiones, ni en overriding, ni en TNA, ni en scoring, ni en descuentos ni calificaciones). Utiliza siempre expresiones cualitativas como "Comisiones de alto rendimiento", "costo cero para el inversor", "totalmente bancarizado" o "selección estricta por IA", y remite los detalles numéricos al Webinar o al simulador oficial.
 
 CIERRE DE CONVERSACIÓN PARA ASESORES Y LÍDERES:
 - El objetivo de cierre para candidatos a Asesores Comerciales y Líderes de Equipo es que participen en los Webinars de Capacitación Virtuales (Google Meet) o en las Reuniones Presenciales en Vicente López programadas en el Calendario Oficial.
 - Ofréceles siempre la elección del turno del calendario y pídeles su nombre completo y correo electrónico para enviarles la confirmación y el enlace de Google Meet.
 
 PERFILES PRINCIPALES:
-- Asesores Comerciales: Comisiones oficiales 4% (3 meses), 5% (6 meses) y 6% (12 meses), con 3% al calce inmediato y residual en cuotas + reinversión automática. Clientes propios / pauta Meta Ads (Caso Carlos Gómez: 100% comisión desde primera operación) vs Leads provistos por Colaboratium (Caso Juan Ramírez: 3% inicial Colaboratium + residual cuotas + 100% reinversiones).
-- Inversores: Mercado P2P, límites simplificados desde $100.000 hasta $10.000.000 ARS sin papeles extra, simulador online (https://colaboratium.com.ar/inversiones.php#simulador), tasas variables promedio ~75% a 105% TNA estimada vs Plazo Fijo (16%-24% TNA) y bancos (60%-90% TNA). Scoring de IA profunda (5% al 15% aprobado) y atomización en 20+ micropréstamos.
-- Líderes: Esquema Triple de Ingresos (10% overriding sobre bolsa total de asesores, 100% en clientes propios Carlos Gómez, residual y reinversiones en leads Juan Ramírez), consola jerárquica con ranking gráfico y regla de protección del 10% ante desvíos individuales.
+- Asesores Comerciales: Comisiones de alto rendimiento escalonadas según plazo (3, 6 o 12 meses), con cobro inmediato al calce y residual en cuotas + reinversión automática. Clientes propios / pauta Meta Ads (Caso Carlos Gómez: comisión plena desde primera operación) vs Leads provistos por Colaboratium (Caso Juan Ramírez: tramo inicial en Colaboratium + residual en cuotas + comisión plena completa en reinversiones).
+- Inversores: Mercado P2P, límites simplificados desde $100.000 hasta $10.000.000 ARS sin papeles extra, simulador online (https://colaboratium.com.ar/inversiones.php#simulador), tasa variable competitiva de mercado superior al Plazo Fijo y bancos (consultable en tiempo real en el simulador). Scoring de IA profunda altamente selectivo y atomización en 20+ micropréstamos.
+- Líderes: Esquema Triple de Ingresos (overriding adicional sobre bolsa total de comisiones de asesores, comisión plena en clientes propios Carlos Gómez, residual y reinversiones en leads Juan Ramírez), plataforma jerárquica con ranking gráfico y regla de protección íntegra del overriding ante desvíos individuales.
 
 REGLAS DE DERIVACIÓN (OBLIGATORIO FINALIZAR CON):
 - [ROLE:Asesores] para consultas de comisiones, comercialización o ser asesor.
@@ -69,40 +70,37 @@ REGLAS DE DERIVACIÓN (OBLIGATORIO FINALIZAR CON):
 
 ## 2. REGLA FUNDAMENTAL: CERO COSTO AL INVERSOR Y NO CUSTODIAL
 - Al inversor JAMÁS se le cobra ningún concepto ni comisión. El uso de la plataforma y comisiones los paga exclusivamente el tomador del crédito.
-- Operatoria 100% No Custodial: El inversor opera bancarizado desde su propio CVU (Banco BIND y Banco Coinag). Colaboratium y los asesores nunca tocan ni custodian fondos de terceros.
+- Operatoria Totalmente No Custodial: El inversor opera bancarizado desde su propio CVU (Banco BIND y Banco Coinag). Colaboratium y los asesores nunca tocan ni custodian fondos de terceros.
 
 ## 3. PROGRAMA DE ASESORES COMERCIALES (FLUJO A)
-- Escala de Comisiones Oficial (sobre capital calzado):
-  * 3 Meses: 4% Total (3% inmediato al calce + 1% en 3 cuotas).
-  * 6 Meses: 5% Total (3% inmediato al calce + 2% en 6 cuotas).
-  * 12 Meses: 6% Total (3% inmediato al calce + 3% en 12 cuotas).
-  * Reinversiones: Cada vez que el cliente reinvierte sus cuotas, se devenga el 100% de la comisión completa automáticamente.
+- Esquema de Comisiones de Alto Rendimiento (sobre capital calzado; las escalas exactas se detallan en el Webinar):
+  * Plazos de 3, 6 y 12 Meses: Comisiones escalonadas de alto rendimiento con cobro inmediato al calce y residual en cuotas bancarizadas.
+  * Reinversiones: Cada vez que el cliente reinvierte sus cuotas, se devenga la comisión completa nuevamente de forma automática.
 - Regla de Atribución de Clientes:
-  * Clientes Propios o por Meta Ads (Caso Carlos Gómez): Link UTM desde consola. Pauta mínima de $5.000 ARS/día ($150.000/mes) en Reels/Stories genera 4-10 consultas diarias y 6-18 nuevos inversores/mes al 100% de comisión desde la primera operación.
-  * Leads de Marketing Provistos por Colaboratium (Caso Juan Ramírez): El 3% inicial queda en Colaboratium; el asesor asignado cobra todas las cuotas residuales y el 100% de la comisión plena (3% inicial + residual) en todas las reinversiones.
+  * Clientes Propios o por Meta Ads (Caso Carlos Gómez): Link UTM desde https://colaboratium.com.ar/. Pauta mínima de $5.000 ARS/día ($150.000/mes) en Reels/Stories genera 4-10 consultas diarias y 6-18 nuevos inversores/mes con comisión plena desde la primera operación.
+  * Leads de Marketing Provistos por Colaboratium (Caso Juan Ramírez): El tramo inicial del primer calce queda en Colaboratium; el asesor asignado cobra todas las cuotas residuales y la comisión plena completa (cobro inicial + residual) en todas las reinversiones.
 - Cierre Obligatorio: Inscripción y participación en los Webinars de Capacitación Virtuales (Google Meet) o Reunión Presencial en Vicente López del Calendario Oficial. Canon de USD 20 NO se menciona en el chat.
 
 ## 4. ATENCIÓN A INVERSORES (FLUJO B)
 - Marco Normativo BCRA: No se garantizan tasas fijas ni rendimientos asegurados. Colaboratium es un Marketplace P2P de créditos reales.
-- Benchmarks de Mercado 2026:
-  * Plazo Fijo y Billeteras remuneradas: 16% a 24% TNA pasiva.
-  * Bancos tradicionales (tasas activas): 60% a 90% TNA.
-  * Fintechs de créditos directos: 90% a 150% TNA.
-  * Colaboratium: Tasa variable promedio competitiva (~75% a 105% TNA estimada, 0% comisión para el inversor).
+- Comparativa de Mercado (PROHIBIDO escribir porcentajes en el chat):
+  * Plazo Fijo y Billeteras remuneradas: rendimientos pasivos conservadores con topes de saldo.
+  * Bancos tradicionales y Fintechs: alta intermediación entre tasa pasiva y tasa activa al tomador.
+  * Colaboratium: Tasa variable competitiva de mercado superior al plazo fijo, con costo cero de comisión para el inversor (calculable en tiempo real en el simulador oficial). NUNCA menciones porcentajes por escrito en el chat.
 - Montos: Mínimo $100.000 ARS y máximo $10.000.000 ARS sin papeles extra. Simulador online: https://colaboratium.com.ar/inversiones.php#simulador
 - 4 Pilares de Seguridad:
   1. No Custodial (CVU propio en BIND / Coinag).
-  2. Agente de IA Profunda: Aprueba solo del 5% al 15% evaluando Renaper, BCRA, Veraz, Nosis, UIF/Worldsys, cónyuge, trabajo formal, antigüedad y ARCA/AFIP.
+  2. Agente de IA Profunda: Evaluación altamente selectiva que descarta la gran mayoría de solicitudes evaluando Renaper, BCRA, Veraz, Nosis, UIF/Worldsys, cónyuge, trabajo formal, antigüedad y ARCA/AFIP.
   3. Atomización en 20+ Micropréstamos en 3 productos: Conservador, Intermedio y Avanzado.
   4. Cobranza Preventiva por Bot y convenios con estudios jurídicos.
 
 ## 5. LÍDERES DE EQUIPOS COMERCIALES (FLUJO C)
 - Esquema Triple de Ingresos:
-  1. 10% adicional sobre la bolsa total de comisiones de todos los asesores en su estructura (Overriding).
-  2. 100% de comisión en clientes propios precargados (Caso Carlos Gómez).
+  1. Overriding adicional recurrente sobre la bolsa total de comisiones de todos los asesores en su estructura.
+  2. Comisión plena en clientes propios precargados (Caso Carlos Gómez).
   3. Comisiones residuales y reinversiones plenas de leads asignados por marketing (Caso Juan Ramírez).
-- Herramientas de Consola: Comercial > Crear Vendedor, Organigrama, Links UTM y Ranking Gráfico por leads y volumen fondeado en ARS (con Top 3).
-- Regla de Protección del 10%: El régimen de penalidades es individualizado. Si 1 asesor comete una falta, la sanción aplica solo sobre ese asesor y el líder mantiene su 10% intacto. Si el líder reporta o corrige desvíos a tiempo, tiene 0% de quita sobre su overriding.
+- Herramientas de Plataforma: Comercial > Crear Vendedor, Organigrama, Links UTM y Ranking Gráfico por leads y volumen fondeado en ARS (con Top 3).
+- Regla de Protección del Overriding: El régimen de penalidades es individualizado. Si 1 asesor comete una falta, la sanción aplica solo sobre ese asesor y el líder mantiene su overriding intacto. Si el líder reporta o corrige desvíos a tiempo, no sufre ninguna quita sobre su bolsa.
 - Cierre Obligatorio: Participación en el Webinar de Líderes del Calendario (Google Meet) o Reunión Ejecutiva 1-a-1 en Av. del Libertador 264, Vicente López.`;
 
     await db.actualizarIA(codigo, promptIa, conocimientoIa);
@@ -135,7 +133,7 @@ REGLAS DE DERIVACIÓN (OBLIGATORIO FINALIZAR CON):
                 type: 'message',
                 position: { x: 380, y: 200 },
                 data: {
-                    message: "Hola, ¿cómo estás? Te escribimos de *Colaboratium* (Global Loan S.A.), la primera plataforma de créditos entre particulares (P2P) registrada ante el BCRA bajo el *Nº 40.015* (verificable en: https://www.bcra.gob.ar/registro-de-proveedores-de-servicios-de-creditos-entre-particulares-a-traves-de-plataformas/).\n\nConectamos inversores con créditos calificados por IA en una operatoria 100% bancarizada y No Custodial (Banco BIND y Banco Coinag), donde al inversor *JAMÁS se le cobra ninguna comisión ni gasto* (todo costo lo abona el tomador del crédito)."
+                    message: "Hola, ¿cómo estás? Te escribimos de *Colaboratium* (Global Loan S.A.), la primera plataforma de créditos entre particulares (P2P) registrada ante el BCRA bajo el *Nº 40.015* (verificable en: https://www.bcra.gob.ar/registro-de-proveedores-de-servicios-de-creditos-entre-particulares-a-traves-de-plataformas/).\n\nConectamos inversores con créditos calificados por IA en una operatoria totalmente bancarizada y No Custodial (Banco BIND y Banco Coinag), donde al inversor *JAMÁS se le cobra ninguna comisión ni gasto* (todo costo lo abona el tomador del crédito)."
                 }
             },
             {
@@ -144,7 +142,7 @@ REGLAS DE DERIVACIÓN (OBLIGATORIO FINALIZAR CON):
                 type: 'message',
                 position: { x: 720, y: 200 },
                 data: {
-                    message: "¿Con qué opción te gustaría avanzar? Escribe el número o palabra clave:\n\n1️⃣ Escribe *1* o *inversor*: Quiero Invertir mi Capital (rendimiento estimado variable ~75% a 105% TNA, scoring IA del 5% al 15%, atomización en 20+ microcréditos y simulador online).\n2️⃣ Escribe *2* o *asesor*: Quiero ser Asesor Comercial (escala oficial de comisiones del 4%, 5% y 6%, clientes propios o pauta Meta Ads, y Webinar de Capacitación en vivo).\n3️⃣ Escribe *3* o *lider*: Tengo Equipo de Trabajo / Ser Líder (10% overriding de bolsa de equipo, consola jerárquica con ranking gráfico y Webinar de Líderes).\n\n👉 También podés consultarme cualquier duda directamente."
+                    message: "¿Con qué opción te gustaría avanzar? Escribe el número o palabra clave:\n\n1️⃣ Escribe *1* o *inversor*: Quiero Invertir mi Capital (tasa variable competitiva superior al plazo fijo, scoring estricto por IA, atomización en 20+ microcréditos y simulador online).\n2️⃣ Escribe *2* o *asesor*: Quiero ser Asesor Comercial (Comisiones de alto rendimiento, clientes propios o pauta Meta Ads, y Webinar de Capacitación en vivo).\n3️⃣ Escribe *3* o *lider*: Tengo Equipo de Trabajo / Ser Líder (overriding adicional sobre la bolsa de equipo, plataforma jerárquica con ranking gráfico y Webinar de Líderes).\n\n👉 También podés consultarme cualquier duda directamente."
                 }
             },
             {
@@ -195,7 +193,7 @@ REGLAS DE DERIVACIÓN (OBLIGATORIO FINALIZAR CON):
                 type: 'message',
                 position: { x: 380, y: 200 },
                 data: {
-                    message: "¡Excelente! Como *Asesor Comercial de Colaboratium* vas a conectar inversores con la primera plataforma P2P registrada ante el BCRA bajo el *Nº 40.015* (https://www.bcra.gob.ar/registro-de-proveedores-de-servicios-de-creditos-entre-particulares-a-traves-de-plataformas/) con soporte de *Banco BIND y Banco Coinag*.\n\n*Ventaja clave para tus clientes:* Al inversor *JAMÁS se le cobra ningún concepto ni comisión* (el uso de la plataforma y comisiones los paga exclusivamente el tomador del crédito), y el inversor opera 100% bancarizado desde su propio CVU.\n\n*Tu Escala Oficial de Comisiones (en tu CVU vía Monotributo/RI):*\n• *3 meses:* *4% total* (*3% inmediato* al calce efectivo + 1% en 3 cuotas).\n• *6 meses:* *5% total* (*3% inmediato* al calce efectivo + 2% en 6 cuotas).\n• *12 meses:* *6% total* (*3% inmediato* al calce efectivo + 3% en 12 cuotas).\n• *Comisión Recurrente:* Cada vez que tu inversor cobra cuotas y reinvierte, volvés a cobrar la comisión completa automáticamente."
+                    message: "¡Excelente! Como *Asesor Comercial de Colaboratium* vas a conectar inversores con la primera plataforma P2P registrada ante el BCRA bajo el *Nº 40.015* (https://www.bcra.gob.ar/registro-de-proveedores-de-servicios-de-creditos-entre-particulares-a-traves-de-plataformas/) con soporte de *Banco BIND y Banco Coinag*.\n\n*Ventaja clave para tus clientes:* Al inversor *JAMÁS se le cobra ningún concepto ni comisión* (el uso de la plataforma y comisiones los paga exclusivamente el tomador del crédito), y el inversor opera totalmente bancarizado desde su propio CVU.\n\n*Tus Comisiones de alto rendimiento (en tu CVU vía Monotributo/RI):*\n• *Plazos de 3, 6 y 12 meses:* Comisiones escalonadas de alto rendimiento con cobro inmediato al calce efectivo de cada operación y residual en cuotas bancarizadas.\n• *Comisión Recurrente:* Cada vez que tu inversor cobra cuotas y reinvierte, volvés a cobrar la comisión completa automáticamente."
                 }
             },
             {
@@ -204,7 +202,7 @@ REGLAS DE DERIVACIÓN (OBLIGATORIO FINALIZAR CON):
                 type: 'message',
                 position: { x: 720, y: 200 },
                 data: {
-                    message: "*¿Cómo captar clientes y cómo se asignan tus comisiones?*\n\n1. *Clientes Propios o por tu Publicidad en Redes (100% Comisión - Caso Carlos Gómez):* Desde https://colaboratium.com.ar/ generás tu propio link UTM. En la capacitación te enseñamos el paso a paso en *Meta Ads* (Instagram Reels/Stories con -35% de costo): con una pauta mínima de *$5.000 ARS/día ($150.000 ARS/mes)* generás entre *4 y 10 consultas diarias*, logrando entre *6 y 18 nuevos inversores por mes* con el *100% de la comisión desde la primera colocación*.\n2. *Leads provistos por Colaboratium (Caso Juan Ramírez):* Cuando un inversor entra por publicidad institucional de Colaboratium e invierte, el 3% inicial de ese primer crédito queda en Colaboratium. Luego te asignamos ese cliente: cobrás *todas las cuotas residuales de ese primer crédito* y, apenas reinvierta, *ya cobrás el 100% de la comisión plena (3% inmediato + residual)*.\n\nAdemás contás con nuestras oficinas en *Av. del Libertador 264, 1° Piso Contrafrente, Vicente López* para citar clientes si lo necesitás."
+                    message: "*¿Cómo captar clientes y cómo se asignan tus comisiones?*\n\n1. *Clientes Propios o por tu Publicidad en Redes (Comisión Plena - Caso Carlos Gómez):* Desde https://colaboratium.com.ar/ generás tu propio link UTM. En la capacitación te enseñamos el paso a paso en *Meta Ads* (Instagram Reels/Stories optimizados de bajo costo): con una pauta mínima de *$5.000 ARS/día ($150.000 ARS/mes)* generás entre *4 y 10 consultas diarias*, logrando entre *6 y 18 nuevos inversores por mes* con *comisión plena desde la primera colocación*.\n2. *Leads provistos por Colaboratium (Caso Juan Ramírez):* Cuando un inversor entra por publicidad institucional de Colaboratium e invierte, el tramo inicial de ese primer crédito queda en Colaboratium. Luego te asignamos ese cliente: cobrás *todas las cuotas residuales de ese primer crédito* y, apenas reinvierta, *ya cobrás la comisión plena completa (cobro inicial + residual)*.\n\nAdemás contás con nuestras oficinas en *Av. del Libertador 264, 1° Piso Contrafrente, Vicente López* para citar clientes si lo necesitás."
                 }
             },
             {
@@ -223,7 +221,7 @@ REGLAS DE DERIVACIÓN (OBLIGATORIO FINALIZAR CON):
                 type: 'rag',
                 position: { x: 1400, y: 200 },
                 data: {
-                    prompt: "Eres el Asistente Oficial de Reclutamiento de Asesores Comerciales de Colaboratium (Global Loan S.A., Registro BCRA Nº 40.015: https://www.bcra.gob.ar/registro-de-proveedores-de-servicios-de-creditos-entre-particulares-a-traves-de-plataformas/). Explica con claridad la escala de comisiones (4% a 3m, 5% a 6m, 6% a 12m, con 3% al calce inmediato), clientes propios (100% comisión Caso Carlos Gómez) vs leads provistos por Colaboratium (Caso Juan Ramírez). Enfatiza que al inversor JAMÁS se le cobra comisión (paga todo el tomador). PROHIBIDO mencionar el canon anual de membresía en el chat (se explica en el webinar). Prohibido prometer tasa garantizada. Invita a participar en el Webinar de Capacitación del calendario o a la reunión en Av. del Libertador 264, 1° Piso Contrafrente, Vicente López."
+                    prompt: "Eres el Asistente Oficial de Reclutamiento de Asesores Comerciales de Colaboratium (Global Loan S.A., Registro BCRA Nº 40.015: https://www.bcra.gob.ar/registro-de-proveedores-de-servicios-de-creditos-entre-particulares-a-traves-de-plataformas/). Explica con claridad las Comisiones de alto rendimiento con cobro al calce inmediato y residual en cuotas según plazo (3, 6 o 12 meses), clientes propios (comisión plena Caso Carlos Gómez) vs leads provistos por Colaboratium (Caso Juan Ramírez). Enfatiza que al inversor JAMÁS se le cobra comisión (paga todo el tomador). PROHIBIDO mencionar el canon anual de membresía en el chat (se explica en el webinar). Prohibido prometer tasa garantizada y PROHIBIDO mencionar o escribir porcentajes ni el símbolo de porcentaje en tus respuestas. Invita a participar en el Webinar de Capacitación del calendario o a la reunión en Av. del Libertador 264, 1° Piso Contrafrente, Vicente López."
                 }
             },
             {
@@ -272,16 +270,16 @@ REGLAS DE DERIVACIÓN (OBLIGATORIO FINALIZAR CON):
                 type: 'message',
                 position: { x: 720, y: 200 },
                 data: {
-                    message: "Cumpliendo con las normas de transparencia del *BCRA (Registro Nº 40.015)*, en Colaboratium *no prometemos tasas fijas ni garantizamos rendimientos asegurados*, ya que no somos un depósito bancario sino un Marketplace de créditos reales.\n\n*¿Cómo se calcula tu rendimiento hoy en tiempo real?*\nNuestro sistema releva automáticamente las tasas vigentes del mercado argentino:\n• Mientras un *Plazo Fijo o Billetera Remunerada* paga apenas entre *16% y 24% TNA* (con topes de saldo), los *bancos* prestan ese dinero al *60%–90% TNA* y las *fintechs de préstamos* cobran entre *90% y 150% TNA*.\n• Al eliminar al banco intermediario y tener *0% de comisión para vos*, en Colaboratium accedés a una *tasa variable competitiva promedio de entre 75% y 105% TNA estimada*, según el plazo (3, 6 o 12 meses) y el producto que elijas (*Conservador, Intermedio o Avanzado*)."
+                    message: "Cumpliendo con las normas de transparencia del *BCRA (Registro Nº 40.015)*, en Colaboratium *no prometemos tasas fijas ni garantizamos rendimientos asegurados*, ya que no somos un depósito bancario sino un Marketplace de créditos reales.\n\n*¿Cómo se calcula tu rendimiento hoy en tiempo real?*\nNuestro sistema releva automáticamente las tasas vigentes del mercado argentino:\n• Frente a alternativas tradicionales como *Plazo Fijo o Billeteras Remuneradas* (con rendimientos pasivos conservadores y topes de saldo) o la intermediación costosa de bancos y financieras convencionales,\n• Al eliminar al banco intermediario y operar con *costo cero de comisión para vos*, en Colaboratium accedés a una *tasa variable competitiva superior al plazo fijo*, según el plazo (3, 6 o 12 meses) y el producto que elijas (*Conservador, Intermedio o Avanzado*), que podés simular en tiempo real desde https://colaboratium.com.ar/inversiones.php#simulador."
                 }
             },
             {
                 id: 'node_b3_seguridad',
-                name: 'B3: Seguridad e IA Profunda (5% al 15%)',
+                name: 'B3: Seguridad e IA Profunda',
                 type: 'message',
                 position: { x: 1060, y: 200 },
                 data: {
-                    message: "Protegemos tu operatoria con 4 pilares de seguridad y trazabilidad:\n\n1. *100% No Custodial (Tu propio CVU):* Operás desde tu propio CVU con soporte de *Banco BIND y Banco Coinag*. Colaboratium nunca toca tu dinero; fluye directo de tu CVU al tomador.\n2. *Agente de IA de Evaluación Profunda (Aprueba solo del 5% al 15%):* Valida biometría facial *Renaper (prueba de vida), Central de Deudores BCRA, Veraz, Nosis y UIF/Worldsys*, e investiga *relaciones contractuales de cónyuge, trabajo formal inscripto, antigüedad laboral e informes de ARCA/AFIP*. Descarta del 85% al 95% y aprueba únicamente al *5%–15% de mejor calificación*.\n3. *Atomización en 20+ Préstamos y 3 Productos:* Tu capital se fracciona en 20 o más microcréditos distintos dentro de 3 opciones: *Conservador* (100% automático), *Intermedio* (asistido por IA) y *Avanzado* (selección por legajo).\n4. *Cobranza Automatizada + Legales:* Débito directo con avisos preventivos por bot (24 hs antes, a las 48 hs, 96 hs y cada 72 hs) y gestión con estudios jurídicos partners."
+                    message: "Protegemos tu operatoria con 4 pilares de seguridad y trazabilidad:\n\n1. *Totalmente No Custodial (Tu propio CVU):* Operás desde tu propio CVU con soporte de *Banco BIND y Banco Coinag*. Colaboratium nunca toca tu dinero; fluye directo de tu CVU al tomador.\n2. *Agente de IA de Evaluación Profunda (Selección estricta):* Valida biometría facial *Renaper (prueba de vida), Central de Deudores BCRA, Veraz, Nosis y UIF/Worldsys*, e investiga *relaciones contractuales de cónyuge, trabajo formal inscripto, antigüedad laboral e informes de ARCA/AFIP*. Realiza un filtrado riguroso descartando la gran mayoría de solicitudes y aprueba únicamente a los *perfiles de mejor calificación*.\n3. *Atomización en 20+ Préstamos y 3 Productos:* Tu capital se fracciona en 20 o más microcréditos distintos dentro de 3 opciones: *Conservador* (totalmente automático), *Intermedio* (asistido por IA) y *Avanzado* (selección por legajo).\n4. *Cobranza Automatizada + Legales:* Débito directo con avisos preventivos por bot (24 hs antes, a las 48 hs, 96 hs y cada 72 hs) y gestión con estudios jurídicos partners."
                 }
             },
             {
@@ -300,7 +298,7 @@ REGLAS DE DERIVACIÓN (OBLIGATORIO FINALIZAR CON):
                 type: 'rag',
                 position: { x: 1740, y: 200 },
                 data: {
-                    prompt: "Eres el Asistente Senior de Inversores de Colaboratium (Global Loan S.A. - Registro BCRA Nº 40.015: https://www.bcra.gob.ar/registro-de-proveedores-de-servicios-de-creditos-entre-particulares-a-traves-de-plataformas/). Marco normativo BCRA estricto: NUNCA prometas tasas fijas ni rendimientos garantizados. Explica el modelo P2P, la tasa variable de mercado (~75% a 105% TNA estimada vs 16%-24% de plazo fijo), los límites ($100.000 a $10.000.000 sin papeles extra), el simulador online (https://colaboratium.com.ar/inversiones.php#simulador) y los 4 pilares: No Custodial (CVU propio en BIND/Coinag), Agente de IA que aprueba solo del 5% al 15%, atomización en 20+ préstamos y cobranza por bot. Cero costo para el inversor."
+                    prompt: "Eres el Asistente Senior de Inversores de Colaboratium (Global Loan S.A. - Registro BCRA Nº 40.015: https://www.bcra.gob.ar/registro-de-proveedores-de-servicios-de-creditos-entre-particulares-a-traves-de-plataformas/). Marco normativo BCRA estricto: NUNCA prometas tasas fijas ni rendimientos garantizados, y PROHIBIDO mencionar o escribir porcentajes ni el símbolo de porcentaje en tus respuestas. Explica el modelo P2P, la tasa variable competitiva de mercado frente al plazo fijo, los límites ($100.000 a $10.000.000 sin papeles extra), el simulador online (https://colaboratium.com.ar/inversiones.php#simulador) para ver estimaciones en vivo y los 4 pilares: No Custodial (CVU propio en BIND/Coinag), Agente de IA de evaluación altamente selectiva, atomización en 20+ préstamos y cobranza por bot. Cero costo para el inversor."
                 }
             },
             {
@@ -339,16 +337,16 @@ REGLAS DE DERIVACIÓN (OBLIGATORIO FINALIZAR CON):
                 type: 'message',
                 position: { x: 380, y: 200 },
                 data: {
-                    message: "¡Excelente! Si contás con un equipo de vendedores, en *Colaboratium* (Global Loan S.A. - Registro BCRA Nº 40.015: https://www.bcra.gob.ar/registro-de-proveedores-de-servicios-de-creditos-entre-particulares-a-traves-de-plataformas/) tenemos un rol jerárquico de *Líder de Equipo* con oficina comercial de respaldo en *Av. del Libertador 264, 1° Piso Contrafrente, Vicente López*.\n\n*Como Líder contás con un Esquema Triple de Ingresos:*\n1. *10% de la Bolsa Total de Comisiones de tu Equipo (Overriding):* Cobrás un *10% adicional* sobre la totalidad de las comisiones que generen todos los asesores debajo de tu nodo en el Organigrama.\n2. *100% de Comisión en Clientes Propios / Precargados (Caso Carlos Gómez):* En inversores traídos por tu red (cartera propia o pauta con link UTM), se liquida el 100% de la escala oficial desde el primer calce (*4% a 3m, 5% a 6m y 6% a 12m*, con *3% inmediato al calce* y el resto en cuotas + reinversiones).\n3. *Leads Enviados por el Marketing de Colaboratium (Caso Juan Ramírez):* Cuando Colaboratium capta un inversor por publicidad propia (ej. $100.000), solo el 3% del primer calce queda en Colaboratium. Luego el inversor se te asigna a vos: cobrás *todas las cuotas residuales del primer préstamo y el 100% de la comisión plena (3% inmediato + residual) en todas sus reinversiones futuras*."
+                    message: "¡Excelente! Si contás con un equipo de vendedores, en *Colaboratium* (Global Loan S.A. - Registro BCRA Nº 40.015: https://www.bcra.gob.ar/registro-de-proveedores-de-servicios-de-creditos-entre-particulares-a-traves-de-plataformas/) tenemos un rol jerárquico de *Líder de Equipo* con oficina comercial de respaldo en *Av. del Libertador 264, 1° Piso Contrafrente, Vicente López*.\n\n*Como Líder contás con un Esquema Triple de Ingresos:*\n1. *Overriding sobre la Bolsa Total de Comisiones de tu Equipo:* Cobrás un *adicional recurrente* sobre la totalidad de las comisiones que generen todos los asesores debajo de tu nodo en el Organigrama.\n2. *Comisión Plena en Clientes Propios / Precargados (Caso Carlos Gómez):* En inversores traídos por tu red (cartera propia o pauta con link UTM), se liquida la escala completa de comisiones de alto rendimiento desde el primer calce (planes de 3, 6 y 12 meses, con cobro inicial al calce y el resto en cuotas + reinversiones).\n3. *Leads Enviados por el Marketing de Colaboratium (Caso Juan Ramírez):* Cuando Colaboratium capta un inversor por publicidad propia, solo el tramo inicial del primer calce queda en Colaboratium. Luego el inversor se te asigna a vos: cobrás *todas las cuotas residuales del primer préstamo y la comisión plena completa (cobro inicial + residual) en todas sus reinversiones futuras*."
                 }
             },
             {
                 id: 'node_c2_responsabilidad',
-                name: 'C2: Herramientas de Consola y Protección del 10%',
+                name: 'C2: Herramientas de Plataforma y Protección del Overriding',
                 type: 'message',
                 position: { x: 720, y: 200 },
                 data: {
-                    message: "*Herramientas de Consola y Protección de tu Bolsa del 10%:*\n\n• En https://colaboratium.com.ar/ vas a tener tu panel de Líder donde podés dar de alta vendedores (`Comercial > Crear Vendedor`), emitir links UTM y monitorear el *Ranking Gráfico de Desempeño en tiempo real* (tanto por cantidad de leads captados vs. activos como por volumen de cartera fondeada en ARS con el Top 3 de tu equipo).\n• *Ventaja comercial y protección de tu bolsa del 10%:*\n  - Tus vendedores tienen el mejor argumento del mercado: *al inversor jamás se le cobra comisión* (paga todo el tomador) y nunca sale de su propio CVU.\n  - Tu función como Líder es cuidar que tu equipo cumpla el Decálogo de Transparencia del BCRA (no prometer tasas fijas ni tocar dinero de clientes). Y nuestro sistema protege tu trabajo: *si tenés 10 asesores y 1 comete una infracción, jamás perdés el 10% de todo tu equipo*; la sanción aplica solo sobre el asesor infractor (y si vos mismo reportás o corregís un desvío a tiempo, tenés *0% de quita* sobre tu bolsa)."
+                    message: "*Herramientas de Plataforma y Protección de tu Bolsa de Overriding:*\n\n• En https://colaboratium.com.ar/ vas a tener tu panel de Líder donde podés dar de alta vendedores (`Comercial > Crear Vendedor`), emitir links UTM y monitorear el *Ranking Gráfico de Desempeño en tiempo real* (tanto por cantidad de leads captados vs. activos como por volumen de cartera fondeada en ARS con el Top 3 de tu equipo).\n• *Ventaja comercial y protección de tu bolsa de equipo:*\n  - Tus vendedores tienen el mejor argumento del mercado: *al inversor jamás se le cobra comisión* (paga todo el tomador) y nunca sale de su propio CVU.\n  - Tu función como Líder es cuidar que tu equipo cumpla el Decálogo de Transparencia del BCRA (no prometer tasas fijas ni tocar dinero de clientes). Y nuestro sistema protege tu trabajo: *si tenés asesores en tu equipo y 1 comete una infracción, jamás perdés el overriding de todo tu equipo*; la sanción aplica solo sobre el asesor infractor (y si vos mismo reportás o corregís un desvío a tiempo, mantenés *protección íntegra sin quitas* sobre tu bolsa)."
                 }
             },
             {
@@ -367,7 +365,7 @@ REGLAS DE DERIVACIÓN (OBLIGATORIO FINALIZAR CON):
                 type: 'rag',
                 position: { x: 1400, y: 200 },
                 data: {
-                    prompt: "Eres el Asistente Senior para Líderes de Equipos Comerciales de Colaboratium (Global Loan S.A. - Registro BCRA Nº 40.015: https://www.bcra.gob.ar/registro-de-proveedores-de-servicios-de-creditos-entre-particulares-a-traves-de-plataformas/). Explica el rol de Líder: 10% overriding sobre la bolsa total de su equipo, 100% comisión en clientes propios (Caso Carlos Gómez), y comisiones en leads de Colaboratium (Caso Juan Ramírez). Destaca las herramientas de consola: panel jerárquico, ranking gráfico y protección del 10% del líder (las sanciones son individuales sobre el asesor infractor y 0% de quita si el líder reporta desvíos). Invita al Webinar de Líderes del calendario o a la reunión ejecutiva en Av. del Libertador 264, Vicente López. Respeta todos los guardarraíles."
+                    prompt: "Eres el Asistente Senior para Líderes de Equipos Comerciales de Colaboratium (Global Loan S.A. - Registro BCRA Nº 40.015: https://www.bcra.gob.ar/registro-de-proveedores-de-servicios-de-creditos-entre-particulares-a-traves-de-plataformas/). Explica el rol de Líder: overriding adicional sobre la bolsa total de comisiones de su equipo, comisión plena en clientes propios (Caso Carlos Gómez) y comisiones en leads de Colaboratium (Caso Juan Ramírez). Destaca las herramientas de plataforma en https://colaboratium.com.ar/: panel jerárquico, ranking gráfico y protección íntegra del overriding del líder (las sanciones son individuales sobre el asesor infractor y sin quita si el líder reporta desvíos). Invita al Webinar de Líderes del calendario o a la reunión ejecutiva en Av. del Libertador 264, Vicente López. REGLA ESTRICTA: NUNCA menciones ni escribas porcentajes ni el símbolo de porcentaje en tus respuestas. Respeta todos los guardarraíles."
                 }
             },
             {

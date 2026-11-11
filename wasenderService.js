@@ -1,6 +1,7 @@
 const axios = require('axios');
 const db = require('./database');
 const { processMessageWithAI } = require('./groqService');
+const { sanitizeBotReplyText } = require('./aiRouter');
 
 /**
  * Servicio de Integración con WASender API (wasenderapi.com)
@@ -259,7 +260,7 @@ class WasenderService {
         // 5. Opción 2: Créditos / Inversión
         if (textLower === '2' || /invers|cr[eé]dito|pr[eé]stamo|tasa|rendimiento/i.test(textLower)) {
             await saveMeta({ awaiting_webinar_booking: false });
-            return `📈 *Colaboratium — Plataforma de Créditos e Inversión P2P*\n\n• *Para Inversores*: Rendimientos atractivos en dólares o pesos. 0% comisión para el inversor (el tomador paga el costo de la plataforma). Operación 100% bancarizada desde tu propia cuenta en Banco BIND / Coinag.\n• *Para Tomadores*: Créditos ágiles calzados en 48 hs con condiciones transparentes.\n• *Marco Regulatorio*: Registro Oficial BCRA Nº 40.015.\n\n¿Deseas recibir la propuesta informativa para *Inversores* o solicitar un *Crédito*? Responde con *Inversor* o *Crédito*.`;
+            return `📈 *Colaboratium — Plataforma de Créditos e Inversión P2P*\n\n• *Para Inversores*: Rendimientos atractivos en dólares o pesos, sin costo ni comisión alguna para el inversor (el tomador paga el costo de la plataforma). Operación totalmente bancarizada desde tu propia cuenta en Banco BIND / Coinag.\n• *Para Tomadores*: Créditos ágiles calzados en 48 hs con condiciones transparentes.\n• *Marco Regulatorio*: Registro Oficial BCRA Nº 40.015.\n\n¿Deseas recibir la propuesta informativa para *Inversores* o solicitar un *Crédito*? Responde con *Inversor* o *Crédito*.`;
         }
 
         // 6. Opción 3 o Humano
@@ -291,7 +292,7 @@ class WasenderService {
             return `🌐 *Acceso a la App Principal de Colaboratium*\n\n` +
                    `Podés ingresar, registrarte y operar directamente desde nuestra plataforma web oficial:\n` +
                    `👉 https://colaboratium.com.ar/\n\n` +
-                   `Recordá que la operatoria es 100% digital y No Custodial (con respaldo de Banco BIND y Banco Coinag, Registro BCRA Nº 40.015), sin descargas ni intermediarios.\n\n` +
+                   `Recordá que la operatoria es totalmente digital y No Custodial (con respaldo de Banco BIND y Banco Coinag, Registro BCRA Nº 40.015), sin descargas ni intermediarios.\n\n` +
                    `¿Necesitás ayuda para registrarte o preferís que coordinemos una capacitación en vivo?`;
         }
 
@@ -301,12 +302,12 @@ class WasenderService {
                 const aiPromptContext = {
                     codigo: codigoEmpresa,
                     nombre: 'Global Loan S.A. — Colaboratium',
-                    systemPromptOverride: 'Eres el asistente virtual en la línea oficial WA_S***5062 (+54 9 11 2473 5062) para Agentes y publicidad de redes de Colaboratium (Global Loan S.A., Registro BCRA Nº 40.015). La aplicación/plataforma principal es https://colaboratium.com.ar/: SIEMPRE que cualquier persona pregunte cómo acceder, ingresar, registrarse o pida el link de la app/plataforma, envíala a https://colaboratium.com.ar/ (no existe consola.colaboratium.com.ar ni app descargable ni wallet interno). NUNCA menciones porcentajes fijos de comisión; utiliza siempre el término "Comisiones de alto rendimiento". Enfatiza el calce en 48 hs, 0% costo al inversor, respaldo de Banco BIND y Coinag. Si preguntan específicamente por webinars o reuniones, indícales las opciones de fechas del calendario oficial y pídeles su número de opción, nombre completo y correo electrónico para agendarlos.'
+                    systemPromptOverride: 'Eres el asistente virtual en la línea oficial WA_S***5062 (+54 9 11 2473 5062) para Agentes y publicidad de redes de Colaboratium (Global Loan S.A., Registro BCRA Nº 40.015). La aplicación/plataforma principal es https://colaboratium.com.ar/: SIEMPRE que cualquier persona pregunte cómo acceder, ingresar, registrarse o pida el link de la app/plataforma, envíala a https://colaboratium.com.ar/ (no existe consola.colaboratium.com.ar ni app descargable ni wallet interno). PROHIBIDO ABSOLUTO escribir símbolos "%" ni "por ciento" ni cifras porcentuales de comisiones, tasas u overriding por escrito; habla solo de "Comisiones de alto rendimiento" con cobro al calce, residual en cuotas y reinversiones, cuyo detalle numérico se ve en el Webinar. Enfatiza el calce en 48 hs, sin costo ni comisión al inversor, respaldo de Banco BIND y Coinag. Si preguntan específicamente por webinars o reuniones, indícales las opciones de fechas del calendario oficial y pídeles su número de opción, nombre completo y correo electrónico para agendarlos.'
                 };
                 const history = contact?.id ? await db.obtenerHistorialMensajes(contact.id, 6) : [];
                 const aiReply = await processMessageWithAI(userText, history, aiPromptContext);
                 if (aiReply && aiReply.length > 10 && !aiReply.includes('Lo siento, en este momento no puedo')) {
-                    return aiReply.replace(/\[ROLE:.*?\]/ig, '').replace(/\[HANDOFF\]/g, '').trim();
+                    return sanitizeBotReplyText(aiReply.replace(/\[ROLE:.*?\]/ig, '').replace(/\[HANDOFF\]/g, '').trim());
                 }
             }
         } catch (aiErr) {
@@ -475,8 +476,9 @@ class WasenderService {
                     VALUES (?, ?, 'ENTRANTE', 'texto', ?, 'recibido', ?)
                 `, [contactoId, metaMsgId, text, lineCode]);
 
-                // 3. Generar respuesta automática del Bot
-                const botReplyText = await this.generateBotReply(cleanPhone, text, contacto, codigoEmpresa);
+                // 3. Generar respuesta automática del Bot (garantizando cero porcentajes por escrito)
+                const rawBotReply = await this.generateBotReply(cleanPhone, text, contacto, codigoEmpresa);
+                const botReplyText = sanitizeBotReplyText(rawBotReply);
 
                 if (botReplyText) {
                     console.log(`🤖 [WASender ${lineCode}] Despachando respuesta automática a ${cleanPhone}...`);

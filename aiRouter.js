@@ -173,6 +173,63 @@ async function callOllama(messages, model = OLLAMA_MODEL, codigoEmpresa = 'KRZMJ
 }
 
 /**
+ * Limpia cualquier porcentaje escrito, tabla Markdown o negrita doble antes de enviar por WhatsApp.
+ */
+function sanitizeBotReplyText(text) {
+    if (!text || typeof text !== 'string') return text || '';
+
+    // Proteger URLs (pueden contener %20 u otros escapes)
+    const urls = [];
+    let clean = text.replace(/https?:\/\/[^\s)>"']+/gi, (match) => {
+        const idx = urls.length;
+        urls.push(match);
+        return `__URL_TOKEN_${idx}__`;
+    });
+
+    // 1. Quitar paréntesis que mencionen porcentajes (ej: "(3 % inmediato + cuotas)")
+    clean = clean.replace(/\s*\([^()\n]*\b\d+[\d.,\s]*%[^()\n]*\)/g, '');
+
+    // 2. Reemplazar expresiones frecuentes con porcentaje por redacción cualitativa sin "%"
+    clean = clean
+        .replace(/\b0\s*%\s*(?:de\s+)?(?:comisi[oó]n(?:es)?|costo|gastos?)\b/gi, 'sin costo ni comisión')
+        .replace(/\b100\s*%\s*(?:de\s+(?:la\s+)?)?comisi[oó]n(?:es)?/gi, 'esquema completo de comisiones')
+        .replace(/\bel\s+100\s*%\s*(en|de)\b/gi, 'comisión plena $1')
+        .replace(/\b100\s*%\s*(bancarizad[ao]s?|digital(?:es)?|no\s+custodial(?:es)?|gratuit[ao]s?|autogestionad[ao]s?|autom[aá]tic[ao]s?|virtual(?:es)?)/gi, 'totalmente $1')
+        .replace(/~?\b\d+(?:[.,]\d+)?\s*%\s*(?:a|al|y|\-|–)\s*\d+(?:[.,]\d+)?\s*%(?:\s*TNA)?/gi, 'condiciones competitivas de mercado')
+        .replace(/\b\d+(?:[.,]\d+)?\s*%\s*(?:inmediat[ao]\s*al\s*calce|al\s*calce\s*inmediat[ao]|inmediat[ao]\s*\+\s*cuotas|inmediat[ao]|overriding|adicional|inicial)/gi, 'esquema de alto rendimiento')
+        .replace(/\b\d+(?:[.,]\d+)?\s*%/g, '')
+        .replace(/\bpor\s+ciento\b/gi, '')
+        .replace(/%/g, '');
+
+    // 3. Convertir formato Markdown a WhatsApp (*negrita* y listas sin tablas)
+    clean = clean.replace(/\*\*(.+?)\*\*/g, '*$1*');
+    const lines = clean.split('\n');
+    const formattedLines = [];
+    for (const rawLine of lines) {
+        const trimmed = rawLine.trim();
+        if (/^\|[\s\-:|]+\|$/.test(trimmed)) continue; // línea separadora de tabla markdown
+        if (/^\|.*\|$/.test(trimmed)) {
+            const cells = trimmed.slice(1, -1).split('|').map(c => c.trim()).filter(Boolean);
+            if (cells.length > 0 && !/^(opci[oó]n|fecha|modalidad)$/i.test(cells[0])) {
+                formattedLines.push(`• ${cells.join(' — ')}`);
+            }
+            continue;
+        }
+        formattedLines.push(rawLine);
+    }
+    clean = formattedLines.join('\n')
+        .replace(/[ \t]{2,}/g, ' ')
+        .replace(/ +([,.;:!?])/g, '$1')
+        .replace(/\(\s*\)/g, '')
+        .replace(/\n{3,}/g, '\n\n')
+        .trim();
+
+    // Restaurar URLs
+    clean = clean.replace(/__URL_TOKEN_(\d+)__/g, (_, idx) => urls[Number(idx)] || '');
+    return clean;
+}
+
+/**
  * Router Principal Inteligente:
  * Gestiona el envío con cascada de velocidad y failovers automáticos.
  */
@@ -246,7 +303,8 @@ REGLAS DE DERIVACIÓN Y RESPUESTA OBLIGATORIA:
    • Solo trámites formales de alta o constancia de CBU institucional van a [ROLE:Administracion].
 4. PROHIBIDO TABLAS MARKDOWN: NUNCA utilices tablas de markdown (| col1 | col2 |) porque WhatsApp no las soporta y se muestran como texto roto e ilegible. Si presentas horarios o comparativas, usa viñetas (•), negritas (*) y saltos de línea claros y limpios.
 5. Cuando el usuario pregunte por horarios o capacitaciones, dale las opciones numeradas del CALENDARIO OFICIAL de forma clara y amigable invitándolo a responder con el número de opción y su email. NUNCA inventes fechas.
-6. APP PRINCIPAL Y ACCESO (REGLA OBLIGATORIA): La aplicación y plataforma principal oficial de Colaboratium es *https://colaboratium.com.ar/*. SIEMPRE que cualquier persona pregunte cómo acceder, ingresar, registrarse, abrir la cuenta o pida el enlace/link de la app o plataforma, debes enviarla directamente a *https://colaboratium.com.ar/* (es una aplicación web; NO menciones descargas de App Store/Google Play ni el dominio obsoleto consola.colaboratium.com.ar ni "wallet interno"). Si pide el enlace inmediatamente después de hablar de la app, dale *https://colaboratium.com.ar/*, NO le envíes links de webinars salvo que haya preguntado explícitamente por capacitación o reunión.`
+6. APP PRINCIPAL Y ACCESO (REGLA OBLIGATORIA): La aplicación y plataforma principal oficial de Colaboratium es *https://colaboratium.com.ar/*. SIEMPRE que cualquier persona pregunte cómo acceder, ingresar, registrarse, abrir la cuenta o pida el enlace/link de la app o plataforma, debes enviarla directamente a *https://colaboratium.com.ar/* (es una aplicación web; NO menciones descargas de App Store/Google Play ni el dominio obsoleto consola.colaboratium.com.ar ni "wallet interno"). Si pide el enlace inmediatamente después de hablar de la app, dale *https://colaboratium.com.ar/*, NO le envíes links de webinars salvo que haya preguntado explícitamente por capacitación o reunión.
+7. PROHIBICIÓN ABSOLUTA DE PORCENTAJES (% POR ESCRITO): NUNCA incluyas el símbolo "%" ni la palabra "por ciento" ni cifras numéricas porcentuales sobre comisiones (ni "3%", "4%", "5%", "6%", "10%", "100%"), overriding ni tasas en tus mensajes escritos. Habla únicamente de forma cualitativa ("Comisiones de alto rendimiento con cobro al calce, residual en cuotas y reinversiones", "comisión plena en clientes propios y reinversiones", "overriding adicional de equipo", "sin costo ni comisión para el inversor", "totalmente bancarizado y No Custodial", "filtro estricto de IA", "tasas variables de mercado en tiempo real en https://colaboratium.com.ar/inversiones.php#simulador"). Toda escala numérica se explica en vivo en el Webinar o reunión presencial.`
         }
     ];
 
@@ -269,7 +327,7 @@ REGLAS DE DERIVACIÓN Y RESPUESTA OBLIGATORIA:
     if (!result) result = await callGroq(messages, 'openai/gpt-oss-20b', codigoEmpresa);
     if (result) {
         console.log(`⚡ [AI ROUTER] Respondido por: ${result.model} (${result.tokens} tokens)`);
-        return result.text;
+        return sanitizeBotReplyText(result.text);
     }
 
     // 2. Probar Cerebras Cloud (Prioridad 2)
@@ -277,7 +335,7 @@ REGLAS DE DERIVACIÓN Y RESPUESTA OBLIGATORIA:
     result = await callCerebras(messages, 'llama3.1-8b', codigoEmpresa);
     if (result) {
         console.log(`⚡ [AI ROUTER] Respondido por: ${result.model} (${result.tokens} tokens)`);
-        return result.text;
+        return sanitizeBotReplyText(result.text);
     }
 
     // 3. Probar Gemini 1.5 Flash (Prioridad 3)
@@ -285,7 +343,7 @@ REGLAS DE DERIVACIÓN Y RESPUESTA OBLIGATORIA:
     result = await callGemini(messages, codigoEmpresa);
     if (result) {
         console.log(`⚡ [AI ROUTER] Respondido por: ${result.model} (${result.tokens} tokens)`);
-        return result.text;
+        return sanitizeBotReplyText(result.text);
     }
 
     // 4. Probar OpenRouter (Prioridad 4)
@@ -293,7 +351,7 @@ REGLAS DE DERIVACIÓN Y RESPUESTA OBLIGATORIA:
     result = await callOpenRouter(messages, 'meta-llama/llama-3.1-8b-instruct', codigoEmpresa);
     if (result) {
         console.log(`⚡ [AI ROUTER] Respondido por: ${result.model} (${result.tokens} tokens)`);
-        return result.text;
+        return sanitizeBotReplyText(result.text);
     }
 
     // 5. Fallback a Ollama Local (Desbordes / Servidor Local)
@@ -301,7 +359,7 @@ REGLAS DE DERIVACIÓN Y RESPUESTA OBLIGATORIA:
     result = await callOllama(messages, OLLAMA_MODEL, codigoEmpresa);
     if (result) {
         console.log(`✅ [AI ROUTER] Respondido por: ${result.model} (${result.tokens} tokens)`);
-        return result.text;
+        return sanitizeBotReplyText(result.text);
     }
 
     // Fallback de contingencia si todos están caídos
@@ -335,6 +393,7 @@ async function summarizeConversationWithAI(chatHistoryText, codigoEmpresa = 'KRZ
 module.exports = {
     routeAiMessage,
     summarizeConversationWithAI,
+    sanitizeBotReplyText,
     callGroq,
     callCerebras,
     callGemini,
