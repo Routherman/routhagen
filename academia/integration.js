@@ -220,7 +220,8 @@ async function extractVerifiedClerkId(req) {
             clockSkewInMs: 60000
         });
         return claims && claims.sub ? String(claims.sub) : null;
-    } catch {
+    } catch (err) {
+        console.warn('[academia-auth] Token de Clerk rechazado:', err?.message || err);
         return null;
     }
 }
