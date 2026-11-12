@@ -934,8 +934,9 @@ class B2BProspectsService {
                     phone = `B2B-${p.id.replace(/-/g, '').substring(0, 10)}`;
                 }
 
-                const grupo = isLeader ? 'LIDERES' : 'PROSPECTO ASESORES';
-                const rolAsignado = isLeader ? 'Líderes' : 'Asesores';
+                // Nunca promover prospectos B2B fríos directamente a LIDERES / Asesores sin login o solicitud de participación
+                const grupo = isLeader ? 'PROSPECTO LIDERES' : 'PROSPECTO ASESORES';
+                const rolAsignado = isLeader ? 'Prospecto Lideres' : 'Prospecto Asesores';
 
                 const suggestedEmailTemplate = isLeader ? (layerCfg.templateLeaderEmail || layerCfg.templateEmail) : layerCfg.templateEmail;
                 const suggestedWhatsappTemplate = layerCfg.templateWhatsapp;

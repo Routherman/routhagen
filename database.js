@@ -1329,14 +1329,18 @@ async function obtenerContactosCRM(codigo_empresa, grupo = null, search = '') {
     const params = [codigo_empresa];
     if (grupo && grupo !== 'TODOS') {
         const gUpper = grupo.trim().toUpperCase();
-        if (gUpper === 'PROSPECTO ASESORES' || gUpper === 'PROSPECTOS' || gUpper === 'PROSPECTO') {
+        if (gUpper === 'PROSPECTO LIDERES' || gUpper === 'PROSPECTO LÍDERES') {
+            query += ' AND (UPPER(grupo) LIKE "%PROSPECTO LIDER%" OR UPPER(rol_asignado) LIKE "%PROSPECTO LIDER%")';
+        } else if (gUpper === 'PROSPECTO ASESORES') {
+            query += ' AND ((UPPER(grupo) LIKE "%PROSPECTO%" AND UPPER(grupo) NOT LIKE "%LIDER%") OR (UPPER(rol_asignado) LIKE "%PROSPECTO%" AND UPPER(COALESCE(grupo,"")) NOT LIKE "%LIDER%"))';
+        } else if (gUpper === 'PROSPECTOS' || gUpper === 'PROSPECTO') {
             query += ' AND (UPPER(grupo) LIKE "%PROSPECTO%" OR UPPER(rol_asignado) LIKE "%PROSPECTO%")';
         } else if (gUpper === 'TEAM') {
             query += ' AND (UPPER(grupo) IN ("TEAM", "STAFF", "EMPLEADOS") OR UPPER(rol_asignado) IN ("TEAM", "STAFF", "EMPLEADO", "EMPLEADOS"))';
         } else if (gUpper === 'ASESORES') {
-            query += ' AND (UPPER(grupo) IN ("ASESORES", "ASESOR") OR UPPER(rol_asignado) IN ("ASESORES", "ASESOR"))';
+            query += ' AND UPPER(COALESCE(grupo,"")) NOT LIKE "%PROSPECTO%" AND (UPPER(grupo) IN ("ASESORES", "ASESOR") OR UPPER(rol_asignado) IN ("ASESORES", "ASESOR"))';
         } else if (gUpper === 'LIDERES') {
-            query += ' AND (UPPER(grupo) IN ("LIDERES", "LIDER", "LÍDERES", "LÍDER") OR UPPER(rol_asignado) IN ("LIDERES", "LIDER", "LÍDERES", "LÍDER"))';
+            query += ' AND UPPER(COALESCE(grupo,"")) NOT LIKE "%PROSPECTO%" AND (UPPER(grupo) IN ("LIDERES", "LIDER", "LÍDERES", "LÍDER") OR UPPER(rol_asignado) IN ("LIDERES", "LIDER", "LÍDERES", "LÍDER"))';
         } else if (gUpper === 'INVERSORES') {
             query += ' AND (UPPER(grupo) IN ("INVERSORES", "INVERSOR") OR UPPER(rol_asignado) IN ("INVERSORES", "INVERSOR"))';
         } else if (gUpper === 'SOPORTE') {
@@ -1469,18 +1473,26 @@ async function obtenerArbolDependencias(codigo_empresa) {
         const map = {};
         (scores || []).forEach(s => { if (s.contacto_id) map[s.contacto_id] = s; });
         all.forEach(c => {
-            if (map[c.id]) {
+            const grpUp = (c.grupo || '').toUpperCase();
+            const rolUp = (c.rol_asignado || '').toUpperCase();
+            const isProspect = grpUp.includes('PROSPECTO') || rolUp.includes('PROSPECTO');
+            if (!isProspect && map[c.id]) {
                 c.score = map[c.id].score_actual;
                 c.rango = map[c.id].rango;
-            } else if (['ASESORES', 'LIDERES', 'TEAM', 'SOPORTE', 'CREDITOS'].includes((c.grupo || c.rol_asignado || '').toUpperCase())) {
-                c.score = 500;
-                c.rango = 'PLATA';
             }
         });
     } catch(e) {}
 
-    const lideres = all.filter(c => (c.grupo || '').toUpperCase() === 'LIDERES' || (c.rol_asignado || '').toLowerCase() === 'lideres');
-    const asesores = all.filter(c => (c.grupo || '').toUpperCase() === 'ASESORES' || (c.rol_asignado || '').toLowerCase() === 'asesores');
+    const lideres = all.filter(c => {
+        const grp = (c.grupo || '').toUpperCase();
+        const rol = (c.rol_asignado || '').toLowerCase();
+        return !grp.includes('PROSPECTO') && (grp === 'LIDERES' || rol === 'lideres');
+    });
+    const asesores = all.filter(c => {
+        const grp = (c.grupo || '').toUpperCase();
+        const rol = (c.rol_asignado || '').toLowerCase();
+        return !grp.includes('PROSPECTO') && (grp === 'ASESORES' || rol === 'asesores');
+    });
     const inversores = all.filter(c => (c.grupo || '').toUpperCase() === 'INVERSORES' || (c.rol_asignado || '').toLowerCase() === 'inversores');
     const clientes = all.filter(c => (c.grupo || '').toUpperCase() === 'CLIENTES' && !['Lideres', 'Asesores', 'Inversores'].includes(c.rol_asignado));
 
@@ -1528,9 +1540,17 @@ async function crearContactoCRM(codigo_empresa, data) {
     }
 
     const metaStr = formatMetadataExtra(data.metadata_extra);
+    const grupoVal = data.grupo || 'CLIENTES';
+    const rolVal = data.rol_asignado || (
+        grupoVal === 'PROSPECTO LIDERES' ? 'Prospecto Lideres'
+        : grupoVal === 'PROSPECTO ASESORES' ? 'Prospecto Asesores'
+        : grupoVal === 'LIDERES' ? 'Lideres'
+        : grupoVal === 'ASESORES' ? 'Asesores'
+        : 'General'
+    );
     const [res] = await pool.query(`
-        INSERT INTO contactos (telefono, nombre, codigo_empresa, email, dni, direccion, cbu, alias, banco, sucursal, grupo, instagram, facebook, linkedin, telegram, metadata_extra)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO contactos (telefono, nombre, codigo_empresa, email, dni, direccion, cbu, alias, banco, sucursal, grupo, rol_asignado, instagram, facebook, linkedin, telegram, metadata_extra)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON DUPLICATE KEY UPDATE
             nombre = VALUES(nombre),
             email = VALUES(email),
@@ -1541,6 +1561,7 @@ async function crearContactoCRM(codigo_empresa, data) {
             banco = VALUES(banco),
             sucursal = VALUES(sucursal),
             grupo = VALUES(grupo),
+            rol_asignado = COALESCE(VALUES(rol_asignado), rol_asignado),
             instagram = VALUES(instagram),
             facebook = VALUES(facebook),
             linkedin = VALUES(linkedin),
@@ -1557,7 +1578,8 @@ async function crearContactoCRM(codigo_empresa, data) {
         data.alias?.trim() || null,
         data.banco?.trim() || null, 
         data.sucursal?.trim() || null, 
-        data.grupo || 'CLIENTES',
+        grupoVal,
+        rolVal,
         data.instagram?.trim() || null, 
         data.facebook?.trim() || null, 
         data.linkedin?.trim() || null, 

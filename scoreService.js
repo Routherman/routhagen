@@ -130,18 +130,202 @@ async function initScoreTables(pool) {
 }
 
 /**
- * Popula scores iniciales para los contactos del CRM de roles Asesores, Líderes y Team
+ * Reclasifica a prospectos a los contactos en LIDERES/ASESORES que nunca se loguearon
+ * ni pidieron participar, y limpia sus puntajes fantasma en score_usuarios.
+ */
+async function reclassifyInactiveProspectsAndPruneScores(pool, codigoEmpresa = 'KRZMJI', { dryRun = false } = {}) {
+    if (!pool) return { reclassifiedToProspectLideres: 0, reclassifiedToProspectAsesores: 0, removedScores: 0, removedHistory: 0 };
+
+    const activeParticipationCondition = `
+        (
+            (c.email IS NOT NULL AND c.email != '' AND EXISTS (
+                SELECT 1 FROM users u
+                WHERE LOWER(u.email) COLLATE utf8mb4_unicode_ci = LOWER(c.email) COLLATE utf8mb4_unicode_ci
+                  AND u.codigo_empresa = c.codigo_empresa
+            ))
+            OR EXISTS (SELECT 1 FROM mensajes m WHERE m.contacto_id = c.id AND m.direccion = 'ENTRANTE')
+            OR EXISTS (SELECT 1 FROM tickets t WHERE t.contacto_id = c.id)
+            OR (
+                (
+                    COALESCE(c.metadata_extra, '') LIKE '%webinar%'
+                    OR COALESCE(c.metadata_extra, '') LIKE '%inscrip%'
+                    OR COALESCE(c.metadata_extra, '') LIKE '%confirmado_en%'
+                    OR COALESCE(c.metadata_extra, '') LIKE '%solicitud%'
+                )
+                AND LOWER(COALESCE(c.email, '')) NOT LIKE 'cpanel@%'
+                AND LOWER(COALESCE(c.email, '')) NOT LIKE '%mailer-daemon%'
+                AND LOWER(COALESCE(c.email, '')) NOT LIKE '%noreply%'
+                AND LOWER(COALESCE(c.email, '')) NOT LIKE '%no-reply%'
+            )
+        )
+    `;
+
+    // 1. Contactos hoy marcados en LIDERES / ASESORES sin login ni solicitud de participación ni B2B activo
+    const [toProspectLideres] = await pool.query(`
+        SELECT c.id FROM contactos c
+        WHERE c.codigo_empresa = ?
+          AND (
+            UPPER(COALESCE(c.grupo, '')) IN ('LIDERES', 'LIDER', 'LÍDERES', 'LÍDER')
+            OR (
+              UPPER(COALESCE(c.grupo, '')) NOT IN ('TEAM', 'SOPORTE', 'CREDITOS', 'CRÉDITOS', 'MAIN', 'MASTER')
+              AND UPPER(COALESCE(c.rol_asignado, '')) IN ('LIDERES', 'LIDER', 'LÍDERES', 'LÍDER')
+            )
+          )
+          AND (
+            COALESCE(c.metadata_extra, '') LIKE '%origen_b2b%'
+            OR LOWER(COALESCE(c.email, '')) LIKE 'cpanel@%'
+            OR NOT ${activeParticipationCondition}
+          )
+          AND NOT (
+            COALESCE(c.metadata_extra, '') LIKE '%origen_b2b%'
+            AND ${activeParticipationCondition}
+          )
+    `, [codigoEmpresa]);
+
+    const [toProspectAsesores] = await pool.query(`
+        SELECT c.id FROM contactos c
+        WHERE c.codigo_empresa = ?
+          AND (
+            UPPER(COALESCE(c.grupo, '')) IN ('ASESORES', 'ASESOR')
+            OR (
+              UPPER(COALESCE(c.grupo, '')) NOT IN ('TEAM', 'SOPORTE', 'CREDITOS', 'CRÉDITOS', 'MAIN', 'MASTER', 'LIDERES', 'LIDER', 'LÍDERES', 'LÍDER')
+              AND UPPER(COALESCE(c.rol_asignado, '')) IN ('ASESORES', 'ASESOR')
+            )
+          )
+          AND (
+            COALESCE(c.metadata_extra, '') LIKE '%origen_b2b%'
+            OR UPPER(COALESCE(c.grupo, '')) LIKE '%PROSPECTO%'
+            OR LOWER(COALESCE(c.email, '')) LIKE 'cpanel@%'
+            OR NOT ${activeParticipationCondition}
+          )
+          AND NOT (
+            UPPER(COALESCE(c.grupo, '')) NOT LIKE '%PROSPECTO%'
+            AND ${activeParticipationCondition}
+          )
+    `, [codigoEmpresa]);
+
+    const liderIds = (toProspectLideres || []).map(r => r.id);
+    const asesorIds = (toProspectAsesores || []).map(r => r.id);
+
+    if (!dryRun) {
+        if (liderIds.length > 0) {
+            await pool.query(
+                `UPDATE contactos
+                 SET grupo = 'PROSPECTO LIDERES',
+                     rol_asignado = 'Prospecto Lideres',
+                     estado_resolucion = COALESCE(NULLIF(estado_resolucion, ''), 'PENDIENTE')
+                 WHERE id IN (?) AND codigo_empresa = ?`,
+                [liderIds, codigoEmpresa]
+            );
+        }
+        if (asesorIds.length > 0) {
+            await pool.query(
+                `UPDATE contactos
+                 SET grupo = 'PROSPECTO ASESORES',
+                     rol_asignado = 'Prospecto Asesores',
+                     estado_resolucion = COALESCE(NULLIF(estado_resolucion, ''), 'PENDIENTE')
+                 WHERE id IN (?) AND codigo_empresa = ?`,
+                [asesorIds, codigoEmpresa]
+            );
+        }
+    }
+
+    // 2. Detectar puntajes fantasma (prospectos, contactos fríos sin login ni participación, cpanel, roles no operativos)
+    const [staleScores] = await pool.query(`
+        SELECT s.id, s.identificador
+        FROM score_usuarios s
+        LEFT JOIN contactos c ON s.contacto_id = c.id
+        WHERE s.codigo_empresa = ?
+          AND (
+            UPPER(COALESCE(s.rol, '')) LIKE '%PROSPECTO%'
+            OR UPPER(COALESCE(s.rol, '')) IN ('CLIENTES', 'GENERAL', 'INVERSORES')
+            OR LOWER(COALESCE(s.email, '')) LIKE 'cpanel@%'
+            OR (
+              s.contacto_id IS NOT NULL AND (
+                c.id IS NULL
+                OR UPPER(COALESCE(c.grupo, '')) LIKE '%PROSPECTO%'
+                OR UPPER(COALESCE(c.rol_asignado, '')) LIKE '%PROSPECTO%'
+                OR (
+                  UPPER(COALESCE(c.grupo, '')) NOT IN ('TEAM', 'SOPORTE', 'CREDITOS', 'CRÉDITOS', 'MAIN', 'MASTER')
+                  AND NOT ${activeParticipationCondition}
+                )
+              )
+            )
+          )
+    `, [codigoEmpresa]);
+
+    let removedHistory = 0;
+    let removedScores = 0;
+    const staleIdentificadores = [...new Set((staleScores || []).map(r => r.identificador).filter(Boolean))];
+    const staleScoreIds = (staleScores || []).map(r => r.id);
+
+    if (!dryRun && staleScoreIds.length > 0) {
+        const chunkSize = 500;
+        for (let i = 0; i < staleIdentificadores.length; i += chunkSize) {
+            const batch = staleIdentificadores.slice(i, i + chunkSize);
+            const [hDel] = await pool.query(
+                "DELETE FROM score_historial_eventos WHERE codigo_empresa = ? AND identificador IN (?)",
+                [codigoEmpresa, batch]
+            );
+            removedHistory += Number(hDel.affectedRows || 0);
+        }
+        for (let i = 0; i < staleScoreIds.length; i += chunkSize) {
+            const batch = staleScoreIds.slice(i, i + chunkSize);
+            const [sDel] = await pool.query(
+                "DELETE FROM score_usuarios WHERE codigo_empresa = ? AND id IN (?)",
+                [codigoEmpresa, batch]
+            );
+            removedScores += Number(sDel.affectedRows || 0);
+        }
+    } else if (dryRun) {
+        removedScores = staleScoreIds.length;
+    }
+
+    return {
+        reclassifiedToProspectLideres: liderIds.length,
+        reclassifiedToProspectAsesores: asesorIds.length,
+        removedScores,
+        removedHistory
+    };
+}
+
+/**
+ * Popula scores iniciales solo para usuarios activos / participantes reales (nunca prospectos fríos)
  */
 async function seedInitialScores(pool, codigoEmpresa = 'KRZMJI') {
     if (!pool) return;
     try {
+        // Primero reclasificar prospectos fríos y limpiar scores fantasma heredados
+        const cleanup = await reclassifyInactiveProspectsAndPruneScores(pool, codigoEmpresa);
+        if (cleanup.reclassifiedToProspectLideres || cleanup.reclassifiedToProspectAsesores || cleanup.removedScores) {
+            console.log(`🧹 [SCORE CLEANUP]: Reclasificados ${cleanup.reclassifiedToProspectLideres} Líderes y ${cleanup.reclassifiedToProspectAsesores} Asesores sin login/participación a Prospectos; purgados ${cleanup.removedScores} scores fantasma.`);
+        }
+
         const [contacts] = await pool.query(`
-            SELECT id, nombre, email, telefono, grupo, rol_asignado, creado_en 
-            FROM contactos 
-            WHERE codigo_empresa = ? 
+            SELECT c.id, c.nombre, c.email, c.telefono, c.grupo, c.rol_asignado, c.creado_en
+            FROM contactos c
+            WHERE c.codigo_empresa = ?
+              AND UPPER(COALESCE(c.grupo, '')) IN ('ASESORES', 'LIDERES', 'LÍDERES', 'TEAM', 'SOPORTE', 'CREDITOS', 'CRÉDITOS', 'MAIN', 'MASTER')
+              AND UPPER(COALESCE(c.grupo, '')) NOT LIKE '%PROSPECTO%'
+              AND UPPER(COALESCE(c.rol_asignado, '')) NOT LIKE '%PROSPECTO%'
+              AND LOWER(COALESCE(c.email, '')) NOT LIKE 'cpanel@%'
               AND (
-                UPPER(grupo) IN ('ASESORES', 'LIDERES', 'TEAM', 'SOPORTE', 'CREDITOS') 
-                OR UPPER(rol_asignado) IN ('ASESORES', 'LIDERES', 'TEAM', 'SOPORTE', 'CREDITOS')
+                UPPER(COALESCE(c.grupo, '')) IN ('TEAM', 'SOPORTE', 'CREDITOS', 'CRÉDITOS', 'MAIN', 'MASTER')
+                OR (c.email IS NOT NULL AND c.email != '' AND EXISTS (
+                    SELECT 1 FROM users u
+                    WHERE LOWER(u.email) COLLATE utf8mb4_unicode_ci = LOWER(c.email) COLLATE utf8mb4_unicode_ci
+                      AND u.codigo_empresa = c.codigo_empresa
+                ))
+                OR EXISTS (SELECT 1 FROM mensajes m WHERE m.contacto_id = c.id AND m.direccion = 'ENTRANTE')
+                OR EXISTS (SELECT 1 FROM tickets t WHERE t.contacto_id = c.id)
+                OR (
+                    COALESCE(c.metadata_extra, '') NOT LIKE '%origen_b2b%'
+                    AND (
+                        COALESCE(c.metadata_extra, '') LIKE '%webinar%'
+                        OR COALESCE(c.metadata_extra, '') LIKE '%inscrip%'
+                        OR COALESCE(c.metadata_extra, '') LIKE '%confirmado_en%'
+                    )
+                )
               )
         `, [codigoEmpresa]);
 
@@ -158,43 +342,12 @@ async function seedInitialScores(pool, codigoEmpresa = 'KRZMJI') {
             );
 
             if (!existing || existing.length === 0) {
-                // Generar un score coherente y realista basado en su ID y perfil para variedad demostrable
-                // (por ejemplo: perfiles destacados en Diamante y Oro, y otros en Plata estándar)
-                let baseScore = 550;
-                let leadsAtendidos = 8;
-                let tiempoPromedio = 12.5;
-                let volumen = 4500000;
-                let reclamos = 0;
-
-                const idNum = Number(c.id) || 1;
-                if (idNum % 3 === 0) {
-                    baseScore = 880; // Diamante
-                    leadsAtendidos = 24;
-                    tiempoPromedio = 4.2;
-                    volumen = 18500000;
-                } else if (idNum % 2 === 0) {
-                    baseScore = 740; // Oro
-                    leadsAtendidos = 16;
-                    tiempoPromedio = 7.8;
-                    volumen = 9200000;
-                } else if (idNum % 5 === 0) {
-                    baseScore = 480; // Bronce leve
-                    leadsAtendidos = 5;
-                    tiempoPromedio = 28.0;
-                    volumen = 1200000;
-                    reclamos = 1;
-                } else {
-                    baseScore = 620; // Plata
-                    leadsAtendidos = 11;
-                    tiempoPromedio = 11.0;
-                    volumen = 5600000;
-                }
-
+                const baseScore = 500;
                 const infoRango = calcularRango(baseScore);
 
                 await pool.query(`
                     INSERT INTO score_usuarios (codigo_empresa, identificador, contacto_id, nombre, email, telefono, rol, score_actual, rango, leads_atendidos, tiempo_promedio_min, volumen_cartera, reclamos_abiertos)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, 0, 0)
                 `, [
                     codigoEmpresa,
                     identificador,
@@ -204,26 +357,19 @@ async function seedInitialScores(pool, codigoEmpresa = 'KRZMJI') {
                     c.telefono || null,
                     rol,
                     baseScore,
-                    infoRango.nombre,
-                    leadsAtendidos,
-                    tiempoPromedio,
-                    volumen,
-                    reclamos
+                    infoRango.nombre
                 ]);
 
-                // Registrar eventos iniciales en el libro diario de auditoría
+                // Registrar evento base inicial en el libro diario de auditoría
                 await pool.query(`
                     INSERT INTO score_historial_eventos (codigo_empresa, identificador, tipo_evento, puntos, score_resultante, referencia_tipo, descripcion)
-                    VALUES 
-                    (?, ?, 'SCORE_BASE', 500, 500, 'onboarding', 'Puntaje base de ingreso a la plataforma'),
-                    (?, ?, 'PERFORMANCE_INICIAL', ?, ?, 'evaluacion', 'Ajuste inicial por velocidad de respuesta y gestión de leads')
+                    VALUES (?, ?, 'SCORE_BASE', 500, 500, 'onboarding', 'Puntaje base de ingreso de participante activo')
                 `, [
-                    codigoEmpresa, identificador,
-                    codigoEmpresa, identificador, baseScore - 500, baseScore
+                    codigoEmpresa, identificador
                 ]);
             }
         }
-        console.log(`✅ [SCORE SYSTEM]: Scores iniciales sincronizados para ${contacts.length} contactos de Colaboratium.`);
+        console.log(`✅ [SCORE SYSTEM]: Scores activos verificados para ${contacts.length} integrantes/participantes reales de Colaboratium.`);
     } catch (err) {
         console.error('Error al poblar scores iniciales:', err.message);
     }
@@ -305,15 +451,26 @@ async function registrarEventoScore(pool, {
 async function obtenerScoresRanking(pool, codigoEmpresa = 'KRZMJI', rol = null) {
     if (!pool) return [];
     try {
-        let query = "SELECT * FROM score_usuarios WHERE codigo_empresa = ?";
+        let query = `
+            SELECT s.*
+            FROM score_usuarios s
+            LEFT JOIN contactos c ON s.contacto_id = c.id
+            WHERE s.codigo_empresa = ?
+              AND UPPER(COALESCE(s.rol, '')) NOT LIKE '%PROSPECTO%'
+              AND UPPER(COALESCE(s.rol, '')) NOT IN ('CLIENTES', 'GENERAL', 'INVERSORES')
+              AND (s.contacto_id IS NULL OR (
+                UPPER(COALESCE(c.grupo, '')) NOT LIKE '%PROSPECTO%'
+                AND UPPER(COALESCE(c.rol_asignado, '')) NOT LIKE '%PROSPECTO%'
+              ))
+        `;
         const params = [codigoEmpresa];
 
         if (rol && rol !== 'ALL') {
-            query += " AND UPPER(rol) = ?";
+            query += " AND UPPER(s.rol) = ?";
             params.push(rol.toUpperCase());
         }
 
-        query += " ORDER BY score_actual DESC, leads_atendidos DESC, actualizado_en DESC";
+        query += " ORDER BY s.score_actual DESC, s.leads_atendidos DESC, s.actualizado_en DESC";
         const [rows] = await pool.query(query, params);
 
         return (rows || []).map((row, index) => ({
@@ -822,6 +979,7 @@ function ensurePdfReglamentoFisico() {
 module.exports = {
     calcularRango,
     initScoreTables,
+    reclassifyInactiveProspectsAndPruneScores,
     seedInitialScores,
     registrarEventoScore,
     obtenerScoresRanking,

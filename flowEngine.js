@@ -182,9 +182,11 @@ async function handleFlowEngine(dbContacto, cleanMessage, empresa, accessToken, 
             );
             if (flowAsesor) {
                 matchedFlow = flowAsesor;
-                console.log(`[Flow] Contexto ASESORES detectado desde la plantilla enviada. Asignando Flujo de Asesor: ${matchedFlow.nombre}`);
-                await db.actualizarAsignacionContacto(dbContacto.id, 'Asesores');
-                dbContacto.rol_asignado = 'Asesores';
+                const wantsToJoin = isAffirmativeOrInterested || /asesor|webinar|reuni[oó]n|turno|sumarme|participar|capacitaci[oó]n|info/i.test(userText);
+                const nextRole = wantsToJoin ? 'Asesores' : 'Prospecto Asesores';
+                console.log(`[Flow] Contexto ASESORES detectado desde la plantilla enviada. Asignando Flujo de Asesor: ${matchedFlow.nombre} (rol=${nextRole})`);
+                await db.actualizarAsignacionContacto(dbContacto.id, nextRole);
+                dbContacto.rol_asignado = nextRole;
             }
         } else if (templateContext === 'lideres') {
             const flowLider = flujosActivos.find(f => 
@@ -194,9 +196,11 @@ async function handleFlowEngine(dbContacto, cleanMessage, empresa, accessToken, 
             );
             if (flowLider) {
                 matchedFlow = flowLider;
-                console.log(`[Flow] Contexto LÍDERES detectado desde la plantilla enviada. Asignando Flujo de Líder: ${matchedFlow.nombre}`);
-                await db.actualizarAsignacionContacto(dbContacto.id, 'Lideres');
-                dbContacto.rol_asignado = 'Lideres';
+                const wantsToJoin = isAffirmativeOrInterested || /l[ií]der|equipo|webinar|reuni[oó]n|turno|sumarme|participar|capacitaci[oó]n|info/i.test(userText);
+                const nextRole = wantsToJoin ? 'Lideres' : 'Prospecto Lideres';
+                console.log(`[Flow] Contexto LÍDERES detectado desde la plantilla enviada. Asignando Flujo de Líder: ${matchedFlow.nombre} (rol=${nextRole})`);
+                await db.actualizarAsignacionContacto(dbContacto.id, nextRole);
+                dbContacto.rol_asignado = nextRole;
             }
         } else if (templateContext === 'inversores') {
             const flowInversor = flujosActivos.find(f => 

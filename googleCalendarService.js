@@ -638,6 +638,13 @@ async function processBooking({ slotChoice, customerName, customerEmail, custome
     const cleanPhone = (customerPhone || '').replace(/\D/g, '');
     const isLider = chosenSlot.categoria === 'LIDERES' || /lider|líder/i.test(chosenSlot.titulo || '') || category === 'lideres';
 
+    try {
+        const { isIgnoredSystemEmail } = require('./inboxService');
+        if (customerEmail && isIgnoredSystemEmail(customerEmail, '')) {
+            return { success: false, skippedSystemEmail: true, error: 'Correo de sistema ignorado para reserva' };
+        }
+    } catch (e) {}
+
     // 1. Guardar o actualizar en Agenda CRM
     try {
         await db.crearContactoCRM(codigoEmpresa, {
@@ -645,6 +652,7 @@ async function processBooking({ slotChoice, customerName, customerEmail, custome
             telefono: cleanPhone,
             email: customerEmail,
             grupo: isLider ? 'LIDERES' : 'ASESORES',
+            rol_asignado: isLider ? 'Lideres' : 'Asesores',
             canal: canal === 'email' ? 'email' : 'whatsapp_meta',
             metadata_extra: {
                 slot_id: chosenSlot.id,

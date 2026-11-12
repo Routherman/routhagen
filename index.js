@@ -2815,10 +2815,12 @@ app.get(['/api/empresas/:codigo/crm/contacts', '/api/empresas/:codigo/crm/contac
                 });
 
                 contacts = contacts.map(c => {
-                    const sc = scoreMap[c.id];
-                    const isScoreRole = ['ASESORES', 'LIDERES', 'TEAM', 'SOPORTE', 'CREDITOS'].includes((c.grupo || c.rol_asignado || '').toUpperCase());
-                    const finalScore = sc ? sc.score_actual : (isScoreRole ? 500 : null);
-                    const finalRango = sc ? sc.rango : (isScoreRole ? 'PLATA' : null);
+                    const grpUp = (c.grupo || '').toUpperCase();
+                    const rolUp = (c.rol_asignado || '').toUpperCase();
+                    const isProspect = grpUp.includes('PROSPECTO') || rolUp.includes('PROSPECTO');
+                    const sc = !isProspect ? scoreMap[c.id] : null;
+                    const finalScore = sc ? sc.score_actual : null;
+                    const finalRango = sc ? sc.rango : null;
                     return {
                         ...c,
                         score: finalScore,
@@ -3270,13 +3272,24 @@ app.get('/api/empresas/:codigo/ai-metrics', async (req, res) => {
 // ---------------------------------------------------------
 // RUTAS PARA INBOX GMAIL (ESTILO IABOX) & CALENDAR MEET
 // ---------------------------------------------------------
-const { getInboxEmails, getEmailBody, sendReplyEmail, monitorAndProcessIncomingReplies } = require('./inboxService');
+const { getAvailableInboxAccounts, getInboxEmails, getEmailBody, sendReplyEmail, monitorAndProcessIncomingReplies } = require('./inboxService');
 const { getAvailableWebinarSlots, processBooking } = require('./googleCalendarService');
+
+app.get('/api/empresas/:codigo/inbox/accounts', async (req, res) => {
+    try {
+        const accounts = getAvailableInboxAccounts();
+        res.json({ success: true, accounts });
+    } catch (error) {
+        console.error('Error listando cuentas de inbox:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
 
 app.get('/api/empresas/:codigo/inbox', async (req, res) => {
     try {
         const limit = parseInt(req.query.limit, 10) || 35;
-        const result = await getInboxEmails(limit, req.params.codigo);
+        const account = req.query.account || null;
+        const result = await getInboxEmails(limit, req.params.codigo, account);
         res.json(result);
     } catch (error) {
         console.error('Error obteniendo correos inbox:', error);
@@ -3347,7 +3360,8 @@ app.get('/api/empresas/:codigo/inbox/contact-profile', async (req, res) => {
 
 app.get('/api/empresas/:codigo/inbox/:uid', async (req, res) => {
     try {
-        const result = await getEmailBody(req.params.uid);
+        const account = req.query.account || null;
+        const result = await getEmailBody(req.params.uid, account);
         res.json(result);
     } catch (error) {
         console.error('Error obteniendo cuerpo de correo:', error);
@@ -3357,11 +3371,11 @@ app.get('/api/empresas/:codigo/inbox/:uid', async (req, res) => {
 
 app.post('/api/empresas/:codigo/inbox/reply', async (req, res) => {
     try {
-        const { to, subject, body, inReplyTo } = req.body;
+        const { to, subject, body, inReplyTo, account = null } = req.body;
         if (!to || !body) {
             return res.status(400).json({ success: false, error: 'Faltan campos obligatorios (to, body)' });
         }
-        const result = await sendReplyEmail({ to, subject, body, inReplyTo });
+        const result = await sendReplyEmail({ to, subject, body, inReplyTo, account });
         res.json(result);
     } catch (error) {
         console.error('Error enviando respuesta de correo:', error);

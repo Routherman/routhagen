@@ -455,7 +455,7 @@ class WasenderService {
 
         const [insContact] = await pool.query(`
             INSERT INTO contactos (telefono, nombre, codigo_empresa, grupo, rol_asignado, estado_resolucion, metadata_extra, linea_wa, canal)
-            VALUES (?, ?, ?, 'PROSPECTO ASESORES', 'Asesores', 'PENDIENTE', ?, ?, 'wasender')
+            VALUES (?, ?, ?, 'PROSPECTO ASESORES', 'Prospecto Asesores', 'PENDIENTE', ?, ?, 'wasender')
         `, [
             cleanPhone,
             `Lead WA_S (${cleanPhone.slice(-4)})`,

@@ -1,68 +1,83 @@
 const { ImapFlow } = require('imapflow');
 const { simpleParser } = require('mailparser');
-const nodemailer = require('nodemailer');
 const path = require('path');
 require('dotenv').config({ path: path.join(__dirname, '.env') });
 
-const imapHost = process.env.IMAP_HOST || 'imap.gmail.com';
-const imapPort = parseInt(process.env.IMAP_PORT || '993', 10);
-const imapSecure = process.env.IMAP_SECURE !== undefined ? (process.env.IMAP_SECURE === 'true') : (imapPort === 993);
-const gmailUser = process.env.IMAP_USER || process.env.GMAIL_IMAP_USER || process.env.EMAIL_FROM || 'colaboratium@gmail.com';
-const rawImapPass = process.env.IMAP_PASS || process.env.GMAIL_IMAP_PASS || process.env.GMAIL_PASS || '';
-const gmailPass = (rawImapPass && !rawImapPass.startsWith('xsmtp') && !rawImapPass.startsWith('xkey')) ? rawImapPass.replace(/\s+/g, '') : '';
+const emailService = require('./emailService');
 
 let isMonitoringReplies = false;
 
-function getImapClient() {
-    if (!gmailPass) {
-        throw new Error("No hay contraseña IMAP configurada en IMAP_PASS / GMAIL_IMAP_PASS");
+function getAvailableInboxAccounts() {
+    return emailService.getPublicEmailAccounts();
+}
+
+function getImapClient(accountIdOrEmail = null) {
+    const resolved = emailService.resolveEmailAccount(accountIdOrEmail);
+    const imapCfg = resolved?.imap || {
+        host: process.env.IMAP_HOST || 'imap.gmail.com',
+        port: parseInt(process.env.IMAP_PORT || '993', 10),
+        secure: process.env.IMAP_SECURE !== undefined ? (process.env.IMAP_SECURE === 'true') : true,
+        user: process.env.IMAP_USER || process.env.GMAIL_IMAP_USER || process.env.EMAIL_FROM || 'colaboratium@gmail.com',
+        pass: String(process.env.IMAP_PASS || process.env.GMAIL_IMAP_PASS || '').replace(/\s+/g, '')
+    };
+
+    if (!imapCfg.pass) {
+        throw new Error(`No hay contraseña IMAP configurada para ${imapCfg.user}`);
     }
     const client = new ImapFlow({
-        host: imapHost,
-        port: imapPort,
-        secure: imapSecure,
+        host: imapCfg.host,
+        port: imapCfg.port,
+        secure: imapCfg.secure,
         auth: {
-            user: gmailUser,
-            pass: gmailPass
+            user: imapCfg.user,
+            pass: imapCfg.pass
         },
+        connectionTimeout: 9000,
+        greetingTimeout: 7000,
+        socketTimeout: 10000,
         logger: false
     });
 
-    // Capturar evento 'error' en ImapFlow para evitar crash por ECONNRESET/ETIMEDOUT de Gmail
+    // Capturar evento 'error' en ImapFlow para evitar crash por ECONNRESET/ETIMEDOUT de Gmail o mail corporativo
     client.on('error', (err) => {
-        console.warn(`[ImapFlow Warning] Evento de error en socket IMAP (${err.code || err.message}). Manejado de forma resiliente.`);
+        console.warn(`[ImapFlow Warning] (${imapCfg.user}) Evento de error en socket IMAP (${err.code || err.message}). Manejado de forma resiliente.`);
     });
 
-    return client;
+    return { client, account: resolved };
 }
 
-function getNodemailerTransport() {
-    const { getTransporter } = require('./emailService');
-    return getTransporter();
+function getNodemailerTransport(accountIdOrEmail = null) {
+    return emailService.getTransporterForAccount(accountIdOrEmail);
 }
 
 const db = require('./database');
 
 /**
- * Obtiene la lista de correos recientes del Inbox de Gmail y vincula datos de CRM de contactos
+ * Obtiene la lista de correos recientes de una o todas las casillas IMAP configuradas y vincula datos de CRM
  */
-async function getInboxEmails(limit = 35, codigoEmpresa = 'KRZMJI') {
+async function getSingleAccountInboxEmails(limit = 35, codigoEmpresa = 'KRZMJI', accountIdOrEmail = null) {
+    const resolvedAcc = emailService.resolveEmailAccount(accountIdOrEmail);
+    const activeEmail = resolvedAcc?.email || 'colaboratium@gmail.com';
+    const availableAccounts = getAvailableInboxAccounts();
     let client = null;
     let lock = null;
 
-    if (!gmailPass) {
-        console.log("[inboxService] GMAIL_IMAP_PASS no configurada. Retornando inbox seguro.");
+    if (!resolvedAcc || !resolvedAcc.imap?.pass) {
+        console.log(`[inboxService] Sin contraseña IMAP configurada para ${activeEmail}. Retornando inbox seguro.`);
         return {
             success: true,
             stats: { total: 0, unseen: 0 },
             emails: [],
-            account: gmailUser,
-            warning: "Bandeja IMAP de Gmail no configurada o desconectada temporalmente."
+            account: activeEmail,
+            accountLabel: resolvedAcc?.label || activeEmail,
+            accounts: availableAccounts,
+            warning: `Bandeja IMAP de ${activeEmail} no configurada o desconectada temporalmente.`
         };
     }
 
     try {
-        client = getImapClient();
+        const imapConn = getImapClient(resolvedAcc.email);
+        client = imapConn.client;
         await client.connect();
         lock = await client.getMailboxLock("INBOX");
 
@@ -73,10 +88,13 @@ async function getInboxEmails(limit = 35, codigoEmpresa = 'KRZMJI') {
                 success: true,
                 stats: { total: 0, unseen: status.unseen || 0 },
                 emails: [],
-                account: gmailUser
+                account: activeEmail,
+                accountLabel: resolvedAcc.label,
+                accounts: availableAccounts
             };
         }
-        const startSeq = Math.max(1, total - limit);
+        const safeLimit = Math.max(1, Math.min(Number(limit) || 35, 80));
+        const startSeq = Math.max(1, total - safeLimit + 1);
 
         const emailList = [];
         for await (const msg of client.fetch(`${startSeq}:*`, {
@@ -95,8 +113,10 @@ async function getInboxEmails(limit = 35, codigoEmpresa = 'KRZMJI') {
                     : env?.from?.[0]?.address || "Desconocido",
                 fromEmail: (env?.from?.[0]?.address || "").toLowerCase().trim(),
                 fromName: env?.from?.[0]?.name || env?.from?.[0]?.address?.split('@')[0] || "",
-                to: env?.to?.[0]?.address || "",
+                to: env?.to?.[0]?.address || activeEmail,
                 messageId: env?.messageId || "",
+                account: activeEmail,
+                accountLabel: resolvedAcc.label,
                 contact: null
             });
         }
@@ -184,15 +204,19 @@ async function getInboxEmails(limit = 35, codigoEmpresa = 'KRZMJI') {
             success: true,
             stats: { total: status.messages, unseen: status.unseen },
             emails: emailList,
-            account: gmailUser
+            account: activeEmail,
+            accountLabel: resolvedAcc.label,
+            accounts: availableAccounts
         };
     } catch (err) {
-        console.warn(`[inboxService] Advertencia al leer IMAP de Gmail: ${err.message}`);
+        console.warn(`[inboxService] Advertencia al leer IMAP de ${activeEmail}: ${err.message}`);
         return {
             success: true,
             stats: { total: 0, unseen: 0 },
             emails: [],
-            account: gmailUser,
+            account: activeEmail,
+            accountLabel: resolvedAcc?.label || activeEmail,
+            accounts: availableAccounts,
             warning: err.message
         };
     } finally {
@@ -200,20 +224,84 @@ async function getInboxEmails(limit = 35, codigoEmpresa = 'KRZMJI') {
             try { lock.release(); } catch (e) {}
         }
         if (client) {
-            try { await client.logout(); } catch (e) {}
+            try {
+                await Promise.race([
+                    client.logout().catch(() => {}),
+                    new Promise((resolve) => setTimeout(resolve, 1200))
+                ]);
+            } catch (e) {}
+            try { client.close(); } catch (e) {}
         }
     }
 }
 
+async function getInboxEmails(limit = 35, codigoEmpresa = 'KRZMJI', accountIdOrEmail = null) {
+    const accounts = getAvailableInboxAccounts();
+    const key = String(accountIdOrEmail || '').trim().toLowerCase();
+    if (key === 'all' || key === 'todas') {
+        const receiveAccounts = accounts.filter(a => a.canReceive);
+        if (receiveAccounts.length === 0) {
+            return { success: true, stats: { total: 0, unseen: 0 }, emails: [], account: 'all', accountLabel: 'Todas las casillas', accounts };
+        }
+        const perAccountLimit = Math.max(10, Math.min(25, Math.ceil((Number(limit) || 35) / receiveAccounts.length) + 8));
+        const runAccountWithTimeout = (acc) => Promise.race([
+            getSingleAccountInboxEmails(perAccountLimit, codigoEmpresa, acc.email),
+            new Promise((resolve) => setTimeout(() => resolve({
+                success: true,
+                stats: { total: 0, unseen: 0 },
+                emails: [],
+                account: acc.email,
+                accountLabel: acc.label || acc.email,
+                accounts,
+                warning: `Tiempo de espera agotado para ${acc.email}`
+            }), 12000))
+        ]);
+        const settled = await Promise.allSettled(
+            receiveAccounts.map(acc => runAccountWithTimeout(acc))
+        );
+        const mergedEmails = [];
+        let total = 0;
+        let unseen = 0;
+        const warnings = [];
+        for (const item of settled) {
+            if (item.status === 'fulfilled' && item.value) {
+                total += Number(item.value.stats?.total || 0);
+                unseen += Number(item.value.stats?.unseen || 0);
+                if (Array.isArray(item.value.emails)) {
+                    mergedEmails.push(...item.value.emails);
+                }
+                if (item.value.warning) warnings.push(item.value.warning);
+            } else if (item.status === 'rejected') {
+                warnings.push(item.reason?.message || 'Error leyendo casilla');
+            }
+        }
+        mergedEmails.sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0));
+        return {
+            success: true,
+            stats: { total, unseen },
+            emails: mergedEmails.slice(0, Number(limit) || 40),
+            account: 'all',
+            accountLabel: 'Todas las casillas',
+            accounts,
+            ...(warnings.length ? { warning: warnings.join(' | ') } : {})
+        };
+    }
+
+    return getSingleAccountInboxEmails(limit, codigoEmpresa, accountIdOrEmail);
+}
+
 /**
- * Descarga y parsea el cuerpo completo de un correo por su UID
+ * Descarga y parsea el cuerpo completo de un correo por su UID y casilla
  */
-async function getEmailBody(uid) {
+async function getEmailBody(uid, accountIdOrEmail = null) {
     let client = null;
     let lock = null;
+    let resolvedAcc = null;
 
     try {
-        client = getImapClient();
+        const imapConn = getImapClient(accountIdOrEmail);
+        client = imapConn.client;
+        resolvedAcc = imapConn.account;
         await client.connect();
         lock = await client.getMailboxLock("INBOX");
 
@@ -228,6 +316,8 @@ async function getEmailBody(uid) {
             success: true,
             email: {
                 uid: Number(uid),
+                account: resolvedAcc?.email || null,
+                accountLabel: resolvedAcc?.label || null,
                 subject: parsed.subject || "(Sin Asunto)",
                 from: parsed.from?.text || "",
                 fromEmail: parsed.from?.value?.[0]?.address || "",
@@ -245,30 +335,43 @@ async function getEmailBody(uid) {
             try { lock.release(); } catch (e) {}
         }
         if (client) {
-            try { await client.logout(); } catch (e) {}
+            try {
+                await Promise.race([
+                    client.logout().catch(() => {}),
+                    new Promise((resolve) => setTimeout(resolve, 1200))
+                ]);
+            } catch (e) {}
+            try { client.close(); } catch (e) {}
         }
     }
 }
 
 /**
- * Envía una respuesta de correo desde Gmail SMTP
+ * Envía una respuesta de correo vía SMTP usando la casilla seleccionada
  */
-async function sendReplyEmail({ to, subject, body, inReplyTo }) {
-    const { getEmailConfig } = require('./emailService');
-    const cfg = getEmailConfig();
-    const transporter = getNodemailerTransport();
+async function sendReplyEmail({ to, subject, body, inReplyTo, account = null }) {
+    const resolvedAcc = emailService.resolveEmailAccount(account);
+    const cfg = emailService.getEmailConfig();
+    const transporter = resolvedAcc
+        ? getNodemailerTransport(resolvedAcc.email)
+        : getNodemailerTransport();
+    const fromEmail = resolvedAcc?.email || cfg.fromEmail;
+    const fromName = resolvedAcc?.fromName || cfg.fromName;
+    const replyTo = resolvedAcc?.replyTo || fromEmail || cfg.replyToEmail;
+    const safeSubject = String(subject || '(Sin Asunto)').trim();
+
     const mailOptions = {
-        from: `"${cfg.fromName}" <${cfg.fromEmail}>`,
+        from: `"${fromName}" <${fromEmail}>`,
         to,
-        replyTo: cfg.replyToEmail,
-        subject: subject.startsWith("Re:") ? subject : `Re: ${subject}`,
+        replyTo,
+        subject: safeSubject.startsWith("Re:") ? safeSubject : `Re: ${safeSubject}`,
         text: body,
         html: `<div style="font-family: sans-serif; font-size: 14px; line-height: 1.6; color: #1e293b; white-space: pre-wrap;">${body}</div>`,
         headers: inReplyTo ? { "In-Reply-To": inReplyTo, References: inReplyTo } : {}
     };
 
     const info = await transporter.sendMail(mailOptions);
-    return { success: true, messageId: info.messageId };
+    return { success: true, messageId: info.messageId, fromEmail };
 }
 
 function isIgnoredSystemEmail(fromEmail = '', subject = '') {
@@ -280,6 +383,11 @@ function isIgnoredSystemEmail(fromEmail = '', subject = '') {
         'colaboratium@gmail.com',
         'asesores@colaboratium.com.ar',
         'mkt@colaboratium.com.ar',
+        'cpanel@',
+        'root@',
+        'cron@',
+        'whm@',
+        'daemon@',
         'mailer-daemon',
         'postmaster@',
         'noreply',
@@ -334,7 +442,11 @@ function isIgnoredSystemEmail(fromEmail = '', subject = '') {
         'respuesta automática',
         'respuesta automatica',
         'out of office',
-        'fuera de la oficina'
+        'fuera de la oficina',
+        '[colaboratium.com.ar]',
+        'autossl',
+        'disk usage',
+        'cpanel'
     ];
     return ignoredSubjectPatterns.some(p => subj.includes(p));
 }
@@ -443,12 +555,31 @@ async function monitorAndProcessIncomingReplies(codigoEmpresa = 'KRZMJI', deps =
     };
 
     try {
-        const inboxData = await fetchInbox(20, codigoEmpresa);
-        if (!inboxData || !inboxData.emails || inboxData.emails.length === 0) {
-            return { success: true, ...results, message: 'No hay correos recientes en la bandeja' };
+        const useInjectedFetcher = typeof deps.getInboxEmails === 'function';
+        const targetAccounts = useInjectedFetcher
+            ? [{ email: null }]
+            : getAvailableInboxAccounts().filter(a => a.canReceive);
+
+        const aggregatedEmails = [];
+        for (const acc of targetAccounts) {
+            const inboxData = useInjectedFetcher
+                ? await fetchInbox(20, codigoEmpresa)
+                : await fetchInbox(20, codigoEmpresa, acc.email);
+            if (inboxData && Array.isArray(inboxData.emails)) {
+                for (const em of inboxData.emails) {
+                    aggregatedEmails.push({
+                        ...em,
+                        _mailboxAccount: em.account || acc.email || null
+                    });
+                }
+            }
         }
 
-        for (const msg of inboxData.emails) {
+        if (aggregatedEmails.length === 0) {
+            return { success: true, ...results, message: 'No hay correos recientes en las bandejas' };
+        }
+
+        for (const msg of aggregatedEmails) {
             results.checked++;
             const fromEmail = (msg.fromEmail || '').toLowerCase().trim();
             const preliminarySubject = (msg.subject || '').trim();
@@ -458,7 +589,8 @@ async function monitorAndProcessIncomingReplies(codigoEmpresa = 'KRZMJI', deps =
                 continue;
             }
 
-            const msgIdentifier = msg.messageId || `uid_${msg.uid}_${fromEmail}`;
+            const mailboxScope = msg._mailboxAccount ? `${msg._mailboxAccount}_` : '';
+            const msgIdentifier = msg.messageId || `uid_${mailboxScope}${msg.uid}_${fromEmail}`;
 
             // 1. Verificar / reclamar atómicamente antes de descargar cuerpo o procesar
             if (activeDb && activeDb.pool) {
@@ -475,7 +607,9 @@ async function monitorAndProcessIncomingReplies(codigoEmpresa = 'KRZMJI', deps =
             let fullEmail = msg.fullEmail || null;
             if (!fullEmail) {
                 try {
-                    const bRes = await fetchBody(msg.uid);
+                    const bRes = useInjectedFetcher
+                        ? await fetchBody(msg.uid)
+                        : await fetchBody(msg.uid, msg._mailboxAccount);
                     if (bRes && bRes.success) fullEmail = bRes.email;
                 } catch (errBody) {
                     console.warn(`No se pudo descargar cuerpo para UID ${msg.uid}:`, errBody.message);
@@ -665,6 +799,7 @@ async function monitorAndProcessIncomingReplies(codigoEmpresa = 'KRZMJI', deps =
 }
 
 module.exports = {
+    getAvailableInboxAccounts,
     getInboxEmails,
     getEmailBody,
     sendReplyEmail,

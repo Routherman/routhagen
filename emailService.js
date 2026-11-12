@@ -5,6 +5,13 @@ require('dotenv').config({ path: path.join(__dirname, '.env') });
 // Configuración de transporte de email
 let transporter = null;
 let marketingTransporter = null;
+const accountTransporters = new Map();
+
+function cleanEmailPass(raw) {
+    const val = String(raw || '').trim();
+    if (!val || val.startsWith('xsmtp') || val.startsWith('xkey')) return '';
+    return val.replace(/\s+/g, '');
+}
 
 function createSmtpTransporter({ host, port, secure, user, pass }) {
     if (pass) {
@@ -30,6 +37,151 @@ function createSmtpTransporter({ host, port, secure, user, pass }) {
             return { messageId: `mock_email_${Date.now()}`, accepted: [mailOptions.to] };
         }
     };
+}
+
+function getConfiguredEmailAccounts() {
+    const accounts = [];
+    const seen = new Set();
+
+    const addAccount = (acc) => {
+        const emailKey = String(acc.email || '').trim().toLowerCase();
+        if (!emailKey || seen.has(emailKey)) return;
+        seen.add(emailKey);
+        accounts.push({ ...acc, email: emailKey });
+    };
+
+    // 1. Cuenta principal corporativa / Asesores (asesores@colaboratium.com.ar)
+    const primaryEmail = (process.env.IMAP_USER || process.env.SMTP_USER || process.env.EMAIL_FROM || '').trim();
+    const primaryImapPass = cleanEmailPass(process.env.IMAP_PASS || process.env.SMTP_PASS || process.env.EMAIL_PASS);
+    const primarySmtpPass = cleanEmailPass(process.env.SMTP_PASS || process.env.EMAIL_PASS || process.env.IMAP_PASS);
+    if (primaryEmail) {
+        const hostDefault = primaryEmail.includes('gmail.com') ? 'imap.gmail.com' : 'mail.colaboratium.com.ar';
+        const smtpHostDefault = primaryEmail.includes('gmail.com') ? 'smtp.gmail.com' : 'mail.colaboratium.com.ar';
+        const imapPort = parseInt(process.env.IMAP_PORT || '993', 10);
+        const smtpPort = parseInt(process.env.SMTP_PORT || '465', 10);
+        addAccount({
+            id: primaryEmail.toLowerCase(),
+            email: primaryEmail,
+            label: primaryEmail.includes('asesores@') ? 'Asesores Colaboratium' : (primaryEmail.includes('gmail.com') ? 'Gmail Principal' : 'Correo Corporativo'),
+            provider: primaryEmail.includes('gmail.com') ? 'gmail' : 'colaboratium',
+            fromName: process.env.EMAIL_FROM_NAME || 'Colaboratium Oficial',
+            replyTo: process.env.EMAIL_REPLY_TO || primaryEmail,
+            imap: {
+                host: process.env.IMAP_HOST || hostDefault,
+                port: imapPort,
+                secure: process.env.IMAP_SECURE !== undefined ? (process.env.IMAP_SECURE === 'true') : (imapPort === 993),
+                user: primaryEmail,
+                pass: primaryImapPass
+            },
+            smtp: {
+                host: process.env.SMTP_HOST || smtpHostDefault,
+                port: smtpPort,
+                secure: process.env.SMTP_SECURE !== undefined ? (process.env.SMTP_SECURE === 'true') : (smtpPort === 465),
+                user: process.env.SMTP_USER || primaryEmail,
+                pass: primarySmtpPass
+            },
+            canReceive: Boolean(primaryImapPass),
+            canSend: Boolean(primarySmtpPass)
+        });
+    }
+
+    // 2. Cuenta Gmail configurada (colaboratium@gmail.com)
+    const gmailAddr = (process.env.GMAIL_IMAP_USER || process.env.EMAIL_ADMIN || '').trim();
+    const gmailPass = cleanEmailPass(process.env.GMAIL_IMAP_PASS || process.env.GMAIL_PASS);
+    if (gmailAddr) {
+        addAccount({
+            id: gmailAddr.toLowerCase(),
+            email: gmailAddr,
+            label: 'Gmail Colaboratium',
+            provider: 'gmail',
+            fromName: process.env.EMAIL_FROM_NAME || 'Colaboratium Oficial',
+            replyTo: gmailAddr,
+            imap: {
+                host: 'imap.gmail.com',
+                port: 993,
+                secure: true,
+                user: gmailAddr,
+                pass: gmailPass
+            },
+            smtp: {
+                host: 'smtp.gmail.com',
+                port: 465,
+                secure: true,
+                user: gmailAddr,
+                pass: gmailPass
+            },
+            canReceive: Boolean(gmailPass),
+            canSend: Boolean(gmailPass)
+        });
+    }
+
+    // 3. Cuenta Comercial / Marketing (mkt@colaboratium.com.ar)
+    const mktEmail = (process.env.MARKETING_EMAIL_FROM || process.env.MARKETING_SMTP_USER || '').trim();
+    const mktPass = cleanEmailPass(process.env.MARKETING_SMTP_PASS);
+    if (mktEmail) {
+        const mktSmtpHost = process.env.MARKETING_SMTP_HOST || process.env.SMTP_HOST || 'mail.colaboratium.com.ar';
+        const mktSmtpPort = parseInt(process.env.MARKETING_SMTP_PORT || process.env.SMTP_PORT || '465', 10);
+        const mktImapHost = mktEmail.includes('gmail.com') ? 'imap.gmail.com' : (process.env.MARKETING_IMAP_HOST || mktSmtpHost);
+        const mktImapPort = parseInt(process.env.MARKETING_IMAP_PORT || '993', 10);
+        addAccount({
+            id: mktEmail.toLowerCase(),
+            email: mktEmail,
+            label: 'Marketing Colaboratium',
+            provider: mktEmail.includes('gmail.com') ? 'gmail' : 'colaboratium',
+            fromName: process.env.MARKETING_EMAIL_FROM_NAME || 'Colaboratium Comercial',
+            replyTo: mktEmail,
+            imap: {
+                host: mktImapHost,
+                port: mktImapPort,
+                secure: mktImapPort === 993,
+                user: process.env.MARKETING_SMTP_USER || mktEmail,
+                pass: mktPass
+            },
+            smtp: {
+                host: mktSmtpHost,
+                port: mktSmtpPort,
+                secure: process.env.MARKETING_SMTP_SECURE !== undefined ? (process.env.MARKETING_SMTP_SECURE === 'true') : (mktSmtpPort === 465),
+                user: process.env.MARKETING_SMTP_USER || mktEmail,
+                pass: mktPass
+            },
+            canReceive: Boolean(mktPass),
+            canSend: Boolean(mktPass)
+        });
+    }
+
+    return accounts;
+}
+
+function getPublicEmailAccounts() {
+    return getConfiguredEmailAccounts().map(({ id, email, label, provider, fromName, replyTo, canReceive, canSend }) => ({
+        id,
+        email,
+        label,
+        provider,
+        fromName,
+        replyTo,
+        canReceive,
+        canSend
+    }));
+}
+
+function resolveEmailAccount(accountIdOrEmail = null) {
+    const accounts = getConfiguredEmailAccounts();
+    if (accounts.length === 0) return null;
+    const key = String(accountIdOrEmail || '').trim().toLowerCase();
+    if (!key) return accounts[0];
+    return accounts.find(a => a.id === key || a.email === key || a.label.toLowerCase() === key) || accounts[0];
+}
+
+function getTransporterForAccount(accountIdOrEmail = null) {
+    const acc = resolveEmailAccount(accountIdOrEmail);
+    if (!acc) return getTransporter();
+    if (accountTransporters.has(acc.email)) {
+        return accountTransporters.get(acc.email);
+    }
+    const tr = createSmtpTransporter(acc.smtp);
+    accountTransporters.set(acc.email, tr);
+    return tr;
 }
 
 function getTransporter() {
@@ -551,14 +703,15 @@ function isGmailQuotaError(errorMsg = '') {
 /**
  * Envía un correo genérico con soporte completo de HTML y adjuntos
  */
-async function sendGenericEmail({ to, subject, html, text, attachments = [], headers = {}, channel = 'default' }) {
+async function sendGenericEmail({ to, subject, html, text, attachments = [], headers = {}, channel = 'default', account = null }) {
     try {
-        const useMarketing = channel === 'marketing';
-        const mailer = useMarketing ? getMarketingTransporter() : getTransporter();
+        const useMarketing = !account && channel === 'marketing';
+        const resolvedAcc = account ? resolveEmailAccount(account) : null;
+        const mailer = resolvedAcc ? getTransporterForAccount(resolvedAcc.email) : (useMarketing ? getMarketingTransporter() : getTransporter());
         const cfg = getEmailConfig();
-        const fromEmail = useMarketing ? cfg.marketingFromEmail : cfg.fromEmail;
-        const fromName = useMarketing ? cfg.marketingFromName : cfg.fromName;
-        const replyToEmail = cfg.replyToEmail;
+        const fromEmail = resolvedAcc ? resolvedAcc.email : (useMarketing ? cfg.marketingFromEmail : cfg.fromEmail);
+        const fromName = resolvedAcc ? (resolvedAcc.fromName || cfg.fromName) : (useMarketing ? cfg.marketingFromName : cfg.fromName);
+        const replyToEmail = resolvedAcc ? (resolvedAcc.replyTo || resolvedAcc.email) : cfg.replyToEmail;
 
         const formattedAttachments = (attachments || []).map(att => {
             let filePath = att.url || att.path;
@@ -1144,6 +1297,10 @@ module.exports = {
     getTransporter,
     getMarketingTransporter,
     getEmailConfig,
+    getConfiguredEmailAccounts,
+    getPublicEmailAccounts,
+    resolveEmailAccount,
+    getTransporterForAccount,
     sendTicketEmail,
     sendWebinarConfirmationToAdvisor,
     sendWebinarNotificationToCompany,
