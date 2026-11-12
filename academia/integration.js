@@ -12,6 +12,7 @@ const {
     adaptarRedis
 } = require('./cjs/index');
 const { ENUNCIADOS_COLABORATIUM } = require('./enunciadosColaboratium');
+const { seedCursosColaboratium } = require('./seedCursosColaboratium');
 
 let academiaPool = null;
 let redisClient = null;
@@ -421,6 +422,59 @@ function createAdminCatalogRouter({ pool, mainPool, obtenerUsuario, invalidarCat
         }
     });
 
+    adminRouter.patch('/clases/:id', requireAdmin, async (req, res, next) => {
+        try {
+            const id = z.coerce.number().int().positive().parse(req.params.id);
+            const d = adminClaseSchema.partial().parse(req.body);
+            const [rows] = await pool.query(
+                'SELECT id, modulo_id AS moduloId, nombre, descripcion, proveedor, video_ref AS videoRef, duracion_s AS duracionS, orden, obligatoria_clave AS obligatoriaClave FROM academia_clases WHERE id = ? LIMIT 1',
+                [id]
+            );
+            if (!rows.length) return res.status(404).json({ error: 'Clase no encontrada' });
+            const actual = rows[0];
+
+            const proveedor = d.proveedor ?? actual.proveedor;
+            const rawRef = d.videoRef ?? actual.videoRef;
+            const refNormalizada = normalizarRefVideo(proveedor, rawRef);
+            if (!refNormalizada) {
+                return res.status(422).json({
+                    error: `La referencia de video no es válida para el proveedor '${proveedor}'. Revisá el enlace o ID.`
+                });
+            }
+
+            const duracionS = d.duracionS !== undefined ? d.duracionS : actual.duracionS;
+            const obligatoriaClave = d.obligatoriaClave !== undefined ? (d.obligatoriaClave || null) : actual.obligatoriaClave;
+            if (obligatoriaClave && (!duracionS || duracionS <= 0)) {
+                return res.status(422).json({
+                    error: 'Una clase obligatoria requiere indicar su duración en segundos.'
+                });
+            }
+            if (obligatoriaClave && proveedor === 'drive') {
+                return res.status(422).json({
+                    error: 'Las clases obligatorias no pueden usar Google Drive porque no mide reproducción.'
+                });
+            }
+
+            const nombre = d.nombre ?? actual.nombre;
+            const descripcion = d.descripcion !== undefined ? (d.descripcion || null) : actual.descripcion;
+            const orden = d.orden ?? actual.orden;
+
+            await pool.query(
+                `UPDATE academia_clases
+                 SET nombre = ?, descripcion = ?, proveedor = ?, video_ref = ?, duracion_s = ?, orden = ?, obligatoria_clave = ?
+                 WHERE id = ?`,
+                [nombre, descripcion, proveedor, refNormalizada, duracionS ?? null, orden, obligatoriaClave, id]
+            );
+            await invalidarCatalogo();
+            res.json({ id, moduloId: actual.moduloId, nombre, descripcion, proveedor, videoRef: refNormalizada, duracionS: duracionS ?? null, orden, obligatoriaClave });
+        } catch (err) {
+            if (err?.code === 'ER_DUP_ENTRY') {
+                return res.status(409).json({ error: 'Ya existe una clase obligatoria con esa clave.' });
+            }
+            next(err);
+        }
+    });
+
     adminRouter.delete('/clases/:id', requireAdmin, async (req, res, next) => {
         try {
             const id = z.coerce.number().int().positive().parse(req.params.id);
@@ -504,6 +558,11 @@ function createAcademiaRouterMiddleware(getMainPool) {
 async function initAcademiaBootstrap(mainPool) {
     const pool = getAcademiaPool();
     await initAcademiaSchema(pool);
+    const [[cursoRow]] = await pool.query('SELECT COUNT(*) AS cnt FROM academia_cursos');
+    if (Number(cursoRow?.cnt || 0) === 0) {
+        const seedRes = await seedCursosColaboratium(pool);
+        console.log(`📚 [Academia] Catálogo inicial sembrado (${seedRes.cursosCreados} cursos, ${seedRes.modulosCreados} módulos, ${seedRes.clasesCreadas} clases).`);
+    }
     const stats = await syncAcademiaPersonasYEquipos(pool, mainPool);
     console.log(`🎓 [Academia] Esquema MySQL listo (timezone='Z') y sincronizado (${stats.equiposCount} equipos, ${stats.personasCount} personas).`);
     return stats;
