@@ -4,6 +4,33 @@ require('dotenv').config({ path: path.join(__dirname, '.env') });
 
 // Configuración de transporte de email
 let transporter = null;
+let marketingTransporter = null;
+
+function createSmtpTransporter({ host, port, secure, user, pass }) {
+    if (pass) {
+        return nodemailer.createTransport({
+            host,
+            port,
+            secure,
+            auth: { user, pass },
+            connectionTimeout: 20000,
+            greetingTimeout: 15000,
+            socketTimeout: 30000
+        });
+    }
+    // Transporte de desarrollo / fallback que registra los correos sin fallar
+    return {
+        sendMail: async (mailOptions) => {
+            console.log('\n📧 =================== SIMULACIÓN ENVÍO DE EMAIL ===================');
+            console.log(`De: ${mailOptions.from}`);
+            console.log(`Para: ${mailOptions.to}`);
+            console.log(`Asunto: ${mailOptions.subject}`);
+            console.log(`Cuerpo:\n${(mailOptions.text || mailOptions.html || '').replace(/<[^>]*>?/gm, '').substring(0, 300)}...`);
+            console.log('====================================================================\n');
+            return { messageId: `mock_email_${Date.now()}`, accepted: [mailOptions.to] };
+        }
+    };
+}
 
 function getTransporter() {
     if (transporter) return transporter;
@@ -14,42 +41,50 @@ function getTransporter() {
     const port = parseInt(process.env.SMTP_PORT || (host.includes('gmail') ? '465' : '587'), 10);
     const secure = process.env.SMTP_SECURE !== undefined ? (process.env.SMTP_SECURE === 'true') : (port === 465);
 
-    if (pass) {
-        transporter = nodemailer.createTransport({
-            host,
-            port,
-            secure,
-            auth: { user, pass },
-            connectionTimeout: 20000,
-            greetingTimeout: 15000,
-            socketTimeout: 30000
-        });
-    } else {
-        // Transporte de desarrollo / fallback que registra los correos sin fallar
-        transporter = {
-            sendMail: async (mailOptions) => {
-                console.log('\n📧 =================== SIMULACIÓN ENVÍO DE EMAIL ===================');
-                console.log(`De: ${mailOptions.from}`);
-                console.log(`Para: ${mailOptions.to}`);
-                console.log(`Asunto: ${mailOptions.subject}`);
-                console.log(`Cuerpo:\n${mailOptions.text || mailOptions.html.replace(/<[^>]*>?/gm, '').substring(0, 300)}...`);
-                console.log('====================================================================\n');
-                return { messageId: `mock_email_${Date.now()}`, accepted: [mailOptions.to] };
-            }
-        };
-    }
+    transporter = createSmtpTransporter({ host, port, secure, user, pass });
     return transporter;
+}
+
+function getMarketingTransporter() {
+    if (marketingTransporter) return marketingTransporter;
+
+    const user = process.env.MARKETING_SMTP_USER;
+    const pass = (process.env.MARKETING_SMTP_PASS || '').replace(/\s+/g, '');
+    if (!user || !pass) {
+        return getTransporter();
+    }
+
+    const host = process.env.MARKETING_SMTP_HOST || process.env.SMTP_HOST || 'mail.colaboratium.com.ar';
+    const port = parseInt(process.env.MARKETING_SMTP_PORT || process.env.SMTP_PORT || '465', 10);
+    const secure = process.env.MARKETING_SMTP_SECURE !== undefined
+        ? (process.env.MARKETING_SMTP_SECURE === 'true')
+        : (port === 465);
+
+    marketingTransporter = createSmtpTransporter({ host, port, secure, user, pass });
+    return marketingTransporter;
 }
 
 function getEmailConfig() {
     const fromEmail = process.env.EMAIL_FROM || process.env.SMTP_USER || 'colaboratium@gmail.com';
     const fromName = process.env.EMAIL_FROM_NAME || 'Colaboratium Oficial';
-    const replyToEmail = process.env.EMAIL_REPLY_TO || process.env.GMAIL_IMAP_USER || fromEmail;
+    const marketingFromEmail = process.env.MARKETING_EMAIL_FROM || process.env.MARKETING_SMTP_USER || fromEmail;
+    const marketingFromName = process.env.MARKETING_EMAIL_FROM_NAME || fromName;
+    const replyToEmail = process.env.EMAIL_REPLY_TO || process.env.IMAP_USER || process.env.GMAIL_IMAP_USER || fromEmail;
     const adminEmail = process.env.EMAIL_ADMIN || process.env.GMAIL_IMAP_USER || replyToEmail || 'colaboratium@gmail.com';
     const whatsappNumber = String(process.env.WHATSAPP_OFFICIAL_NUMBER || '5491124735062').replace(/\D/g, '') || '5491124735062';
     const publicUrl = (process.env.FRONTEND_PUBLIC_URL || 'https://routhagent.vercel.app').replace(/\/+$/, '');
     const backendUrl = (process.env.BACKEND_URL || publicUrl).replace(/\/+$/, '');
-    return { fromEmail, fromName, replyToEmail, adminEmail, whatsappNumber, publicUrl, backendUrl };
+    return {
+        fromEmail,
+        fromName,
+        marketingFromEmail,
+        marketingFromName,
+        replyToEmail,
+        adminEmail,
+        whatsappNumber,
+        publicUrl,
+        backendUrl
+    };
 }
 
 /**
@@ -516,12 +551,13 @@ function isGmailQuotaError(errorMsg = '') {
 /**
  * Envía un correo genérico con soporte completo de HTML y adjuntos
  */
-async function sendGenericEmail({ to, subject, html, text, attachments = [], headers = {} }) {
+async function sendGenericEmail({ to, subject, html, text, attachments = [], headers = {}, channel = 'default' }) {
     try {
-        const mailer = getTransporter();
+        const useMarketing = channel === 'marketing';
+        const mailer = useMarketing ? getMarketingTransporter() : getTransporter();
         const cfg = getEmailConfig();
-        const fromEmail = cfg.fromEmail;
-        const fromName = cfg.fromName;
+        const fromEmail = useMarketing ? cfg.marketingFromEmail : cfg.fromEmail;
+        const fromName = useMarketing ? cfg.marketingFromName : cfg.fromName;
         const replyToEmail = cfg.replyToEmail;
 
         const formattedAttachments = (attachments || []).map(att => {
@@ -947,6 +983,7 @@ async function sendMassEmailCampaign({ codigoEmpresa, campanaId, contacts = [], 
                 subject: rendered.subject,
                 html: rendered.html,
                 attachments,
+                channel: 'marketing',
                 headers: {
                     'List-Unsubscribe': `<${rendered.enlaceBaja}>, <mailto:${rendered.replyToEmail}?subject=BAJA>`,
                     'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click'
@@ -1105,6 +1142,7 @@ async function sendCalendarEventInvitation({ titulo, tipo, modalidad, categoria,
 
 module.exports = {
     getTransporter,
+    getMarketingTransporter,
     getEmailConfig,
     sendTicketEmail,
     sendWebinarConfirmationToAdvisor,

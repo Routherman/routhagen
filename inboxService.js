@@ -68,6 +68,14 @@ async function getInboxEmails(limit = 35, codigoEmpresa = 'KRZMJI') {
 
         const status = await client.status("INBOX", { messages: true, unseen: true });
         const total = status.messages || 0;
+        if (total === 0) {
+            return {
+                success: true,
+                stats: { total: 0, unseen: status.unseen || 0 },
+                emails: [],
+                account: gmailUser
+            };
+        }
         const startSeq = Math.max(1, total - limit);
 
         const emailList = [];
@@ -246,13 +254,13 @@ async function getEmailBody(uid) {
  * Envía una respuesta de correo desde Gmail SMTP
  */
 async function sendReplyEmail({ to, subject, body, inReplyTo }) {
+    const { getEmailConfig } = require('./emailService');
+    const cfg = getEmailConfig();
     const transporter = getNodemailerTransport();
-    const fromEmail = process.env.EMAIL_FROM || 'colaboratium@gmail.com';
-    const replyToEmail = process.env.EMAIL_REPLY_TO || 'colaboratium@gmail.com';
     const mailOptions = {
-        from: `"Colaboratium Oficial" <${fromEmail}>`,
+        from: `"${cfg.fromName}" <${cfg.fromEmail}>`,
         to,
-        replyTo: replyToEmail,
+        replyTo: cfg.replyToEmail,
         subject: subject.startsWith("Re:") ? subject : `Re: ${subject}`,
         text: body,
         html: `<div style="font-family: sans-serif; font-size: 14px; line-height: 1.6; color: #1e293b; white-space: pre-wrap;">${body}</div>`,
@@ -271,6 +279,7 @@ function isIgnoredSystemEmail(fromEmail = '', subject = '') {
     const ignoredSenderPatterns = [
         'colaboratium@gmail.com',
         'asesores@colaboratium.com.ar',
+        'mkt@colaboratium.com.ar',
         'mailer-daemon',
         'postmaster@',
         'noreply',

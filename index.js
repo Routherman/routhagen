@@ -33,6 +33,7 @@ const {
 const { analyzeDeliverability, validateMergeVariables } = require('./emailOptimizer');
 const { summarizeConversationWithAI } = require('./aiRouter');
 const campaignScheduler = require('./campaignScheduler');
+const academiaIntegration = require('./academia/integration');
 
 const upload = multer({ dest: 'public/uploads/' });
 
@@ -92,6 +93,7 @@ app.use('/downloads', express.static(path.join(__dirname, 'public/downloads')));
 app.use('/api/downloads', express.static(path.join(__dirname, 'public/downloads')));
 app.use(bodyParser.json({ limit: '10mb' }));
 app.use(bodyParser.urlencoded({ extended: true, limit: '10mb' }));
+app.use('/api/academia', academiaIntegration.createAcademiaRouterMiddleware(() => db.pool));
 
 const PORT = process.env.PORT || 8080;
 const WAPP_VERIFY_TOKEN = process.env.WAPP_VERIFY_TOKEN;
@@ -1826,6 +1828,9 @@ app.post('/api/users/sync', async (req, res) => {
         }
 
         const user = await db.upsertUser(clerkId, email, firstName, lastName, imageUrl, token);
+        academiaIntegration
+            .syncAcademiaPersonasYEquipos(academiaIntegration.getAcademiaPool(), db.pool)
+            .catch(() => {});
         res.json({ message: 'Usuario sincronizado correctamente', user });
     } catch (error) {
         console.error('❌ Error sincronizando usuario:', error);
@@ -2373,7 +2378,13 @@ app.put('/api/empresas/:codigo/tickets/:id', async (req, res) => {
 app.delete('/api/empresas/:codigo/tickets/:id', async (req, res) => {
     try {
         const success = await db.eliminarTicket(req.params.id, req.params.codigo);
-        if (success) res.json({ success: true });
+        if (success) {
+            await Promise.allSettled([
+                academiaIntegration.trabajoDePracticaBorrado(`ticket:${req.params.id}`),
+                academiaIntegration.trabajoDePracticaBorrado(String(req.params.id))
+            ]);
+            res.json({ success: true });
+        }
         else res.status(404).json({ success: false, error: 'Ticket no encontrado' });
     } catch (error) {
         console.error('Error eliminando ticket:', error);
@@ -4052,6 +4063,11 @@ app.post('/api/b2b-prospects/run-scraper', async (req, res) => {
 app.listen(PORT, async () => {
     console.log(`🚀 Servidor de WhatsApp escuchando en el puerto ${PORT}`);
     await db.initDB();
+    try {
+        await academiaIntegration.initAcademiaBootstrap(db.pool);
+    } catch (acErr) {
+        console.warn('⚠️ No se pudo inicializar Academia:', acErr.message);
+    }
     campaignScheduler.iniciarScheduler();
     try {
         const scoreService = require('./scoreService');
