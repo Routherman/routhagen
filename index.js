@@ -1721,6 +1721,7 @@ app.post('/api/messages/reply', async (req, res) => {
                         INSERT INTO mensajes (contacto_id, mensaje_meta_id, direccion, tipo, contenido, estado_entrega, linea_wa)
                         VALUES (?, ?, 'SALIENTE', 'texto', ?, 'enviado', ?)
                     `, [contactId, outMsgId, text, lineCode]);
+                    await db.pool.query('UPDATE contactos SET linea_wa = ? WHERE id = ?', [lineCode, contactId]);
                 }
                 return res.json({ success: true, message: 'Mensaje manual entregado vía WASender', metaId: outMsgId, line: lineCode });
             } else {
