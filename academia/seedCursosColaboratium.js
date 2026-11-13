@@ -315,3 +315,4 @@ module.exports = {
     CURSOS_COLABORATIUM,
     seedCursosColaboratium
 };
+

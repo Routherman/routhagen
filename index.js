@@ -11,7 +11,7 @@ process.on('unhandledRejection', (reason) => {
     console.warn('[UNHANDLED REJECTION PREVENTED]:', reason?.message || reason);
 });
 
-const { processMessageWithAI, summarizeDocument } = require('./groqService');
+const { processMessageWithAI, summarizeDocument, summarizeMeeting } = require('./groqService');
 const { sendWhatsAppMessage, sendWhatsAppTemplate, downloadWhatsAppMedia } = require('./whatsappService');
 const { handleFlowEngine } = require('./flowEngine');
 const db = require('./database');
@@ -477,78 +477,8 @@ app.get('/api/contacts/:empresa', async (req, res) => {
         
         if (clerkId || userId || roleQuery) {
             const ctx = await db.getUserPortfolioContext(clerkId, userId, roleQuery, req.params.empresa);
-            
-            if (ctx.isMaster) {
-                // Master ve todas las conversaciones
-                return res.json(contacts);
-            }
-
-            if (ctx.isSoporte) {
-                // Soporte ve conversaciones asignadas a Soporte o General
-                contacts = contacts.filter(contact => {
-                    if (contact.usuario_asignado_id) {
-                        return ctx.allMyIds.includes(contact.usuario_asignado_id);
-                    }
-                    const rolAsignado = (contact.rol_asignado || 'General').toLowerCase();
-                    return rolAsignado === 'soporte' || rolAsignado === 'general';
-                });
-                return res.json(contacts);
-            }
-
-            if (ctx.isLider) {
-                // "lider podra ver solo las conversaciones de los asesores que pertenezcan a su equipo y las conversaciones que pertenezcan a los inversores dentro de su arbol"
-                const teamAdvisorIds = contacts
-                    .filter(c => {
-                        const isAdvisor = (c.grupo || '').toUpperCase() === 'ASESORES' || (c.rol_asignado || '').toLowerCase() === 'asesores';
-                        const belongsToMe = ctx.allMyIds.includes(c.lider_id) || ctx.allMyIds.includes(Number(c.lider_id));
-                        return isAdvisor && belongsToMe;
-                    })
-                    .map(c => c.id);
-
-                contacts = contacts.filter(c => {
-                    if (teamAdvisorIds.includes(c.id)) return true;
-
-                    const belongsToTree = ctx.allMyIds.includes(c.lider_id) || 
-                                          ctx.allMyIds.includes(Number(c.lider_id)) || 
-                                          teamAdvisorIds.includes(c.asesor_id) ||
-                                          teamAdvisorIds.includes(Number(c.asesor_id));
-
-                    if (belongsToTree) return true;
-
-                    if (ctx.allMyIds.includes(c.usuario_asignado_id) || ctx.allMyIds.includes(c.id)) return true;
-
-                    return false;
-                });
-                return res.json(contacts);
-            }
-
-            if (ctx.isAsesor) {
-                // "los asesores solo podran ver las conversaciones con su lider y con los inversores que pertenezcan a su cartera"
-                contacts = contacts.filter(c => {
-                    // Conversación con su líder
-                    if (ctx.myLeaderIds && ctx.myLeaderIds.includes(c.id)) return true;
-
-                    // Inversores dentro de su cartera comercial
-                    const isMyPortfolio = ctx.allMyIds.includes(c.asesor_id) || 
-                                          ctx.allMyIds.includes(Number(c.asesor_id)) || 
-                                          ctx.allMyIds.includes(c.usuario_asignado_id);
-
-                    if (isMyPortfolio) return true;
-
-                    return false;
-                });
-                return res.json(contacts);
-            }
-
-            // Fallback para otros roles específicos
-            contacts = contacts.filter(contact => {
-                if (contact.usuario_asignado_id) {
-                    return ctx.allMyIds.includes(contact.usuario_asignado_id);
-                }
-                const rolAsignado = (contact.rol_asignado || 'General').toLowerCase();
-                if (rolAsignado === 'general') return true;
-                return ctx.role === rolAsignado;
-            });
+            contacts = db.filterContactsByHierarchy(contacts, ctx);
+            return res.json(contacts);
         }
 
         res.json(contacts);
@@ -1995,8 +1925,8 @@ app.get('/api/empresas/:codigo/roles', async (req, res) => {
 
 app.post('/api/empresas/:codigo/roles', async (req, res) => {
     try {
-        const { nombre, privilegios } = req.body;
-        const id = await db.crearRol(req.params.codigo, nombre, privilegios || {});
+        const { nombre, privilegios, nivel_arbol = 7, tipo_visibilidad = 'solo_arbol' } = req.body;
+        const id = await db.crearRol(req.params.codigo, nombre, privilegios || {}, nivel_arbol, tipo_visibilidad);
         res.json({ success: true, id });
     } catch (error) {
         res.status(500).json({ error: 'Error interno' });
@@ -2005,8 +1935,8 @@ app.post('/api/empresas/:codigo/roles', async (req, res) => {
 
 app.put('/api/empresas/:codigo/roles/:id', async (req, res) => {
     try {
-        const { nombre, privilegios } = req.body;
-        const result = await db.actualizarRol(req.params.id, req.params.codigo, nombre, privilegios);
+        const { nombre, privilegios, nivel_arbol, tipo_visibilidad } = req.body;
+        const result = await db.actualizarRol(req.params.id, req.params.codigo, nombre, privilegios, nivel_arbol, tipo_visibilidad);
         if (result) res.json({ success: true });
         else res.status(404).json({ error: 'Rol no encontrado o no se puede modificar' });
     } catch (error) {
@@ -2764,40 +2694,10 @@ app.get(['/api/empresas/:codigo/crm/contacts', '/api/empresas/:codigo/crm/contac
         
         if (clerkId || userId || role) {
             const ctx = await db.getUserPortfolioContext(clerkId, userId, role, req.params.codigo);
-            if (!ctx.isMaster && !ctx.isSoporte) {
-                const gUpper = (grupo || '').toUpperCase();
-                const isStaffDirectory = ['ASESORES', 'LIDERES', 'TEAM', 'SOPORTE'].includes(gUpper);
-
-                if (!isStaffDirectory) {
-                    if (ctx.isLider) {
-                        const teamAdvisorIds = contacts
-                            .filter(c => {
-                                const isAdvisor = (c.grupo || '').toUpperCase() === 'ASESORES' || (c.rol_asignado || '').toLowerCase() === 'asesores';
-                                const belongsToMe = ctx.allMyIds.includes(c.lider_id) || ctx.allMyIds.includes(Number(c.lider_id));
-                                return isAdvisor && belongsToMe;
-                            })
-                            .map(c => c.id);
-
-                        contacts = contacts.filter(c => {
-                            if (teamAdvisorIds.includes(c.id)) return true;
-                            const belongsToTree = ctx.allMyIds.includes(c.lider_id) || 
-                                                  ctx.allMyIds.includes(Number(c.lider_id)) || 
-                                                  teamAdvisorIds.includes(c.asesor_id) ||
-                                                  teamAdvisorIds.includes(Number(c.asesor_id));
-                            if (belongsToTree) return true;
-                            if (ctx.allMyIds.includes(c.usuario_asignado_id) || ctx.allMyIds.includes(c.id)) return true;
-                            return false;
-                        });
-                    } else if (ctx.isAsesor) {
-                        contacts = contacts.filter(c => {
-                            if (ctx.myLeaderIds && ctx.myLeaderIds.includes(c.id)) return true;
-                            const isMyPortfolio = ctx.allMyIds.includes(c.asesor_id) || 
-                                                  ctx.allMyIds.includes(Number(c.asesor_id)) || 
-                                                  ctx.allMyIds.includes(c.usuario_asignado_id);
-                            return isMyPortfolio;
-                        });
-                    }
-                }
+            const gUpper = (grupo || '').toUpperCase();
+            const isStaffDirectory = ['ASESORES', 'LIDERES', 'TEAM', 'SOPORTE'].includes(gUpper);
+            if (!isStaffDirectory || ctx.isInversor) {
+                contacts = db.filterContactsByHierarchy(contacts, ctx);
             }
         }
 
@@ -3277,7 +3177,21 @@ const { getAvailableWebinarSlots, processBooking } = require('./googleCalendarSe
 
 app.get('/api/empresas/:codigo/inbox/accounts', async (req, res) => {
     try {
-        const accounts = getAvailableInboxAccounts();
+        let accounts = getAvailableInboxAccounts();
+        const { clerkId, userId, role } = req.query;
+        if (clerkId || userId || role) {
+            const ctx = await db.getUserPortfolioContext(clerkId, userId, role, req.params.codigo);
+            // Si el rol tiene visibilidad 'solo_arbol': filtrar casillas
+            if (!ctx.hasExtendedPrivileges) {
+                if (ctx.isAsesor) {
+                    // Asesores ven únicamente la casilla de asesores@colaboratium.com.ar (o su casilla personal si existiese)
+                    accounts = accounts.filter(a => (a.email || '').includes('asesores') || (a.id || '').includes('asesores'));
+                } else if (ctx.isInversor) {
+                    // Inversor solo ve canal de contacto directo de asesores
+                    accounts = accounts.filter(a => (a.email || '').includes('asesores'));
+                }
+            }
+        }
         res.json({ success: true, accounts });
     } catch (error) {
         console.error('Error listando cuentas de inbox:', error);
@@ -3288,8 +3202,64 @@ app.get('/api/empresas/:codigo/inbox/accounts', async (req, res) => {
 app.get('/api/empresas/:codigo/inbox', async (req, res) => {
     try {
         const limit = parseInt(req.query.limit, 10) || 35;
-        const account = req.query.account || null;
-        const result = await getInboxEmails(limit, req.params.codigo, account);
+        let account = req.query.account || null;
+        const { clerkId, userId, role } = req.query;
+
+        let ctx = null;
+        if (clerkId || userId || role) {
+            ctx = await db.getUserPortfolioContext(clerkId, userId, role, req.params.codigo);
+        }
+
+        // Si es Asesor con solo_arbol y no especificó cuenta, fijar 'asesores@colaboratium.com.ar'
+        if (ctx && !ctx.hasExtendedPrivileges && ctx.isAsesor && !account) {
+            account = 'asesores@colaboratium.com.ar';
+        }
+
+        let result = await getInboxEmails(limit, req.params.codigo, account);
+
+        // Filtro dinámico de visibilidad de correos según el Árbol Jerárquico
+        if (ctx && !ctx.hasExtendedPrivileges && result && Array.isArray(result.emails)) {
+            if (ctx.isInversor) {
+                // Inversor: solo correos directamente intercambiados con su Asesor o Líder
+                result.emails = result.emails.filter(em => {
+                    const fromClean = (em.fromEmail || '').toLowerCase();
+                    return ctx.myAdvisorIds.some(id => fromClean.includes(String(id))) || 
+                           fromClean.includes('asesores@colaboratium.com.ar') ||
+                           fromClean === (ctx.user?.email || '').toLowerCase();
+                });
+            } else if (ctx.isAsesor) {
+                // Asesor: solo correos de su casilla de asesores o de inversores dentro de su cartera
+                const myContacts = await db.obtenerContactosCRM(req.params.codigo);
+                const filteredPortfolio = db.filterContactsByHierarchy(myContacts, ctx);
+                const allowedEmails = new Set(filteredPortfolio.map(c => (c.email || '').toLowerCase()).filter(Boolean));
+                allowedEmails.add('asesores@colaboratium.com.ar');
+                if (ctx.user?.email) allowedEmails.add(ctx.user.email.toLowerCase());
+
+                result.emails = result.emails.filter(em => {
+                    const fromClean = (em.fromEmail || '').toLowerCase();
+                    const accClean = (em.account || result.account || '').toLowerCase();
+                    return accClean.includes('asesores') || allowedEmails.has(fromClean);
+                });
+            } else if (ctx.isLider) {
+                // Líder: correos de su equipo de asesores e inversores en su árbol
+                const myContacts = await db.obtenerContactosCRM(req.params.codigo);
+                const filteredPortfolio = db.filterContactsByHierarchy(myContacts, ctx);
+                const allowedEmails = new Set(filteredPortfolio.map(c => (c.email || '').toLowerCase()).filter(Boolean));
+                allowedEmails.add('asesores@colaboratium.com.ar');
+                if (ctx.user?.email) allowedEmails.add(ctx.user.email.toLowerCase());
+
+                result.emails = result.emails.filter(em => {
+                    const fromClean = (em.fromEmail || '').toLowerCase();
+                    return allowedEmails.has(fromClean) || em.account?.includes('asesores');
+                });
+            }
+
+            if (result.stats) {
+                result.stats.total = result.emails.length;
+                result.stats.unseen = result.emails.filter(e => !e.seen).length;
+            }
+        }
+
         res.json(result);
     } catch (error) {
         console.error('Error obteniendo correos inbox:', error);
@@ -3693,6 +3663,217 @@ app.delete('/api/empresas/:codigo/calendar/events/:id', async (req, res) => {
         }
     } catch (error) {
         console.error('Error eliminando evento de calendario:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+// -------------------------------------------------------------
+// GESTIÓN DE REUNIONES MEET CON INVERSORES & PIPELINE DE IA
+// -------------------------------------------------------------
+
+app.post('/api/empresas/:codigo/calendar/meetings', async (req, res) => {
+    try {
+        const codigoEmpresa = req.params.codigo;
+        const {
+            titulo = 'Reunión Meet de Inversión',
+            fecha,
+            horario,
+            fecha_inicio,
+            fecha_fin,
+            contacto_id,
+            contacto_nombre,
+            contacto_email,
+            contacto_telefono,
+            meetLink,
+            notas,
+            userId,
+            userName,
+            userRole
+        } = req.body;
+
+        // Validar permisos: Líderes, Asesores y roles superiores pueden crear sesiones Meet con inversores
+        const ctx = await db.getUserPortfolioContext(null, userId, userRole, codigoEmpresa);
+        if (!ctx.isMaster && !ctx.isMain && !ctx.isLider && !ctx.isAsesor) {
+            return res.status(403).json({ error: 'Solo Líderes y Asesores pueden crear sesiones de Google Meet con Inversores' });
+        }
+
+        // Enlace de Google Meet: usar el provisto o generar una sala oficial Colaboratium
+        let effectiveMeetLink = (meetLink || '').trim();
+        if (!effectiveMeetLink || effectiveMeetLink === 'https://meet.google.com/new') {
+            const randomCode = Math.random().toString(36).substring(2, 5) + '-' + 
+                               Math.random().toString(36).substring(2, 6) + '-' + 
+                               Math.random().toString(36).substring(2, 5);
+            effectiveMeetLink = `https://meet.google.com/${randomCode}`;
+        }
+
+        // Persistir la reunión en la base de datos
+        const reunionId = await db.crearReunionMeet(codigoEmpresa, {
+            creado_por_usuario_id: userId || 'system',
+            creado_por_nombre: userName || 'Asesor / Líder',
+            creado_por_rol: userRole || 'Asesor',
+            contacto_id,
+            contacto_nombre,
+            contacto_email,
+            contacto_telefono,
+            titulo,
+            fecha: fecha || 'Hoy',
+            horario: horario || '10:00 a 11:00 hs',
+            fecha_inicio,
+            fecha_fin,
+            meet_link: effectiveMeetLink,
+            estado: 'PROGRAMADA',
+            transcript: notas || null
+        });
+
+        // 1. Sincronización automática con Google Calendar (invitación iCal)
+        try {
+            const { sendCalendarEventInvitation } = require('./emailService');
+            await sendCalendarEventInvitation({
+                titulo,
+                tipo: 'meet',
+                modalidad: 'VIRTUAL',
+                categoria: 'INVERSORES',
+                fecha: fecha || 'Hoy',
+                horario: horario || '10:00 a 11:00 hs',
+                meetLink: effectiveMeetLink,
+                ubicacion: 'Google Meet',
+                creadoPor: userName || userRole || 'Colaboratium',
+                contactoEmail: contacto_email
+            });
+        } catch (calErr) {
+            console.warn('⚠️ Error en sincronización iCal:', calErr.message);
+        }
+
+        // 2. Generar Enlace Directo para Google Calendar Web
+        const gCalDirectUrl = `https://calendar.google.com/calendar/render?action=TEMPLATE&text=${encodeURIComponent(titulo)}&details=${encodeURIComponent(`Reunión personalizada de inversión.\nConvocante: ${userName || 'Asesor'}\nInversor: ${contacto_nombre || ''} (${contacto_email || ''})\nSala Meet: ${effectiveMeetLink}\nNotas: ${notas || 'Ninguna'}`)}&location=${encodeURIComponent(effectiveMeetLink)}&add=${encodeURIComponent(contacto_email ? `colaboratium@gmail.com,${contacto_email}` : 'colaboratium@gmail.com')}`;
+
+        // 3. Registrar en Auditoría
+        await db.registrarAuditLog({
+            codigo_empresa: codigoEmpresa,
+            usuario_id: userId,
+            usuario_nombre: userName,
+            rol: userRole,
+            accion: 'meet_session_created',
+            entidad: 'calendar_meet',
+            entidad_id: String(reunionId),
+            detalles: `Sesión Google Meet creada con inversor ${contacto_nombre || ''} (${contacto_email || ''}) - Enlace: ${effectiveMeetLink}`,
+            google_scope: 'colaboratium@gmail.com'
+        });
+
+        res.json({
+            success: true,
+            id: reunionId,
+            meetLink: effectiveMeetLink,
+            googleCalendarUrl: gCalDirectUrl
+        });
+    } catch (error) {
+        console.error('Error creando reunión Meet:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+app.get('/api/empresas/:codigo/calendar/meetings', async (req, res) => {
+    try {
+        const codigoEmpresa = req.params.codigo;
+        const { clerkId, userId, role, contacto_id } = req.query;
+        let meetings = await db.obtenerReunionesMeet(codigoEmpresa, { contacto_id });
+
+        if (clerkId || userId || role) {
+            const ctx = await db.getUserPortfolioContext(clerkId, userId, role, codigoEmpresa);
+            if (!ctx.hasExtendedPrivileges) {
+                if (ctx.isInversor) {
+                    meetings = meetings.filter(m => ctx.myContactIds.includes(m.contacto_id));
+                } else if (ctx.isAsesor) {
+                    meetings = meetings.filter(m => 
+                        ctx.allMyIds.includes(m.creado_por_usuario_id) || 
+                        ctx.myContactIds.includes(m.contacto_id)
+                    );
+                } else if (ctx.isLider) {
+                    meetings = meetings.filter(m => 
+                        ctx.allMyIds.includes(m.creado_por_usuario_id) || 
+                        ctx.teamAdvisorIds.includes(m.contacto_id) ||
+                        ctx.myContactIds.includes(m.contacto_id)
+                    );
+                }
+            }
+        }
+
+        res.json({ success: true, count: meetings.length, meetings });
+    } catch (error) {
+        console.error('Error listando reuniones Meet:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+app.post('/api/empresas/:codigo/calendar/meetings/:id/summarize', async (req, res) => {
+    try {
+        const codigoEmpresa = req.params.codigo;
+        const reunionId = req.params.id;
+        const { transcript, notes, clientName, meetingTitle, advisorName } = req.body;
+
+        console.log(`🤖 [IA Pipeline] Generando resumen automático para reunión ID ${reunionId}...`);
+        const summary = await summarizeMeeting({
+            transcript,
+            notes,
+            clientName: clientName || 'Inversor',
+            meetingTitle: meetingTitle || 'Reunión Meet de Inversión',
+            advisorName: advisorName || 'Asesor Comercial'
+        });
+
+        // Persistir en base de datos
+        await db.actualizarResumenReunionMeet(reunionId, codigoEmpresa, summary, transcript || notes, 'COMPLETADA');
+
+        // Registrar en Auditoría
+        await db.registrarAuditLog({
+            codigo_empresa: codigoEmpresa,
+            usuario_id: req.body.userId || 'system',
+            usuario_nombre: req.body.userName || 'Analista IA',
+            rol: req.body.userRole || 'AI',
+            accion: 'meet_summary_generated',
+            entidad: 'calendar_meet',
+            entidad_id: String(reunionId),
+            detalles: `Resumen de IA generado y archivado para reunión ID ${reunionId}`,
+            google_scope: 'colaboratium@gmail.com'
+        });
+
+        res.json({
+            success: true,
+            id: reunionId,
+            summary
+        });
+    } catch (error) {
+        console.error('Error generando resumen de IA de reunión:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+app.get('/api/empresas/:codigo/calendar/meetings/:id/summary', async (req, res) => {
+    try {
+        const codigoEmpresa = req.params.codigo;
+        const reunionId = req.params.id;
+        const [rows] = await db.pool.query(
+            'SELECT id, titulo, contacto_nombre, contacto_email, meet_link, estado, resumen_ia, transcript, creado_en FROM reuniones_meet WHERE id = ? AND codigo_empresa = ?',
+            [reunionId, codigoEmpresa]
+        );
+        if (rows.length === 0) return res.status(404).json({ success: false, error: 'Reunión no encontrada' });
+        
+        const m = rows[0];
+        let summary = m.resumen_ia;
+        if (typeof summary === 'string' && (summary.startsWith('{') || summary.startsWith('['))) {
+            try { summary = JSON.parse(summary); } catch(e) {}
+        }
+
+        res.json({
+            success: true,
+            id: m.id,
+            titulo: m.titulo,
+            contacto_nombre: m.contacto_nombre,
+            meet_link: m.meet_link,
+            estado: m.estado,
+            transcript: m.transcript,
+            summary
+        });
+    } catch (error) {
         res.status(500).json({ success: false, error: error.message });
     }
 });

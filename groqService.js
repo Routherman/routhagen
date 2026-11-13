@@ -111,10 +111,93 @@ async function transcribeAudioWithGroq(filePath, language = 'es') {
     }
 }
 
+/**
+ * Genera un resumen ejecutivo estructurado con IA de una reunión de Google Meet con Inversor
+ */
+async function summarizeMeeting({ transcript, notes = '', clientName = 'Inversor', meetingTitle = 'Reunión Meet de Inversión', advisorName = 'Asesor Colaboratium' }) {
+    const systemPrompt = `Eres el Analista Financiero Senior de IA de Colaboratium (BCRA Nº 40.015).
+Tu labor es procesar la transcripción o notas de una videollamada de Google Meet entre un Asesor/Líder y un Inversor y generar un Resumen Ejecutivo estructurado para archivo en base de datos y auditoría de cartera.
+
+Debes responder ÚNICAMENTE en formato JSON con la siguiente estructura exacta:
+{
+  "resumen_ejecutivo": "Síntesis clara de 2-3 párrafos sobre la reunión, el interés demostrado y los temas discutidos.",
+  "perfil_inversor": "Perfil de riesgo (conservador/moderado/agresivo), experiencia previa en inversiones, rubro o actividad principal.",
+  "capital_plazo": "Monto estimado o declarado a invertir (en ARS o USD), horizonte temporal, modalidad (cuotas, fondo común, tasa fija).",
+  "acuerdos": [
+    "Acuerdo 1...",
+    "Acuerdo 2..."
+  ],
+  "proximos_pasos": [
+    "Próximo paso 1 con responsable...",
+    "Próximo paso 2..."
+  ],
+  "estado_interes": "ALTO",
+  "markdown_formateado": "# Resumen de Reunión..."
+}
+No agregues texto explicativo antes ni después del JSON.`;
+
+    const userPrompt = `DATOS DE LA REUNIÓN:
+- Título: ${meetingTitle}
+- Asesor / Convocante: ${advisorName}
+- Inversor / Cliente: ${clientName}
+- Notas adicionales: ${notes || 'Ninguna provista'}
+
+TRANSCRIPCIÓN O APUNTES DE LA SESIÓN MEET:
+${transcript || notes || 'Reunión ejecutiva sobre portafolio de inversión y rendimientos Colaboratium.'}
+`;
+
+    const messages = [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userPrompt }
+    ];
+
+    try {
+        let rawResponse = '';
+        try {
+            rawResponse = await queryGroq(messages, 'openai/gpt-oss-120b', 0.2);
+        } catch(gErr) {
+            console.warn('Fallo gpt-oss-120b, intentando llama3.1-8b fallback:', gErr.message);
+            rawResponse = await queryGroq(messages, 'llama-3.1-8b-instant', 0.2);
+        }
+
+        let parsed = null;
+        try {
+            const jsonMatch = rawResponse.match(/\{[\s\S]*\}/);
+            if (jsonMatch) parsed = JSON.parse(jsonMatch[0]);
+        } catch(e) {}
+
+        if (!parsed) {
+            parsed = {
+                resumen_ejecutivo: rawResponse.slice(0, 500),
+                perfil_inversor: 'Interés en rendimiento y opciones de colocación.',
+                capital_plazo: 'A definir en seguimiento.',
+                acuerdos: ['Envío de propuesta formal'],
+                proximos_pasos: ['Enviar detalle de comisiones y calce'],
+                estado_interes: 'ALTO',
+                markdown_formateado: rawResponse
+            };
+        }
+
+        return parsed;
+    } catch(err) {
+        console.error('Error generando resumen de reunión con IA:', err.message);
+        return {
+            resumen_ejecutivo: 'Reunión de inversión realizada con el cliente.',
+            perfil_inversor: 'Pendiente de evaluación detallada.',
+            capital_plazo: 'A definir.',
+            acuerdos: ['Coordinar nueva llamada'],
+            proximos_pasos: ['Enviar información por WhatsApp/Email'],
+            estado_interes: 'MEDIO',
+            markdown_formateado: `### Resumen de Reunión: ${meetingTitle}\n- Cliente: ${clientName}\n- Notas: ${notes || 'Sesión Meet completada.'}`
+        };
+    }
+}
+
 module.exports = {
     processMessageWithAI,
     summarizeDocument,
     queryOllama,
     queryGroq,
-    transcribeAudioWithGroq
+    transcribeAudioWithGroq,
+    summarizeMeeting
 };

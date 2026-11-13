@@ -571,6 +571,86 @@ async function initDB() {
             console.error('Error sembrando medios iniciales:', e);
         }
 
+        // -------------------------------------------------------------
+        // MIGRACIONES RBAC JERÁRQUICO (NIVELES 1 A 9) Y VISIBILIDAD DE ÁRBOL
+        // -------------------------------------------------------------
+        try {
+            await pool.query('ALTER TABLE roles ADD COLUMN nivel_arbol INT NOT NULL DEFAULT 7');
+        } catch(e) {}
+        try {
+            await pool.query("ALTER TABLE roles ADD COLUMN tipo_visibilidad VARCHAR(50) NOT NULL DEFAULT 'solo_arbol'");
+        } catch(e) {}
+
+        // Mapeo inicial de jerarquías y visibilidad según la matriz definida (Niveles 1 a 9)
+        try {
+            await pool.query("UPDATE roles SET nivel_arbol = 1, tipo_visibilidad = 'privilegios_extendidos' WHERE LOWER(nombre) = 'master'");
+            await pool.query("UPDATE roles SET nivel_arbol = 2, tipo_visibilidad = 'privilegios_extendidos' WHERE LOWER(nombre) = 'main'");
+            await pool.query("UPDATE roles SET nivel_arbol = 3, tipo_visibilidad = 'solo_arbol' WHERE LOWER(nombre) LIKE '%credito%'");
+            await pool.query("UPDATE roles SET nivel_arbol = 4, tipo_visibilidad = 'solo_arbol' WHERE LOWER(nombre) LIKE '%soporte%'");
+            await pool.query("UPDATE roles SET nivel_arbol = 5, tipo_visibilidad = 'solo_arbol' WHERE LOWER(nombre) = 'team'");
+            await pool.query("UPDATE roles SET nivel_arbol = 6, tipo_visibilidad = 'solo_arbol' WHERE LOWER(nombre) LIKE '%lider%'");
+            await pool.query("UPDATE roles SET nivel_arbol = 7, tipo_visibilidad = 'solo_arbol' WHERE LOWER(nombre) LIKE '%asesor%' AND LOWER(nombre) NOT LIKE '%prospecto%'");
+            await pool.query("UPDATE roles SET nivel_arbol = 8, tipo_visibilidad = 'solo_arbol' WHERE LOWER(nombre) LIKE '%prospecto%'");
+            await pool.query("UPDATE roles SET nivel_arbol = 9, tipo_visibilidad = 'solo_arbol' WHERE LOWER(nombre) LIKE '%inversor%'");
+        } catch(e) {}
+
+        // -------------------------------------------------------------
+        // MIGRACIONES CALENDARIO, MEET CON INVERSORES & RESÚMENES IA
+        // -------------------------------------------------------------
+        try {
+            await pool.query('ALTER TABLE calendar_events ADD COLUMN contacto_id INT DEFAULT NULL');
+        } catch(e) {}
+        try {
+            await pool.query('ALTER TABLE calendar_events ADD COLUMN contacto_nombre VARCHAR(150) DEFAULT NULL');
+        } catch(e) {}
+        try {
+            await pool.query('ALTER TABLE calendar_events ADD COLUMN contacto_email VARCHAR(150) DEFAULT NULL');
+        } catch(e) {}
+        try {
+            await pool.query('ALTER TABLE calendar_events ADD COLUMN contacto_telefono VARCHAR(50) DEFAULT NULL');
+        } catch(e) {}
+        try {
+            await pool.query("ALTER TABLE calendar_events ADD COLUMN estado VARCHAR(50) DEFAULT 'PROGRAMADA'");
+        } catch(e) {}
+        try {
+            await pool.query('ALTER TABLE calendar_events ADD COLUMN transcript LONGTEXT DEFAULT NULL');
+        } catch(e) {}
+        try {
+            await pool.query('ALTER TABLE calendar_events ADD COLUMN resumen_ia LONGTEXT DEFAULT NULL');
+        } catch(e) {}
+
+        try {
+            await pool.query(`
+                CREATE TABLE IF NOT EXISTS reuniones_meet (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    codigo_empresa VARCHAR(50) NOT NULL,
+                    calendar_event_id INT NULL,
+                    creado_por_usuario_id VARCHAR(150) NOT NULL,
+                    creado_por_nombre VARCHAR(150) NULL,
+                    creado_por_rol VARCHAR(100) NULL,
+                    contacto_id INT NULL,
+                    contacto_nombre VARCHAR(150) NULL,
+                    contacto_email VARCHAR(150) NULL,
+                    contacto_telefono VARCHAR(50) NULL,
+                    titulo VARCHAR(255) NOT NULL,
+                    fecha VARCHAR(100) NOT NULL,
+                    horario VARCHAR(100) NOT NULL,
+                    fecha_inicio DATETIME NULL,
+                    fecha_fin DATETIME NULL,
+                    meet_link VARCHAR(255) NOT NULL,
+                    google_event_id VARCHAR(255) NULL,
+                    estado VARCHAR(50) DEFAULT 'PROGRAMADA',
+                    transcript LONGTEXT NULL,
+                    resumen_ia LONGTEXT NULL,
+                    creado_en TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    actualizado_en TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                    INDEX idx_empresa (codigo_empresa),
+                    INDEX idx_contacto (contacto_id),
+                    INDEX idx_creador (creado_por_usuario_id)
+                );
+            `);
+        } catch(e) {}
+
         console.log('✅ Base de datos MySQL y tablas inicializadas correctamente.');
     } catch (error) {
         console.error('❌ Error inicializando la base de datos:', error);
@@ -849,7 +929,7 @@ async function upsertUser(clerkId, email, firstName, lastName, imageUrl, token) 
 async function obtenerUsuario(clerkId) {
     if (!pool) return null;
     const [rows] = await pool.query(`
-        SELECT u.*, r.nombre as rol_nombre, r.privilegios as rol_privilegios 
+        SELECT u.*, r.nombre as rol_nombre, r.privilegios as rol_privilegios, r.nivel_arbol, r.tipo_visibilidad 
         FROM users u 
         LEFT JOIN roles r ON u.rol_id = r.id 
         WHERE u.clerk_id = ?
@@ -863,7 +943,7 @@ async function obtenerUsuario(clerkId) {
 async function obtenerUsuariosPorEmpresa(codigo_empresa) {
     if (!pool) return [];
     const [rows] = await pool.query(`
-        SELECT u.*, r.nombre as rol_nombre, r.privilegios as rol_privilegios 
+        SELECT u.*, r.nombre as rol_nombre, r.privilegios as rol_privilegios, r.nivel_arbol, r.tipo_visibilidad 
         FROM users u 
         LEFT JOIN roles r ON u.rol_id = r.id 
         WHERE UPPER(u.codigo_empresa) = UPPER(?) 
@@ -1040,23 +1120,26 @@ async function actualizarIA(codigo, prompt, conocimiento) {
 }
 
 /**
- * Obtiene los roles de una empresa
+ * Obtiene los roles de una empresa ordenados por jerarquía en el árbol (Nivel 1 a 9)
  */
 async function obtenerRoles(codigo_empresa) {
     if (!pool) return [];
-    const [rows] = await pool.query('SELECT * FROM roles WHERE codigo_empresa = ? ORDER BY creado_en ASC', [codigo_empresa]);
+    const [rows] = await pool.query(
+        'SELECT * FROM roles WHERE codigo_empresa = ? ORDER BY nivel_arbol ASC, creado_en ASC', 
+        [codigo_empresa]
+    );
     return rows;
 }
 
 /**
  * Crea un rol para una empresa
  */
-async function crearRol(codigo_empresa, nombre, privilegios) {
+async function crearRol(codigo_empresa, nombre, privilegios, nivel_arbol = 7, tipo_visibilidad = 'solo_arbol') {
     if (!pool) return null;
     const privsStr = typeof privilegios === 'object' ? JSON.stringify(privilegios) : privilegios;
     const [result] = await pool.query(
-        'INSERT INTO roles (codigo_empresa, nombre, privilegios, is_system) VALUES (?, ?, ?, false)',
-        [codigo_empresa, nombre, privsStr]
+        'INSERT INTO roles (codigo_empresa, nombre, privilegios, is_system, nivel_arbol, tipo_visibilidad) VALUES (?, ?, ?, false, ?, ?)',
+        [codigo_empresa, nombre, privsStr, parseInt(nivel_arbol, 10) || 7, tipo_visibilidad || 'solo_arbol']
     );
     return result.insertId;
 }
@@ -1064,18 +1147,47 @@ async function crearRol(codigo_empresa, nombre, privilegios) {
 /**
  * Actualiza un rol
  */
-async function actualizarRol(id, codigo_empresa, nombre, privilegios) {
+async function actualizarRol(id, codigo_empresa, nombre, privilegios, nivel_arbol = null, tipo_visibilidad = null) {
     if (!pool) return false;
     const privsStr = typeof privilegios === 'object' ? JSON.stringify(privilegios) : privilegios;
+    
+    const updateCols = ['privilegios = ?'];
+    const updateVals = [privsStr];
+
+    if (nombre) {
+        updateCols.push('nombre = ?');
+        updateVals.push(nombre);
+    }
+    if (nivel_arbol !== null && nivel_arbol !== undefined) {
+        updateCols.push('nivel_arbol = ?');
+        updateVals.push(parseInt(nivel_arbol, 10) || 7);
+    }
+    if (tipo_visibilidad) {
+        updateCols.push('tipo_visibilidad = ?');
+        updateVals.push(tipo_visibilidad);
+    }
+
+    updateVals.push(id, codigo_empresa);
     await pool.query(
-        'UPDATE roles SET nombre = ?, privilegios = ? WHERE id = ? AND codigo_empresa = ? AND is_system = false',
-        [nombre, privsStr, id, codigo_empresa]
+        `UPDATE roles SET ${updateCols.join(', ')} WHERE id = ? AND codigo_empresa = ? AND is_system = false`,
+        updateVals
     );
-    // Also allow updating privileges for system roles, but maybe not the name?
-    // Let's just update privileges for system roles, but not name.
+
+    // Permitir actualizar privilegios, nivel de árbol y visibilidad en roles de sistema
     const [roles] = await pool.query('SELECT is_system FROM roles WHERE id = ?', [id]);
     if (roles.length > 0 && roles[0].is_system) {
-        await pool.query('UPDATE roles SET privilegios = ? WHERE id = ?', [privsStr, id]);
+        const sysCols = ['privilegios = ?'];
+        const sysVals = [privsStr];
+        if (nivel_arbol !== null && nivel_arbol !== undefined) {
+            sysCols.push('nivel_arbol = ?');
+            sysVals.push(parseInt(nivel_arbol, 10) || 7);
+        }
+        if (tipo_visibilidad) {
+            sysCols.push('tipo_visibilidad = ?');
+            sysVals.push(tipo_visibilidad);
+        }
+        sysVals.push(id);
+        await pool.query(`UPDATE roles SET ${sysCols.join(', ')} WHERE id = ?`, sysVals);
     }
     return true;
 }
@@ -1893,66 +2005,114 @@ async function obtenerCampanaPorId(id) {
 }
 
 /**
- * Obtiene el contexto de cartera y jerarquía para un usuario (según su rol: Líder, Asesor, Soporte, Master)
+ * Obtiene el contexto de cartera y jerarquía estricta según el Árbol Jerárquico (Niveles 1 a 9)
+ * Nivel 1: Master
+ * Nivel 2: Main
+ * Nivel 3-5: Créditos, Soporte, Team (igualdad de posición)
+ * Nivel 6: Líderes
+ * Nivel 7: Asesores
+ * Nivel 8: Prospectos Asesores
+ * Nivel 9: Inversores (Visibilidad restringida: solo chat con su Asesor/Líder + Mails de su Asesor/Líder + Tickets Helpdesk)
  */
 async function getUserPortfolioContext(clerkId, userId, userRoleName, codigoEmpresa) {
-    if (!pool) return { isMaster: true, role: 'master', allMyIds: [], myLeaderIds: [], myContactIds: [] };
+    if (!pool) return { 
+        isMaster: true, 
+        role: 'master', 
+        nivel_arbol: 1, 
+        tipo_visibilidad: 'privilegios_extendidos',
+        hasExtendedPrivileges: true,
+        allMyIds: [], 
+        myLeaderIds: [], 
+        myAdvisorIds: [],
+        myContactIds: [], 
+        teamAdvisorIds: []
+    };
 
     let user = null;
     if (clerkId) {
         user = await obtenerUsuario(clerkId);
     } else if (userId) {
         const [uRows] = await pool.query(
-            'SELECT u.*, r.nombre as rol_nombre FROM users u LEFT JOIN roles r ON u.rol_id = r.id WHERE u.id = ?',
+            'SELECT u.*, r.nombre as rol_nombre, r.nivel_arbol, r.tipo_visibilidad FROM users u LEFT JOIN roles r ON u.rol_id = r.id WHERE u.id = ?',
             [userId]
         );
         user = uRows[0] || null;
     }
 
     const role = (userRoleName || user?.rol_nombre || '').toLowerCase();
-    const isMaster = (!user && !userRoleName) ||
-                     role === 'master' || role === 'admin' || role === 'main' || role === 'team' || 
-                     user?.email === 'colaboratium@gmail.com' || 
-                     user?.email === 'damduff@gmail.com' || 
-                     user?.email === 'routherman.contacto@gmail.com' ||
-                     user?.rol_id === 1 || user?.rol_id === 2;
-    const isSoporte = role === 'soporte';
-    const isLider = role.includes('lider');
-    const isAsesor = role.includes('asesor');
+
+    // Mapear Nivel en el Árbol (1 a 9) y Tipo de Visibilidad
+    let nivelArbol = parseInt(user?.nivel_arbol, 10);
+    let tipoVisibilidad = user?.tipo_visibilidad || 'solo_arbol';
+
+    if (isNaN(nivelArbol) || nivelArbol < 1 || nivelArbol > 9) {
+        if (role === 'master' || user?.email === 'colaboratium@gmail.com' || user?.email === 'damduff@gmail.com' || user?.email === 'routherman.contacto@gmail.com' || user?.rol_id === 1) {
+            nivelArbol = 1;
+            tipoVisibilidad = 'privilegios_extendidos';
+        } else if (role === 'main' || role === 'admin' || user?.rol_id === 2) {
+            nivelArbol = 2;
+            tipoVisibilidad = 'privilegios_extendidos';
+        } else if (role.includes('credito')) {
+            nivelArbol = 3;
+        } else if (role.includes('soporte')) {
+            nivelArbol = 4;
+        } else if (role === 'team' || role.includes('team')) {
+            nivelArbol = 5;
+        } else if (role.includes('lider')) {
+            nivelArbol = 6;
+        } else if (role.includes('asesor') && !role.includes('prospecto')) {
+            nivelArbol = 7;
+        } else if (role.includes('prospecto')) {
+            nivelArbol = 8;
+        } else if (role.includes('inversor')) {
+            nivelArbol = 9;
+        } else {
+            nivelArbol = 7;
+        }
+    }
+
+    const isMaster = nivelArbol === 1;
+    const isMain = nivelArbol === 2;
+    const isCreditos = nivelArbol === 3 || role.includes('credito');
+    const isSoporte = nivelArbol === 4 || role.includes('soporte');
+    const isTeam = nivelArbol === 5 || role === 'team';
+    const isLider = nivelArbol === 6 || role.includes('lider');
+    const isAsesor = nivelArbol === 7 || (role.includes('asesor') && !role.includes('prospecto'));
+    const isProspecto = nivelArbol === 8 || role.includes('prospecto');
+    const isInversor = nivelArbol === 9 || role.includes('inversor');
+    const hasExtendedPrivileges = tipoVisibilidad === 'privilegios_extendidos' || isMaster || isMain;
 
     const userIdentifiers = [];
-    if (userId) {
-        userIdentifiers.push(String(userId), Number(userId));
-    }
-    if (user?.id) {
-        userIdentifiers.push(String(user.id), Number(user.id));
-    }
-    if (user?.clerk_id) {
-        userIdentifiers.push(user.clerk_id);
-    }
-    if (clerkId) {
-        userIdentifiers.push(clerkId);
-    }
+    if (userId) userIdentifiers.push(String(userId), Number(userId));
+    if (user?.id) userIdentifiers.push(String(user.id), Number(user.id));
+    if (user?.clerk_id) userIdentifiers.push(user.clerk_id);
+    if (clerkId) userIdentifiers.push(clerkId);
 
     let myContactIds = [];
     let myLeaderIds = [];
+    let myAdvisorIds = [];
 
     if (userId && !isNaN(Number(userId))) {
-        const [cMatch] = await pool.query('SELECT id, lider_id, asesor_id, rol_asignado FROM contactos WHERE id = ? AND codigo_empresa = ?', [Number(userId), codigoEmpresa]);
+        const [cMatch] = await pool.query(
+            'SELECT id, lider_id, asesor_id, rol_asignado, usuario_asignado_id FROM contactos WHERE id = ? AND codigo_empresa = ?',
+            [Number(userId), codigoEmpresa]
+        );
         if (cMatch.length > 0) {
             myContactIds.push(cMatch[0].id);
             if (cMatch[0].lider_id) myLeaderIds.push(Number(cMatch[0].lider_id));
+            if (cMatch[0].asesor_id) myAdvisorIds.push(Number(cMatch[0].asesor_id));
         }
     }
 
     if (user?.email) {
         const [matchingContacts] = await pool.query(
-            'SELECT id, lider_id, asesor_id FROM contactos WHERE codigo_empresa = ? AND LOWER(email) = ?',
+            'SELECT id, lider_id, asesor_id, usuario_asignado_id FROM contactos WHERE codigo_empresa = ? AND LOWER(email) = ?',
             [codigoEmpresa, user.email.toLowerCase().trim()]
         );
         matchingContacts.forEach(mc => {
             myContactIds.push(mc.id);
             if (mc.lider_id) myLeaderIds.push(Number(mc.lider_id));
+            if (mc.asesor_id) myAdvisorIds.push(Number(mc.asesor_id));
         });
     }
 
@@ -1964,22 +2124,269 @@ async function getUserPortfolioContext(clerkId, userId, userRoleName, codigoEmpr
         assignedContacts.forEach(ac => {
             if (!myContactIds.includes(ac.id)) myContactIds.push(ac.id);
             if (ac.lider_id && !myLeaderIds.includes(Number(ac.lider_id))) myLeaderIds.push(Number(ac.lider_id));
+            if (ac.asesor_id && !myAdvisorIds.includes(Number(ac.asesor_id))) myAdvisorIds.push(Number(ac.asesor_id));
         });
     }
 
     const allMyIds = [...new Set([...userIdentifiers, ...myContactIds])];
 
+    // Obtener IDs de Asesores que pertenecen al equipo de este Líder
+    let teamAdvisorIds = [];
+    if (isLider && allMyIds.length > 0) {
+        const numericIds = allMyIds.filter(x => typeof x === 'number' || (!isNaN(Number(x)) && Number(x) > 0)).map(Number);
+        if (numericIds.length > 0) {
+            const [teamAdvisors] = await pool.query(
+                `SELECT id FROM contactos WHERE codigo_empresa = ? AND lider_id IN (${numericIds.join(',')})`,
+                [codigoEmpresa]
+            );
+            teamAdvisorIds = (teamAdvisors || []).map(a => a.id);
+        }
+    }
+
     return {
         user,
         role,
+        nivel_arbol: nivelArbol,
+        tipo_visibilidad: tipoVisibilidad,
         isMaster,
+        isMain,
+        isCreditos,
         isSoporte,
+        isTeam,
         isLider,
         isAsesor,
+        isProspecto,
+        isInversor,
+        hasExtendedPrivileges,
         myContactIds,
         myLeaderIds,
+        myAdvisorIds,
+        teamAdvisorIds,
         allMyIds
     };
+}
+
+/**
+ * Filtra contactos según la jerarquía del árbol (Niveles 1 a 9) y tipo de visibilidad ('solo_arbol' vs 'privilegios_extendidos')
+ */
+function filterContactsByHierarchy(contacts, ctx) {
+    if (!Array.isArray(contacts)) return [];
+    if (!ctx || ctx.hasExtendedPrivileges || ctx.isMaster || ctx.isMain) {
+        return contacts; // Nivel 1 y 2 o Privilegios Extendidos: acceso irrestricto
+    }
+
+    // Nivel 9: Inversores (Visibilidad estrictamente restringida: solo su Asesor/Líder asignado)
+    if (ctx.isInversor) {
+        return contacts.filter(c => {
+            const isMyAdvisor = ctx.myAdvisorIds.includes(c.id);
+            const isMyLeader = ctx.myLeaderIds.includes(c.id);
+            const isAssignedStaff = ctx.allMyIds.includes(c.usuario_asignado_id);
+            return isMyAdvisor || isMyLeader || isAssignedStaff;
+        });
+    }
+
+    // Nivel 8: Prospectos Asesores
+    if (ctx.isProspecto) {
+        return contacts.filter(c => {
+            const isMyAdvisor = ctx.myAdvisorIds.includes(c.id);
+            const isMyLeader = ctx.myLeaderIds.includes(c.id);
+            const isSelf = ctx.allMyIds.includes(c.id);
+            const isAssignedStaff = ctx.allMyIds.includes(c.usuario_asignado_id);
+            return isMyAdvisor || isMyLeader || isSelf || isAssignedStaff;
+        });
+    }
+
+    // Nivel 7: Asesores (solo_arbol: Ve a su Líder asignado + Inversores y prospectos en su cartera)
+    if (ctx.isAsesor) {
+        return contacts.filter(c => {
+            if (ctx.myLeaderIds && ctx.myLeaderIds.includes(c.id)) return true;
+            const isMyClient = ctx.allMyIds.includes(c.asesor_id) || 
+                               ctx.allMyIds.includes(Number(c.asesor_id)) || 
+                               ctx.allMyIds.includes(c.usuario_asignado_id);
+            if (isMyClient) return true;
+            if (ctx.allMyIds.includes(c.id)) return true;
+            return false;
+        });
+    }
+
+    // Nivel 6: Líderes (solo_arbol: Ve asesores de su equipo + inversores en el árbol de su equipo)
+    if (ctx.isLider) {
+        return contacts.filter(c => {
+            if (ctx.teamAdvisorIds.includes(c.id)) return true;
+            const belongsToTree = ctx.allMyIds.includes(c.lider_id) || 
+                                  ctx.allMyIds.includes(Number(c.lider_id)) || 
+                                  ctx.teamAdvisorIds.includes(c.asesor_id) ||
+                                  ctx.teamAdvisorIds.includes(Number(c.asesor_id));
+            if (belongsToTree) return true;
+            if (ctx.allMyIds.includes(c.usuario_asignado_id) || ctx.allMyIds.includes(c.id)) return true;
+            return false;
+        });
+    }
+
+    // Nivel 3-5: Créditos, Soporte, Team (con solo_arbol)
+    if (ctx.isSoporte) {
+        return contacts.filter(c => {
+            if (c.usuario_asignado_id) return ctx.allMyIds.includes(c.usuario_asignado_id);
+            const rolAsignado = (c.rol_asignado || 'General').toLowerCase();
+            return rolAsignado === 'soporte' || rolAsignado === 'general';
+        });
+    }
+
+    if (ctx.isCreditos) {
+        return contacts.filter(c => {
+            if (c.usuario_asignado_id) return ctx.allMyIds.includes(c.usuario_asignado_id);
+            const rolAsignado = (c.rol_asignado || 'General').toLowerCase();
+            return rolAsignado.includes('credito') || rolAsignado === 'general';
+        });
+    }
+
+    if (ctx.isTeam) {
+        return contacts.filter(c => {
+            if (c.usuario_asignado_id) return ctx.allMyIds.includes(c.usuario_asignado_id);
+            const rolAsignado = (c.rol_asignado || 'General').toLowerCase();
+            return rolAsignado === 'team' || rolAsignado === 'general';
+        });
+    }
+
+    return contacts;
+}
+
+/**
+ * Crea una reunión de Meet con Inversor y sincroniza con calendar_events
+ */
+async function crearReunionMeet(codigo_empresa, {
+    creado_por_usuario_id,
+    creado_por_nombre,
+    creado_por_rol,
+    contacto_id = null,
+    contacto_nombre = null,
+    contacto_email = null,
+    contacto_telefono = null,
+    titulo,
+    fecha,
+    horario,
+    fecha_inicio = null,
+    fecha_fin = null,
+    meet_link = 'https://meet.google.com/new',
+    google_event_id = null,
+    estado = 'PROGRAMADA',
+    transcript = null,
+    resumen_ia = null
+}) {
+    if (!pool) return null;
+
+    // 1. Guardar en tabla reuniones_meet
+    const [resMeet] = await pool.query(`
+        INSERT INTO reuniones_meet 
+        (codigo_empresa, creado_por_usuario_id, creado_por_nombre, creado_por_rol, contacto_id, contacto_nombre, contacto_email, contacto_telefono, titulo, fecha, horario, fecha_inicio, fecha_fin, meet_link, google_event_id, estado, transcript, resumen_ia)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `, [
+        codigo_empresa,
+        String(creado_por_usuario_id || 'system'),
+        creado_por_nombre || '',
+        creado_por_rol || '',
+        contacto_id ? parseInt(contacto_id, 10) : null,
+        contacto_nombre,
+        contacto_email,
+        contacto_telefono,
+        titulo || 'Reunión Meet de Inversión',
+        fecha || 'Hoy',
+        horario || '10:00 a 11:00 hs',
+        fecha_inicio,
+        fecha_fin,
+        meet_link,
+        google_event_id,
+        estado,
+        transcript,
+        typeof resumen_ia === 'object' ? JSON.stringify(resumen_ia) : resumen_ia
+    ]);
+    const reunionId = resMeet.insertId;
+
+    // 2. Persistir también en calendar_events para visibilidad en calendario
+    try {
+        const [resCal] = await pool.query(`
+            INSERT INTO calendar_events
+            (codigo_empresa, titulo, tipo, modalidad, categoria, fecha, horario, meet_link, ubicacion, cupos, creado_por_usuario_id, creado_por_nombre, creado_por_rol, contacto_id, contacto_nombre, contacto_email, contacto_telefono, estado, transcript, resumen_ia)
+            VALUES (?, ?, 'meet', 'VIRTUAL', 'INVERSORES', ?, ?, ?, 'Google Meet', 5, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `, [
+            codigo_empresa,
+            titulo || 'Reunión Meet de Inversión',
+            fecha || 'Hoy',
+            horario || '10:00 a 11:00 hs',
+            meet_link,
+            String(creado_por_usuario_id || 'system'),
+            creado_por_nombre || '',
+            creado_por_rol || '',
+            contacto_id ? parseInt(contacto_id, 10) : null,
+            contacto_nombre,
+            contacto_email,
+            contacto_telefono,
+            estado,
+            transcript,
+            typeof resumen_ia === 'object' ? JSON.stringify(resumen_ia) : resumen_ia
+        ]);
+        const calId = resCal.insertId;
+        await pool.query('UPDATE reuniones_meet SET calendar_event_id = ? WHERE id = ?', [calId, reunionId]);
+    } catch(calErr) {
+        console.warn('Advertencia vinculando reunión a calendar_events:', calErr.message);
+    }
+
+    return reunionId;
+}
+
+/**
+ * Obtiene reuniones Meet de una empresa
+ */
+async function obtenerReunionesMeet(codigo_empresa, { usuario_id = null, contacto_id = null, rol = null } = {}) {
+    if (!pool) return [];
+    let query = 'SELECT * FROM reuniones_meet WHERE codigo_empresa = ?';
+    const params = [codigo_empresa];
+
+    if (contacto_id) {
+        query += ' AND contacto_id = ?';
+        params.push(contacto_id);
+    }
+    query += ' ORDER BY id DESC';
+    const [rows] = await pool.query(query, params);
+    return rows.map(r => {
+        let resIa = r.resumen_ia;
+        if (typeof resIa === 'string' && (resIa.startsWith('{') || resIa.startsWith('['))) {
+            try { resIa = JSON.parse(resIa); } catch(e) {}
+        }
+        return { ...r, resumen_ia: resIa };
+    });
+}
+
+/**
+ * Actualiza el resumen de IA y estado de una reunión
+ */
+async function actualizarResumenReunionMeet(id, codigo_empresa, resumenIA, transcript = null, estado = 'COMPLETADA') {
+    if (!pool) return false;
+    const resIaStr = typeof resumenIA === 'object' ? JSON.stringify(resumenIA) : resumenIA;
+    
+    await pool.query(`
+        UPDATE reuniones_meet 
+        SET resumen_ia = ?, 
+            transcript = COALESCE(?, transcript),
+            estado = ?
+        WHERE id = ? AND codigo_empresa = ?
+    `, [resIaStr, transcript, estado, id, codigo_empresa]);
+
+    // Actualizar también en calendar_events si existe vínculo
+    try {
+        const [r] = await pool.query('SELECT calendar_event_id FROM reuniones_meet WHERE id = ?', [id]);
+        if (r.length > 0 && r[0].calendar_event_id) {
+            await pool.query(`
+                UPDATE calendar_events 
+                SET resumen_ia = ?, 
+                    transcript = COALESCE(?, transcript),
+                    estado = ?
+                WHERE id = ?
+            `, [resIaStr, transcript, estado, r[0].calendar_event_id]);
+        }
+    } catch(e) {}
+
+    return true;
 }
 
 module.exports = {
@@ -2045,6 +2452,10 @@ module.exports = {
     actualizarResolucionContacto,
     obtenerArbolDependencias,
     getUserPortfolioContext,
+    filterContactsByHierarchy,
+    crearReunionMeet,
+    obtenerReunionesMeet,
+    actualizarResumenReunionMeet,
     crearPlantilla,
     obtenerPlantillas,
     obtenerPlantilla,

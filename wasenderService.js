@@ -1,7 +1,61 @@
 const axios = require('axios');
+const crypto = require('crypto');
+const fs = require('fs');
+const path = require('path');
 const db = require('./database');
-const { processMessageWithAI } = require('./groqService');
+const { processMessageWithAI, transcribeAudioWithGroq } = require('./groqService');
 const { sanitizeBotReplyText } = require('./aiRouter');
+
+/**
+ * Descarga y descifra audios/notas de voz de WhatsApp (.enc) o URLs directas
+ */
+async function downloadAndDecryptWhatsAppAudio(audioMsg, outputDir = path.join(__dirname, 'public', 'uploads')) {
+    try {
+        if (!fs.existsSync(outputDir)) fs.mkdirSync(outputDir, { recursive: true });
+        const filename = `was_audio_${Date.now()}_${Math.random().toString(36).substring(2, 7)}.ogg`;
+        const outputPath = path.join(outputDir, filename);
+        const publicUrl = `/api/uploads/${filename}`;
+
+        const url = audioMsg.url || audioMsg.mediaUrl || audioMsg.audioUrl || audioMsg.directPath;
+        if (!url) return null;
+
+        if (audioMsg.mediaKey) {
+            console.log('🔓 [WASender Audio] Descifrando audio WhatsApp usando HKDF y AES-256-CBC...');
+            const res = await axios.get(url, { responseType: 'arraybuffer', timeout: 25000 });
+            const encBuffer = Buffer.from(res.data);
+            const mediaKeyBuffer = Buffer.isBuffer(audioMsg.mediaKey) 
+                ? audioMsg.mediaKey 
+                : Buffer.from(audioMsg.mediaKey, 'base64');
+            const info = 'WhatsApp Audio Keys';
+
+            const derived = await new Promise((resolve, reject) => {
+                crypto.hkdf('sha256', mediaKeyBuffer, Buffer.alloc(0), Buffer.from(info), 112, (err, key) => {
+                    if (err) reject(err);
+                    else resolve(Buffer.from(key));
+                });
+            });
+
+            const iv = derived.subarray(0, 16);
+            const cipherKey = derived.subarray(16, 48);
+            const cipherText = encBuffer.subarray(0, encBuffer.length - 10);
+
+            const decipher = crypto.createDecipheriv('aes-256-cbc', cipherKey, iv);
+            const decrypted = Buffer.concat([decipher.update(cipherText), decipher.final()]);
+            fs.writeFileSync(outputPath, decrypted);
+            console.log(`✅ [WASender Audio] Audio descifrado y guardado en: ${outputPath} (${decrypted.length} bytes)`);
+            return { outputPath, publicUrl, filename };
+        } else {
+            console.log('📥 [WASender Audio] Descargando audio directo...');
+            const res = await axios.get(url, { responseType: 'arraybuffer', timeout: 25000 });
+            fs.writeFileSync(outputPath, Buffer.from(res.data));
+            console.log(`✅ [WASender Audio] Audio guardado en: ${outputPath}`);
+            return { outputPath, publicUrl, filename };
+        }
+    } catch (err) {
+        console.error('❌ [WASender Audio] Error al descargar/descifrar audio:', err.message);
+        return null;
+    }
+}
 
 /**
  * Servicio de Integración con WASender API (wasenderapi.com)
@@ -708,7 +762,36 @@ class WasenderService {
 
             let from = String(rawFrom).replace(/@.*$/, '').replace(/\D/g, '');
             const innerMsg = msgObj?.message?.ephemeralMessage?.message || msgObj?.message || {};
+
+            // Detección de mensajes de audio o notas de voz (PTT / Voice Notes)
+            const audioMsg = innerMsg?.audioMessage || 
+                             msgObj?.audioMessage || 
+                             msgObj?.audio || 
+                             payload?.data?.audioMessage || 
+                             (innerMsg?.ptt ? innerMsg : null) ||
+                             null;
+            const isAudio = Boolean(audioMsg || msgObj?.mediaType === 'audio' || payload?.data?.mediaType === 'audio');
+
+            let audioTranscription = '';
+            let audioLocalUrl = null;
+
+            if (isAudio && audioMsg) {
+                console.log(`🎙️ [WASender ${lineCode}] Detectada nota de voz/audio entrante de ${from}. Procesando...`);
+                try {
+                    const uploadDir = path.join(__dirname, 'public', 'uploads');
+                    const downloaded = await downloadAndDecryptWhatsAppAudio(audioMsg, uploadDir);
+                    if (downloaded && downloaded.outputPath) {
+                        audioLocalUrl = downloaded.publicUrl;
+                        audioTranscription = await transcribeAudioWithGroq(downloaded.outputPath, 'es');
+                        console.log(`🎙️ [WASender ${lineCode}] Transcripción Whisper Groq obtenida: "${audioTranscription}"`);
+                    }
+                } catch (audioErr) {
+                    console.error(`❌ [WASender ${lineCode}] Error procesando audio con Groq:`, audioErr.message);
+                }
+            }
+
             let text = (
+                audioTranscription ||
                 msgObj?.messageBody || 
                 msgObj?.body || 
                 msgObj?.text || 
@@ -723,29 +806,61 @@ class WasenderService {
                 ''
             ).trim();
 
-            if (!from || !text) {
+            if (!from) {
+                console.log(`⚠️ [WASender ${lineCode}] Evento sin remitente válido`);
+                return { success: true, ignored: true, reason: 'Sin remitente' };
+            }
+
+            // Si es un audio pero Whisper no pudo transcribir texto (o audio vacío/inaudible), no ignorar el mensaje: responder cortésmente
+            if (isAudio && !text) {
+                console.log(`⚠️ [WASender ${lineCode}] Audio sin transcripción legible de ${from}. Enviando repregunta.`);
+                try {
+                    const { contacto, contactoId, cleanPhone } = await this.ensureContact(pool, from, codigoEmpresa, lineCode);
+                    const metaMsgId = `was_in_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+                    await pool.query(`
+                        INSERT INTO mensajes (contacto_id, mensaje_meta_id, direccion, tipo, contenido, estado_entrega, linea_wa)
+                        VALUES (?, ?, 'ENTRANTE', 'audio', ?, 'recibido', ?)
+                    `, [contactoId, metaMsgId, JSON.stringify({ url: audioLocalUrl, note: 'Audio sin transcripción' }), lineCode]);
+
+                    const fallbackReply = {
+                        text: "¡Hola! Recibí tu nota de voz pero no logré escucharla claramente. ¿Podrías enviarme tu consulta por escrito o intentar grabar un audio más breve? ¡Muchas gracias!"
+                    };
+                    await this.dispatchAndLogReply(pool, contactoId, cleanPhone, fallbackReply, codigoEmpresa, lineCode);
+                    return { success: true, processed: true, contactId: contactoId, isAudioFallback: true };
+                } catch (audFallbackErr) {
+                    console.error('Error en fallback de audio:', audFallbackErr.message);
+                    return { success: false, error: audFallbackErr.message };
+                }
+            }
+
+            if (!text) {
                 console.log(`⚠️ [WASender ${lineCode}] Evento sin remitente (${from}) o texto (${text})`);
                 return { success: true, ignored: true, reason: 'Sin remitente o texto' };
             }
 
-            console.log(`📱 [WASender ${lineCode}] Mensaje entrante de ${from}: "${text}"`);
+            console.log(`📱 [WASender ${lineCode}] Mensaje entrante de ${from} (${isAudio ? 'AUDIO TRANSCRIPTO' : 'TEXTO'}): "${text}"`);
 
             try {
                 // 1. Registrar o actualizar contacto en CRM
                 const { contacto, contactoId, cleanPhone } = await this.ensureContact(pool, from, codigoEmpresa, lineCode);
 
-                // 2. Registrar mensaje entrante en tabla mensajes
+                // 2. Registrar mensaje entrante en tabla mensajes (si es audio, guardar referencia multimedia y transcripción)
                 const metaMsgId = `was_in_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+                const msgTipo = isAudio ? 'audio' : 'texto';
+                const msgContenido = isAudio 
+                    ? JSON.stringify({ url: audioLocalUrl, transcription: text })
+                    : text;
+
                 await pool.query(`
                     INSERT INTO mensajes (contacto_id, mensaje_meta_id, direccion, tipo, contenido, estado_entrega, linea_wa)
-                    VALUES (?, ?, 'ENTRANTE', 'texto', ?, 'recibido', ?)
-                `, [contactoId, metaMsgId, text, lineCode]);
+                    VALUES (?, ?, 'ENTRANTE', ?, ?, 'recibido', ?)
+                `, [contactoId, metaMsgId, msgTipo, msgContenido, lineCode]);
 
                 // 3. Generar respuesta automática del Bot y adjuntar encuesta interactiva si corresponde
                 const replyBundle = await this.generateBotReplyBundle(cleanPhone, text, contacto, codigoEmpresa);
                 await this.dispatchAndLogReply(pool, contactoId, cleanPhone, replyBundle, codigoEmpresa, lineCode);
 
-                return { success: true, processed: true, contactId: contactoId, line: lineCode };
+                return { success: true, processed: true, contactId: contactoId, line: lineCode, transcribedAudio: isAudio };
             } catch (dbErr) {
                 console.error('Error procesando webhook de WASender en DB:', dbErr.message);
                 return { success: false, error: dbErr.message };
